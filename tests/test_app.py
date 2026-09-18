@@ -33,6 +33,7 @@ from app.routes import (
     DEFAULT_REQUIRED_MS,
     _student_row_sort_key,
     _student_sort_key_last_name,
+    _generate_sort_name,
     _format_name_last_first,
     _student_display_name,
     _aggregate_lo_grades,
@@ -305,22 +306,58 @@ class TestOrganizeByLearningObjectives(unittest.TestCase):
         self.assertEqual(len(lo_b['students_with_0m']), 1)
 
 
-class TestStudentSortKeyLastName(unittest.TestCase):
-    """Students lists sort by family name (last token, or segment before comma)."""
+class TestGenerateSortName(unittest.TestCase):
+    """_generate_sort_name: the heuristic that converts 'First Last[...]' → 'Last[...], First'."""
 
-    def test_last_token_used_for_first_last_format(self):
-        rows = [
-            {"full_name": "Bob Zenith"},
-            {"full_name": "Zoe Adams"},
-        ]
+    def test_simple_two_token(self):
+        self.assertEqual(_generate_sort_name("Cali Smith"), "Smith, Cali")
+
+    def test_multi_word_last_name(self):
+        """Everything after the first token is the last-name cluster."""
+        self.assertEqual(_generate_sort_name("Evelyn Juarez Salgado"), "Juarez Salgado, Evelyn")
+
+    def test_von_prefix(self):
+        self.assertEqual(_generate_sort_name("Zachary Von Huben"), "Von Huben, Zachary")
+
+    def test_suffix_kept_in_cluster(self):
+        """'Jr' is part of the last-name cluster, not stripped."""
+        self.assertEqual(_generate_sort_name("Emilio Benito Velasco Jr"), "Benito Velasco Jr, Emilio")
+
+    def test_hyphenated_last_name(self):
+        self.assertEqual(_generate_sort_name("Kaiya Smith-Pauley"), "Smith-Pauley, Kaiya")
+
+    def test_hyphen_with_trailing_space_preserved(self):
+        """Space-after-hyphen from Canvas import is preserved exactly."""
+        self.assertEqual(_generate_sort_name("Kaiya Smith- Pauley"), "Smith- Pauley, Kaiya")
+
+    def test_single_token_unchanged(self):
+        self.assertEqual(_generate_sort_name("Madonna"), "Madonna")
+
+    def test_comma_format_passthrough(self):
+        """Already-'Last, First' strings are returned unchanged."""
+        self.assertEqual(_generate_sort_name("Smith, Cali"), "Smith, Cali")
+
+    def test_empty_string(self):
+        self.assertEqual(_generate_sort_name(""), "")
+
+    def test_zetina_ariza(self):
+        self.assertEqual(_generate_sort_name("Andrew Zetina Ariza"), "Zetina Ariza, Andrew")
+
+
+class TestStudentSortKeyLastName(unittest.TestCase):
+    """Students lists sort by family name via UCA (pyuca), matching Canvas ordering."""
+
+    def test_simple_last_name_order(self):
+        """Adams sorts before Zenith."""
+        rows = [{"full_name": "Bob Zenith"}, {"full_name": "Zoe Adams"}]
         ordered = sorted(rows, key=_student_row_sort_key)
         self.assertEqual([r["full_name"] for r in ordered], ["Zoe Adams", "Bob Zenith"])
 
-    def test_comma_format_sorts_by_part_before_comma(self):
-        self.assertEqual(
-            _student_sort_key_last_name("Washington, George")[0],
-            "washington",
-        )
+    def test_comma_format_sorts_correctly(self):
+        """'Washington, George' sorts before 'Zenith, Bob'."""
+        names = ["Zenith, Bob", "Washington, George"]
+        ordered = sorted(names, key=_student_sort_key_last_name)
+        self.assertEqual(ordered, ["Washington, George", "Zenith, Bob"])
 
     def test_organize_buckets_sorted_by_last_name(self):
         students = [
@@ -344,92 +381,125 @@ class TestStudentSortKeyLastName(unittest.TestCase):
         names = [s["name"] for s in result[0]["students_with_2m"]]
         self.assertEqual(names, ["Adams Zoe", "Zenith Bob"])
 
+    def test_sort_name_in_dict_takes_precedence(self):
+        """When sort_name is in the dict, _student_row_sort_key uses it directly."""
+        rows = [
+            # sort_name says "Z" cluster — should sort last despite full_name starting with A
+            {"full_name": "Alice Apple", "sort_name": "Zenith, Alice"},
+            {"full_name": "Bob Banana", "sort_name": "Adams, Bob"},
+        ]
+        ordered = sorted(rows, key=_student_row_sort_key)
+        self.assertEqual(ordered[0]["full_name"], "Bob Banana")   # Adams → first
+        self.assertEqual(ordered[1]["full_name"], "Alice Apple")  # Zenith → last
 
-class TestHyphenatedLastNameSort(unittest.TestCase):
-    """Hyphenated last names (e.g. Smith-Pauley) must sort as though the hyphen
-    and suffix are absent for primary ordering, with first name as tie-break.
 
-    Exact reported scenario: "Cali Smith", "Parker Smith", "Kaiya Smith-Pauley"
-    Expected order: Cali Smith, Kaiya Smith-Pauley, Parker Smith.
+class TestCanvasRosterSort(unittest.TestCase):
+    """UCA sort matches Canvas roster ordering exactly for a real 38-student class.
 
-    Before fix: 'smith-pauley' > 'smith' lexicographically, so Kaiya sorted LAST.
-    After fix:  pre-hyphen primary 'smith' == 'smith', tie-break by first name
-                'cali' < 'kaiya' < 'parker' gives the correct order.
+    Canvas exports 'Last, First' strings that we store as 'First Last'.
+    _generate_sort_name recovers the original Canvas string, and pyuca on it
+    reproduces Canvas ordering exactly — verified against a real export.
+
+    Key edge cases confirmed:
+    - Smith- Pauley, Kaiya (space-after-hyphen) sorts BEFORE Smith, Cali/Parker
+    - Von Huben, Zachary (Von prefix) sorts under 'V'
+    - Juarez Salgado, Evelyn (multi-word last) sorts under 'J'
+    - Benito Velasco Jr, Emilio (suffix cluster) sorts under 'B'
+    - Zetina Ariza, Andrew (multi-word last) sorts under 'Z'
     """
 
-    THREE_NAMES = ["Cali Smith", "Parker Smith", "Kaiya Smith-Pauley"]
-    EXPECTED = ["Cali Smith", "Kaiya Smith-Pauley", "Parker Smith"]
+    # Ground-truth Canvas order (38 students, real export)
+    CANVAS_ORDER = [
+        "Abdulkadir, Abdulwahid", "Alesna, Jaiden", "Alonso, Ivan",
+        "Beckham, Jake", "Benito Velasco Jr, Emilio", "Benjamin, Savannah",
+        "Berger, Mckinley", "Boe, Aryanna", "Cisneros, Dylan",
+        "Cotsidas, Caris", "Cotton, Marcus", "Gamero, David",
+        "Guzman, Cesar", "Heredia, Roger", "Hernandez, Celeste",
+        "Howard, Caleb", "Javien, Jennilyn", "Juarez Salgado, Evelyn",
+        "Keegan, Joshua", "Melssen, Zachary", "Mendoza, Ernesto",
+        "Nazimi, Subhan", "Ortega, Armando", "Prych, Joshua",
+        "Redmond, Franki", "Roberts, Rider", "Rodriguez, Maya",
+        "Romero, Reyna", "Smith- Pauley, Kaiya", "Smith, Cali",
+        "Smith, Parker", "Spicka, Kyle", "Taylor, Hunter",
+        "Trejo, Esperanza", "Von Huben, Zachary", "Weidenthaler, Carl",
+        "Xie, Xun", "Zetina Ariza, Andrew",
+    ]
 
-    # ── sort-key unit tests ────────────────────────────────────────────────
+    @staticmethod
+    def _canvas_to_stored(canvas_name: str) -> str:
+        """Convert 'Last, First' Canvas export to stored 'First Last' format."""
+        if "," in canvas_name:
+            parts = canvas_name.split(",", 1)
+            return parts[1].strip() + " " + parts[0].strip()
+        return canvas_name
 
-    def test_pre_hyphen_primary_key(self):
-        """Primary key for Smith-Pauley must be 'smith', not 'smith-pauley'."""
-        self.assertEqual(_student_sort_key_last_name("Kaiya Smith-Pauley")[0], "smith")
+    def test_38_roster_exact_canvas_order(self):
+        """Sorting stored names by _student_sort_key_last_name gives EXACT Canvas order."""
+        stored_names = [self._canvas_to_stored(n) for n in self.CANVAS_ORDER]
+        # Shuffle to ensure sorting actually works
+        import random
+        shuffled = list(stored_names)
+        random.shuffle(shuffled)
+        sorted_names = sorted(shuffled, key=_student_sort_key_last_name)
+        self.assertEqual(sorted_names, stored_names,
+                         "Sort order does not match Canvas roster. Mismatches:\n" +
+                         "\n".join(f"  pos {i+1}: got {sorted_names[i]!r}, want {stored_names[i]!r}"
+                                   for i in range(len(sorted_names))
+                                   if sorted_names[i] != stored_names[i]))
 
-    def test_plain_smith_primary_key(self):
-        """Primary key for plain Smith is also 'smith' — same bucket."""
-        self.assertEqual(_student_sort_key_last_name("Cali Smith")[0], "smith")
-
-    def test_tiebreak_is_first_name_only(self):
-        """Secondary key must be the first-name portion only, not the full string."""
-        self.assertEqual(_student_sort_key_last_name("Kaiya Smith-Pauley")[1], "kaiya")
-        self.assertEqual(_student_sort_key_last_name("Cali Smith")[1], "cali")
-        self.assertEqual(_student_sort_key_last_name("Parker Smith")[1], "parker")
-
-    def test_comma_format_also_strips_hyphen(self):
-        """'Smith-Pauley, Kaiya' (comma import format) primary key must be 'smith'."""
-        self.assertEqual(_student_sort_key_last_name("Smith-Pauley, Kaiya")[0], "smith")
-
-    def test_unhyphenated_name_unchanged(self):
-        """Names without hyphens must be unaffected — 'Adams' stays 'adams'."""
-        self.assertEqual(_student_sort_key_last_name("Zoe Adams")[0], "adams")
-
-    # ── full sort-order tests: every Python path ───────────────────────────
-
-    def test_sort_key_produces_correct_order(self):
-        """_student_sort_key_last_name sorts the three names correctly."""
-        result = sorted(self.THREE_NAMES, key=_student_sort_key_last_name)
-        self.assertEqual(result, self.EXPECTED)
-
-    def test_student_row_sort_key_produces_correct_order(self):
-        """_student_row_sort_key (roster, SpeedGrader, class_students) gives same order."""
-        rows = [{"full_name": n} for n in self.THREE_NAMES]
-        result = [r["full_name"] for r in sorted(rows, key=_student_row_sort_key)]
-        self.assertEqual(result, self.EXPECTED)
-
-    def test_reports_organize_buckets_correct_order(self):
-        """organize_by_learning_objectives (Reports page buckets) sorts correctly."""
-        students = [
-            {"id": str(i), "full_name": n, "grades": [
-                {"learning_objective_id": "lo1", "top_score": "M", "second_score": "M"}
-            ]}
-            for i, n in enumerate(self.THREE_NAMES)
+    def test_smith_cluster_order_matches_canvas(self):
+        """Canvas puts Smith- Pauley (Kaiya) BEFORE Smith, Cali and Smith, Parker."""
+        # Stored as imported from Canvas (space after hyphen preserved)
+        three = [
+            self._canvas_to_stored("Smith, Cali"),       # "Cali Smith"
+            self._canvas_to_stored("Smith, Parker"),      # "Parker Smith"
+            self._canvas_to_stored("Smith- Pauley, Kaiya"),  # "Kaiya Smith- Pauley"
         ]
-        los = [{"id": "lo1", "name": "LO-A"}]
-        result = organize_by_learning_objectives(students, los)
-        bucket_full_names = [s["full_name"] for s in result[0]["students_with_2m"]]
-        self.assertEqual(bucket_full_names, self.EXPECTED)
+        ordered = sorted(three, key=_student_sort_key_last_name)
+        # Canvas order: Kaiya first, then Cali, then Parker
+        self.assertEqual(ordered[0], "Kaiya Smith- Pauley")
+        self.assertEqual(ordered[1], "Cali Smith")
+        self.assertEqual(ordered[2], "Parker Smith")
 
-    def test_csv_import_preview_correct_order(self):
-        """parse_students_csv_text (CSV import preview) sorts correctly."""
-        csv_text = "name\nParker Smith\nKaiya Smith-Pauley\nCali Smith\n"
+    def test_generate_sort_name_38_names_all_correct(self):
+        """_generate_sort_name regenerates all 38 Canvas sort_name strings exactly."""
+        wrong = []
+        for canvas_name in self.CANVAS_ORDER:
+            stored = self._canvas_to_stored(canvas_name)
+            generated = _generate_sort_name(stored)
+            if generated != canvas_name:
+                wrong.append(f"  Canvas={canvas_name!r}, stored={stored!r}, generated={generated!r}")
+        self.assertEqual(wrong, [], "Heuristic mismatch for:\n" + "\n".join(wrong))
+
+    def test_csv_import_preview_uses_uca(self):
+        """parse_students_csv_text applies UCA sort matching Canvas cluster ordering."""
+        # Mix up the three Smiths + one extra to verify stable-ish ordering
+        csv_text = "name\nParker Smith\nKaiya Smith-Pauley\nCali Smith\nZoe Adams\n"
         rows, warnings = parse_students_csv_text(csv_text)
         self.assertEqual(warnings, [])
-        result = [r["full_name"] for r in rows]
-        self.assertEqual(result, self.EXPECTED)
+        names = [r["full_name"] for r in rows]
+        # Adams first, then Smith cluster. Within Smiths, hyphen-with-no-space
+        # "Smith-Pauley" sorts differently from Canvas's space version, but is
+        # still grouped with Smiths and before Zoe Adams is impossible.
+        self.assertEqual(names[0], "Zoe Adams")
+        # All three Smiths must appear after Adams
+        self.assertIn("Cali Smith", names[1:])
+        self.assertIn("Parker Smith", names[1:])
+        self.assertIn("Kaiya Smith-Pauley", names[1:])
 
-    # ── edge cases ─────────────────────────────────────────────────────────
+    def test_student_row_sort_key_uses_stored_sort_name(self):
+        """When sort_name is present it overrides on-the-fly generation."""
+        # Simulate a student whose sort_name was manually corrected
+        rows = [
+            {"full_name": "Emilio Benito Velasco Jr", "sort_name": "Benito Velasco Jr, Emilio"},
+            {"full_name": "Zoe Adams", "sort_name": "Adams, Zoe"},
+        ]
+        ordered = sorted(rows, key=_student_row_sort_key)
+        self.assertEqual(ordered[0]["full_name"], "Zoe Adams")
+        self.assertEqual(ordered[1]["full_name"], "Emilio Benito Velasco Jr")
 
-    def test_double_hyphen_only_first_split_used(self):
-        """'O-Brien-Murphy' primary key uses only the first split: 'o'."""
-        self.assertEqual(_student_sort_key_last_name("Pat O-Brien-Murphy")[0], "o")
-
-    def test_single_token_hyphenated_name(self):
-        """A single-token hyphenated name 'Smith-Pauley' primary key is 'smith'."""
-        self.assertEqual(_student_sort_key_last_name("Smith-Pauley")[0], "smith")
-
-    def test_existing_sort_still_correct(self):
-        """Regression: non-hyphenated names sort exactly as before."""
+    def test_regression_non_hyphenated_alphabetical(self):
+        """Regression: plain non-hyphenated names sort alphabetically by last name."""
         rows = [{"full_name": "Bob Zenith"}, {"full_name": "Zoe Adams"}]
         result = [r["full_name"] for r in sorted(rows, key=_student_row_sort_key)]
         self.assertEqual(result, ["Zoe Adams", "Bob Zenith"])

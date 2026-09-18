@@ -162,13 +162,13 @@ class Course:
             # the pipeline does not need to special-case the schema state.
             try:
                 enrollments_resp = supabase_admin.table("enrollments").select(
-                    "id, class_id, student_id, muted, profiles(id, full_name, role, email)"
+                    "id, class_id, student_id, muted, profiles(id, full_name, sort_name, role, email)"
                 ).eq("class_id", class_id).execute()
                 enrollments = enrollments_resp.data or []
             except Exception:
                 try:
                     enrollments_resp = supabase_admin.table("enrollments").select(
-                        "id, class_id, student_id, muted, profiles(id, full_name, role)"
+                        "id, class_id, student_id, muted, profiles(id, full_name, sort_name, role)"
                     ).eq("class_id", class_id).execute()
                     enrollments = enrollments_resp.data or []
                 except Exception:
@@ -512,7 +512,7 @@ class Student:
         )
         try:
             response = supabase_admin.table("profiles").select(
-                "id, full_name, role, "
+                "id, full_name, sort_name, role, "
                 f"grades({BASE_GRADES_COLS}), "
                 "enrollments(classes(id, name, auto_convert_m))"
             ).eq("id", student_id).single().execute()
@@ -523,7 +523,7 @@ class Student:
                 schema_err,
             )
             response = supabase_admin.table("profiles").select(
-                "id, full_name, role, "
+                "id, full_name, sort_name, role, "
                 f"grades({FALLBACK_GRADES_COLS}), "
                 "enrollments(classes(id, name, auto_convert_m))"
             ).eq("id", student_id).single().execute()

@@ -22,6 +22,7 @@ import hmac
 import io
 import logging
 import os
+import pyuca
 import re
 import secrets
 import requests
@@ -187,6 +188,10 @@ def _consume_one_time_form_token(namespace: str, token: str) -> bool:
         return True
 
 DEFAULT_REQUIRED_MS = 2
+
+# Unicode Collation Algorithm collator — instantiated once at module load for
+# performance. Used by all student-sorting functions to match Canvas ordering.
+_uca_collator = pyuca.Collator()
 
 # Shared caps for all bulk-import entry points (CSV and JSON body alike).
 # Bytes cap matches the pre-existing LO CSV limit; row cap keeps a single
@@ -770,9 +775,7 @@ def organize_by_learning_objectives(students, learning_objectives):
 
     for lo in lo_dict.values():
         for col in ("students_with_2m", "students_with_1m", "students_with_0m"):
-            lo[col].sort(
-                key=lambda sd: _student_sort_key_last_name(sd.get("full_name") or sd.get("name"))
-            )
+            lo[col].sort(key=_student_row_sort_key)
 
     return list(lo_dict.values())
 
@@ -1015,40 +1018,70 @@ def _lookup_enrolled_import_student_id(
     return name_index.get(n.lower()) or name_index.get(_student_name_key(n))
 
 
-def _student_sort_key_last_name(display_name: Optional[str]) -> Tuple[str, str]:
-    """Return (primary, secondary) for ordering students by family name.
+def _generate_sort_name(full_name: str) -> str:
+    """Convert a stored ``'First Last[...]'`` name to ``'Last[...], First'`` form.
 
-    Sorting rules applied in order:
-    - Comma format (``Washington, George``): part before the comma is the last
-      name; part after is the first name used for tie-breaking.
-    - Space-separated format (``First ... Last``): the final whitespace-
-      separated token is the last name; preceding tokens form the first name.
-    - Hyphenated last names (``Smith-Pauley``): only the portion before the
-      FIRST hyphen is used as the primary sort key, so ``Smith-Pauley`` groups
-      alongside plain ``Smith`` rather than after it.
-    - Tie-break is by first name(s) only, not the full raw string.
+    This is the canonical heuristic for auto-generating a ``sort_name`` value
+    from a student's stored ``full_name``.  It faithfully inverts the Canvas
+    CSV import conversion (Canvas exports ``'Last, First'``; import stores
+    ``'First Last'``), so Canvas-imported names regenerate their exact
+    Canvas sort string automatically — including multi-word last names
+    (``'Evelyn Juarez Salgado'`` → ``'Juarez Salgado, Evelyn'``), names with
+    Von/Van prefixes (``'Zachary Von Huben'`` → ``'Von Huben, Zachary'``),
+    suffixes treated as part of the last-name cluster
+    (``'Emilio Benito Velasco Jr'`` → ``'Benito Velasco Jr, Emilio'``), and
+    hyphen-with-space names preserved from import
+    (``'Kaiya Smith- Pauley'`` → ``'Smith- Pauley, Kaiya'``).
+
+    Rule: **the first whitespace token is the first name; everything after it
+    is the last-name cluster.**
+
+    Comma-format strings (already ``'Last, First'``) and single-token names
+    are returned unchanged.
+    """
+    s = (full_name or "").strip()
+    if not s:
+        return s
+    if "," in s:
+        return s  # Already "Last, First" — pass through unchanged
+    parts = s.split()
+    if len(parts) == 1:
+        return parts[0]
+    first = parts[0]
+    last_cluster = " ".join(parts[1:])
+    return f"{last_cluster}, {first}"
+
+
+def _student_sort_key_last_name(display_name: Optional[str]) -> Any:
+    """UCA sort key for a student name string (full_name or display_name).
+
+    Generates a ``'Last, First'`` sort_name via :func:`_generate_sort_name`,
+    then applies the Unicode Collation Algorithm via :data:`_uca_collator`.
+    This exactly matches Canvas roster ordering including hyphenated names,
+    multi-word last names, Von/Van prefixes, and suffix clusters.
+
+    Falls back to a high sentinel for blank names so unknown students sort last.
     """
     raw = (display_name or "").strip()
     if not raw:
-        return ("\uffff", "")
-    if "," in raw:
-        left, right = raw.split(",", 1)
-        last = left.strip().lower()
-        primary = last.split("-")[0] if last else "\uffff"
-        secondary = right.strip().lower()
-        return (primary or "\uffff", secondary)
-    parts = raw.split()
-    if len(parts) == 1:
-        return (parts[0].lower().split("-")[0], "")
-    primary = parts[-1].lower().split("-")[0]
-    secondary = " ".join(parts[:-1]).lower()
-    return (primary, secondary)
+        return _uca_collator.sort_key("\uffff")
+    return _uca_collator.sort_key(_generate_sort_name(raw))
 
 
-def _student_row_sort_key(student: Dict[str, Any]) -> Tuple[str, str]:
-    """Prefer stored ``full_name`` (roster order) so sorting stays correct when ``name`` is Last-first display."""
+def _student_row_sort_key(student: Dict[str, Any]) -> Any:
+    """UCA sort key for a student dict, preferring the stored ``sort_name``.
+
+    When ``sort_name`` is populated in the DB (and present in the dict),
+    it is used directly so any manual correction made via the edit UI takes
+    effect immediately.  Falls back to generating sort_name on the fly from
+    ``full_name`` or ``name`` using :func:`_generate_sort_name` so the
+    function is safe to call on dicts that pre-date the column migration.
+    """
+    sort_name = (student.get("sort_name") or "").strip()
+    if sort_name:
+        return _uca_collator.sort_key(sort_name)
     label = (student.get("full_name") or student.get("name") or "").strip()
-    return _student_sort_key_last_name(label)
+    return _uca_collator.sort_key(_generate_sort_name(label))
 
 
 def _batch_get_free_passes(student_ids, class_id):
@@ -1097,7 +1130,7 @@ def _load_students_from_grades(class_id):
         try:
             try:
                 profiles_resp = supabase_admin.table("profiles") \
-                    .select("id, full_name, email").in_("id", unique_ids).execute()
+                    .select("id, full_name, email, sort_name").in_("id", unique_ids).execute()
             except Exception:
                 profiles_resp = supabase_admin.table("profiles") \
                     .select("id, full_name").in_("id", unique_ids).execute()
@@ -1107,6 +1140,7 @@ def _load_students_from_grades(class_id):
                     raw_fn = (p.get("full_name") or "").strip()
                     students_by_id[pid]["full_name"] = raw_fn
                     students_by_id[pid]["email"] = (p.get("email") or "").strip()
+                    students_by_id[pid]["sort_name"] = (p.get("sort_name") or "").strip()
                     students_by_id[pid]["name"] = _student_display_name(
                         {"id": pid, "full_name": p.get("full_name")}
                     )
@@ -1585,10 +1619,14 @@ def add_student(class_id):
     data = request.get_json()
     email = data.get('email', '').strip()
     name = data.get('name', '').strip()
-    
+    # Optional: instructor-provided sort_name from the Add Student form.
+    # Falls back to auto-generation when absent or blank.
+    sort_name_raw = (data.get('sort_name') or '').strip()
+    sort_name = sort_name_raw if sort_name_raw else _generate_sort_name(name)
+
     if not email or not name:
         return jsonify({"success": False, "error": "Email and name are required"}), 400
-    
+
     try:
         # Always create a new student profile with a unique UUID
         # (students don't log in; professors add them, so same-name students are different people)
@@ -1596,6 +1634,7 @@ def add_student(class_id):
         insert_row = {
             "id": student_id,
             "full_name": name,
+            "sort_name": sort_name,
             "role": "student",
             "email": email,
         }
@@ -1791,6 +1830,88 @@ def delete_student_from_class(class_id, student_id):
     except Exception as e:
         logger.error("Error deleting student %s from class %s: %s", student_id, class_id, e)
         return _safe_api_error("Could not delete student", 500, log_detail=e)
+
+
+# Simple email format validator — not RFC-complete, matches what browsers accept
+# for type="email" and is consistent with existing signup/add-student validation.
+_SIMPLE_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+@main_bp.route("/api/class/<class_id>/students/<student_id>/update", methods=["POST"])
+@api_instructor_required
+def api_update_student(class_id, student_id):
+    """Update a student's name, email, and/or sort_name.
+
+    Ownership is verified two ways:
+    1. The instructor must own the class (via _instructor_owns_class).
+    2. The student must be enrolled in that class (via _student_enrolled_in_class),
+       preventing an instructor from editing a stranger's profile using a
+       student_id they guessed.
+
+    sort_name is written exactly as provided — never regenerated from name —
+    so a manually corrected sort_name is never silently overwritten.
+    """
+    if not _instructor_owns_class(class_id):
+        return jsonify({"success": False, "error": "Forbidden"}), 403
+    if not _student_enrolled_in_class(class_id, student_id):
+        return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
+
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").strip()
+    sort_name = (data.get("sort_name") or "").strip()
+
+    if not name:
+        return jsonify({"success": False, "error": "Name is required"}), 400
+    if len(name) > 255:
+        return jsonify({"success": False, "error": "Name must be 255 characters or fewer"}), 400
+    if len(sort_name) > 255:
+        return jsonify({"success": False, "error": "Sort name must be 255 characters or fewer"}), 400
+    if email:
+        if len(email) > 255:
+            return jsonify({"success": False, "error": "Email must be 255 characters or fewer"}), 400
+        if not _SIMPLE_EMAIL_RE.match(email):
+            return jsonify({"success": False, "error": "Invalid email format"}), 400
+
+    # Pre-check email uniqueness with a clear 409 before hitting the DB,
+    # so the instructor gets an actionable message rather than a generic 500.
+    # The DB-level unique index (when added before launch) acts as a backstop
+    # for the theoretical race window; this check handles the UX.
+    if email:
+        try:
+            conflict = (
+                supabase_admin.table("profiles")
+                .select("id")
+                .eq("email", email)
+                .neq("id", student_id)
+                .limit(1)
+                .execute()
+            )
+            if conflict.data:
+                return jsonify({
+                    "success": False,
+                    "error": "That email is already associated with another student account.",
+                }), 409
+        except Exception as e:
+            logger.warning("Email uniqueness pre-check failed for student %s: %s", student_id, e)
+            # Non-fatal: proceed with the update and let the DB constraint
+            # (or duplicate) surface rather than blocking the save entirely.
+
+    try:
+        update_payload: Dict[str, Any] = {
+            "full_name": name,
+            # Use exactly what the instructor typed; fall back to generating from
+            # the new name only when sort_name was left blank (e.g. cleared).
+            "sort_name": sort_name if sort_name else _generate_sort_name(name),
+        }
+        if email:
+            update_payload["email"] = email
+
+        supabase_admin.table("profiles").update(update_payload).eq("id", student_id).execute()
+        return jsonify({"success": True})
+    except Exception as e:
+        return _safe_api_error("Could not update student", 500, log_detail=e)
+
 
 @main_bp.route("/class/<class_id>/students")
 @login_required
@@ -4020,10 +4141,7 @@ def get_available_students(class_id):
             )
             all_students = prof_resp.data or []
 
-        available = sorted(
-            all_students,
-            key=lambda s: _student_sort_key_last_name(s.get("full_name")),
-        )
+        available = sorted(all_students, key=_student_row_sort_key)
         for s in available:
             s["name"] = _student_display_name(
                 {"id": s.get("id"), "full_name": s.get("full_name")}
@@ -4050,6 +4168,7 @@ def api_add_student_to_class(class_id):
         insert_row = {
             "id": student_id,
             "full_name": student_name,
+            "sort_name": _generate_sort_name(student_name),
             "role": "student",
         }
         if student_email:
@@ -4288,6 +4407,7 @@ def api_upload_students_to_class(class_id):
                 insert_profile = {
                     "id": student_id,
                     "full_name": full_name,
+                    "sort_name": _generate_sort_name(full_name),
                     "role": "student",
                     "email": email,
                 }
@@ -4311,6 +4431,7 @@ def api_upload_students_to_class(class_id):
                             supabase_admin.table("profiles").insert({
                                 "id": new_id,
                                 "full_name": full_name,
+                                "sort_name": _generate_sort_name(full_name),
                                 "role": "student",
                             }).execute()
                             supabase_admin.table("enrollments").insert({
@@ -4367,6 +4488,7 @@ def api_upload_students_to_class(class_id):
             supabase_admin.table("profiles").insert({
                 "id": student_id,
                 "full_name": full_name,
+                "sort_name": _generate_sort_name(full_name),
                 "role": "student",
             }).execute()
             supabase_admin.table("enrollments").insert({
@@ -4740,7 +4862,12 @@ def api_import_grades():
             continue
         new_id = str(uuid4())
         profile_id_by_name[nm.lower()] = new_id
-        new_profile_rows.append({"id": new_id, "full_name": nm, "role": "student"})
+        new_profile_rows.append({
+            "id": new_id,
+            "full_name": nm,
+            "sort_name": _generate_sort_name(nm),
+            "role": "student",
+        })
 
     if new_profile_rows:
         try:

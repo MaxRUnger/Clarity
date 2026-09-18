@@ -751,16 +751,16 @@ function displayExtractedData(data) {
     });
   });
 
-  // Sort preview rows by last name (pre-hyphen primary, first name tie-break) so
-  // the upload preview matches the server-side roster order on every page.
+  // Sort preview rows using the same UCA-based heuristic as Python's
+  // _student_sort_key_last_name so the upload preview matches the server-side
+  // roster order. Intl.Collator with locale 'en-US' applies Unicode Collation
+  // Algorithm weights that closely mirror pyuca on reconstructed "Last, First"
+  // strings for the common case.
+  const _previewCollator = new Intl.Collator('en-US');
   data.students.sort(function(a, b) {
-    const ka = _sortKeyLastName((a && a.name) || '');
-    const kb = _sortKeyLastName((b && b.name) || '');
-    if (ka[0] < kb[0]) return -1;
-    if (ka[0] > kb[0]) return 1;
-    if (ka[1] < kb[1]) return -1;
-    if (ka[1] > kb[1]) return 1;
-    return 0;
+    const ka = _generateSortName((a && a.name) || '');
+    const kb = _generateSortName((b && b.name) || '');
+    return _previewCollator.compare(ka, kb);
   });
 
   if (Array.isArray(data.learning_objectives)) {
@@ -984,30 +984,24 @@ function updateExtractedStudentName(idx, value) {
 }
 
 /**
- * Sort key for a student display-name string — mirrors Python's
- * _student_sort_key_last_name exactly so the upload preview always
- * matches the server-side roster order.
+ * Convert a stored "First Last[...]" student name to "Last[...], First" form.
  *
- * Returns [primary, secondary] where:
- *   primary  = last-name token up to (not including) the first hyphen,
- *              lower-cased  (e.g. "Smith-Pauley" → "smith")
- *   secondary = first-name token(s), lower-cased, for tie-breaking
+ * Mirrors Python's _generate_sort_name exactly: the first whitespace-separated
+ * token is the first name; everything after it becomes the last-name cluster.
+ * This faithfully inverts the Canvas CSV import conversion so Canvas-imported
+ * names (including multi-word last names, Von/Van prefixes, hyphenated names,
+ * and hyphen-with-space names) regenerate their exact Canvas sort string.
+ *
+ * Comma-format strings (already "Last, First") and single-token names are
+ * returned unchanged.
  */
-function _sortKeyLastName(name) {
+function _generateSortName(name) {
   const raw = (name || '').trim();
-  if (!raw) return ['\uffff', ''];
-  if (raw.indexOf(',') !== -1) {
-    const pieces = raw.split(',');
-    const last = pieces[0].trim().toLowerCase();
-    const primary = last.split('-')[0] || '\uffff';
-    const secondary = (pieces[1] || '').trim().toLowerCase();
-    return [primary || '\uffff', secondary];
-  }
+  if (!raw) return '\uffff';
+  if (raw.indexOf(',') !== -1) return raw;  // already "Last, First"
   const parts = raw.split(/\s+/);
-  if (parts.length === 1) return [parts[0].toLowerCase().split('-')[0], ''];
-  const primary = parts[parts.length - 1].toLowerCase().split('-')[0];
-  const secondary = parts.slice(0, -1).join(' ').toLowerCase();
-  return [primary, secondary];
+  if (parts.length === 1) return parts[0];
+  return parts.slice(1).join(' ') + ', ' + parts[0];
 }
 
 function updateExtractedHomeworkPct(idx, value) {

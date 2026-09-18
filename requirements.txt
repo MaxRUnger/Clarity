@@ -5,3 +5,4 @@ supabase==2.28.0
 PyMuPDF==1.27.1
 google-genai==1.14.0
 gunicorn==23.0.0
+pyuca==1.2

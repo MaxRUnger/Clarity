@@ -103,12 +103,28 @@
     };
   }
 
+  /**
+   * Convert a stored "First Last[...]" student name to "Last[...], First" form.
+   * Mirrors Python's _generate_sort_name exactly. The first whitespace token is
+   * the first name; everything after it forms the last-name cluster.
+   * Already-comma-format strings and single-token names are returned unchanged.
+   */
+  function generateSortName(name) {
+    const raw = (name || '').trim();
+    if (!raw) return '';
+    if (raw.indexOf(',') !== -1) return raw;
+    const parts = raw.split(/\s+/);
+    if (parts.length === 1) return parts[0];
+    return parts.slice(1).join(' ') + ', ' + parts[0];
+  }
+
   window.ClarityUI = {
     escapeHtml,
     apiRequest,
     applyInstructorModeVisibility,
     startMobileCsvPoll,
     debounce,
+    generateSortName,
   };
 })();
 
