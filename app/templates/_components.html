@@ -30,3 +30,270 @@
   </div>
 </div>
 {% endmacro %}
+
+{% macro mastery_badge_styles() %}
+<style>
+.mastery-m { background: #dcfce7; color: #15803d; border-color: #86efac; }
+.mastery-mr { background: #ecfdf5; color: #047857; border-color: #34d399; }
+.mastery-r { background: #fef9c3; color: #a16207; border-color: #fde047; }
+.mastery-rq { background: #ffedd5; color: #c2410c; border-color: #fdba74; }
+.mastery-p { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+.mastery-x { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+.mastery-a { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+.mastery-i { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.mastery-badge.non-counting-grade {
+  box-shadow: inset 0 0 0 2px #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+</style>
+{% endmacro %}
+
+{% macro student_progress_header(student, class_name=None, show_contact=false) %}
+<div class="student-progress-header">
+  <h1 class="sheet-name text-2xl font-semibold text-slate-900 dark:text-white">{{ student.name }}</h1>
+  {% if show_contact and student.email %}
+  <div class="print:hidden flex items-start gap-1.5 mt-1 min-w-0">
+    <span class="text-sm text-slate-500 dark:text-slate-400 select-text cursor-text break-all min-w-0">{{ student.email }}</span>
+    {{ copy_email_button(student.email) }}
+  </div>
+  {% endif %}
+  {% if show_contact and class_name %}
+  <p class="print:hidden text-slate-600 dark:text-slate-400 text-sm mt-1">{{ class_name }}</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro student_progress_cards(student) %}
+{% set los = student.learning_objectives or [] %}
+{% set passed = los|selectattr('is_passed')|list|length %}
+<div class="student-progress-cards space-y-6">
+  <div class="summary-card bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6">
+    <p class="sheet-label text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Learning Objectives</p>
+    <div class="grid grid-cols-2 gap-6">
+      <div>
+        <p class="sheet-label text-sm text-slate-600 dark:text-slate-300 mb-2">Passed</p>
+        <p class="sheet-metric text-2xl font-semibold text-slate-900 dark:text-white">{{ passed }} / {{ los|length }}</p>
+      </div>
+      <div>
+        <p class="sheet-label text-sm text-slate-600 dark:text-slate-300 mb-2">Progress</p>
+        {{ progress_bar(passed, los|length, show_label=true) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="lo-list-card bg-white dark:bg-slate-800 rounded-xl shadow-sm">
+    <div class="lo-list-head p-6 border-b border-slate-100 dark:border-slate-700">
+      <h2 class="sheet-name font-semibold text-slate-900 dark:text-white">Learning Objectives</h2>
+    </div>
+    <div class="divide-y divide-slate-100 dark:divide-slate-700">
+      {% for lo in los %}
+      <div class="lo-row p-6">
+        <div class="lo-head flex items-center justify-between gap-4">
+          <h3 class="sheet-name font-medium text-slate-900 dark:text-white truncate">{{ lo.vendor_code or lo.name }}</h3>
+          {% if lo.is_passed %}
+          <span class="passed-pill shrink-0 px-2 py-1 bg-green-500 text-white rounded-md text-xs font-medium">PASSED</span>
+          {% else %}
+          <span class="ms-pill shrink-0 px-2 py-1 bg-amber-100 text-amber-800 rounded-md text-xs font-medium">{{ lo.m_count }} / {{ lo.required_ms }} Ms</span>
+          {% endif %}
+        </div>
+        <p class="lo-grades-label sheet-label text-slate-600 dark:text-slate-300 text-sm mt-3 mb-1">Grades</p>
+        <div class="lo-grades flex flex-wrap items-center gap-2">
+          {% set meta_list = lo.grades_meta if lo.grades_meta else [] %}
+          {% for g in (lo.grades_list or []) %}
+          {% set meta = meta_list[loop.index0] if loop.index0 < (meta_list|length) else None %}
+          {% set is_non_counting = (g in ('M', 'MR')) and meta and (meta.counts_for_mastery == false) %}
+          <span class="mastery-badge mastery-{{ g|lower }} px-2 py-0.5 text-xs font-semibold font-mono rounded border{% if is_non_counting %} non-counting-grade{% endif %}">{{ g }}</span>
+          {% endfor %}
+          <span class="sheet-label text-xs text-slate-600 dark:text-slate-300">{{ lo.m_count }} / {{ lo.required_ms }} Ms{% if lo.mr_count %}<span class="ml-1">({{ lo.mr_count }} MR)</span>{% endif %}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+{% macro student_progress_print_styles() %}
+<style>
+@media print {
+  @page { size: letter portrait; margin: 0.5in; }
+
+  html, body, main {
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+  main {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .roster-print-student,
+  .student-detail-print {
+    background: #fff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .roster-print-student *,
+  .student-detail-print * {
+    background: #fff !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+  }
+
+  .roster-print-student .student-progress-header .sheet-name,
+  .student-detail-print .student-progress-header .sheet-name {
+    color: #0f172a !important;
+    font-size: 0.95rem !important;
+    line-height: 1.15 !important;
+    margin: 0 !important;
+  }
+  .roster-print-student .student-progress-cards.space-y-6 > :not([hidden]) ~ :not([hidden]),
+  .student-detail-print .student-progress-cards.space-y-6 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.15rem !important;
+  }
+  .roster-print-student .summary-card,
+  .student-detail-print .summary-card {
+    padding: 0.2rem 0.35rem !important;
+  }
+  .roster-print-student .summary-card .mb-3,
+  .student-detail-print .summary-card .mb-3 {
+    margin-bottom: 0.08rem !important;
+  }
+  .roster-print-student .summary-card .mb-2,
+  .student-detail-print .summary-card .mb-2 {
+    margin-bottom: 0 !important;
+  }
+  .roster-print-student .summary-card .grid,
+  .student-detail-print .summary-card .grid {
+    gap: 0.35rem !important;
+  }
+  .roster-print-student .summary-card .sheet-label,
+  .student-detail-print .summary-card .sheet-label,
+  .roster-print-student .progress-bar-wrapper span,
+  .student-detail-print .progress-bar-wrapper span {
+    color: #334155 !important;
+    font-size: 0.72rem !important;
+    line-height: 1.15 !important;
+    margin-bottom: 0 !important;
+  }
+  .roster-print-student .sheet-metric,
+  .student-detail-print .sheet-metric {
+    color: #0f172a !important;
+    font-size: 0.9rem !important;
+    line-height: 1.15 !important;
+  }
+  .roster-print-student .lo-list-head,
+  .student-detail-print .lo-list-head {
+    padding: 0.08rem 0 !important;
+    border: 0 !important;
+  }
+  .roster-print-student .lo-list-head .sheet-name,
+  .student-detail-print .lo-list-head .sheet-name {
+    color: #0f172a !important;
+    font-size: 0.75rem !important;
+    line-height: 1.15 !important;
+  }
+  .roster-print-student .lo-row,
+  .student-detail-print .lo-row {
+    display: flex !important;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.35rem !important;
+    padding: 1px 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid #64748b !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    line-height: 1.15 !important;
+  }
+  .roster-print-student .lo-head,
+  .student-detail-print .lo-head {
+    display: contents;
+  }
+  .roster-print-student .lo-grades-label,
+  .student-detail-print .lo-grades-label {
+    display: none !important;
+  }
+  .roster-print-student .lo-row h3,
+  .student-detail-print .lo-row h3 {
+    color: #0f172a !important;
+    font-size: 0.72rem !important;
+    line-height: 1.15 !important;
+    margin: 0 !important;
+    max-width: 9rem;
+  }
+  .roster-print-student .lo-grades,
+  .student-detail-print .lo-grades {
+    display: flex !important;
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+    align-items: center;
+    gap: 0.15rem !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .roster-print-student .lo-grades .sheet-label,
+  .student-detail-print .lo-grades .sheet-label {
+    color: #334155 !important;
+    font-size: 0.68rem !important;
+    line-height: 1.15 !important;
+  }
+
+  .roster-print-student .passed-pill,
+  .student-detail-print .passed-pill {
+    background: #16a34a !important;
+    color: #ffffff !important;
+    font-size: 0.68rem !important;
+    line-height: 1.2 !important;
+    padding: 0 0.28rem !important;
+  }
+  .roster-print-student .ms-pill,
+  .student-detail-print .ms-pill {
+    background: #fef3c7 !important;
+    color: #92400e !important;
+    font-size: 0.68rem !important;
+    line-height: 1.2 !important;
+    padding: 0 0.28rem !important;
+  }
+  .roster-print-student .progress-bar-wrapper .h-2,
+  .student-detail-print .progress-bar-wrapper .h-2 {
+    height: 0.2rem !important;
+    background: #cbd5e1 !important;
+  }
+  .roster-print-student .progress-bar-wrapper .bg-green-500,
+  .student-detail-print .progress-bar-wrapper .bg-green-500 {
+    background: #16a34a !important;
+  }
+  .roster-print-student .mastery-badge,
+  .student-detail-print .mastery-badge {
+    font-size: 0.68rem !important;
+    line-height: 1.2 !important;
+    padding: 0 0.2rem !important;
+  }
+  .roster-print-student .mastery-m,
+  .student-detail-print .mastery-m { background: #dcfce7 !important; color: #15803d !important; border-color: #86efac !important; }
+  .roster-print-student .mastery-mr,
+  .student-detail-print .mastery-mr { background: #ecfdf5 !important; color: #047857 !important; border-color: #34d399 !important; }
+  .roster-print-student .mastery-r,
+  .student-detail-print .mastery-r { background: #fef9c3 !important; color: #a16207 !important; border-color: #fde047 !important; }
+  .roster-print-student .mastery-rq,
+  .student-detail-print .mastery-rq { background: #ffedd5 !important; color: #c2410c !important; border-color: #fdba74 !important; }
+  .roster-print-student .mastery-p,
+  .student-detail-print .mastery-p { background: #dbeafe !important; color: #1d4ed8 !important; border-color: #93c5fd !important; }
+  .roster-print-student .mastery-x,
+  .student-detail-print .mastery-x { background: #fee2e2 !important; color: #b91c1c !important; border-color: #fca5a5 !important; }
+  .roster-print-student .mastery-a,
+  .student-detail-print .mastery-a { background: #f1f5f9 !important; color: #475569 !important; border-color: #cbd5e1 !important; }
+  .roster-print-student .mastery-i,
+  .student-detail-print .mastery-i { background: #fef3c7 !important; color: #92400e !important; border-color: #fcd34d !important; }
+  .roster-print-student .mastery-badge.non-counting-grade,
+  .student-detail-print .mastery-badge.non-counting-grade {
+    box-shadow: inset 0 0 0 2px #ef4444 !important;
+    background: rgba(239, 68, 68, 0.08) !important;
+  }
+}
+</style>
+{% endmacro %}

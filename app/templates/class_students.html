@@ -1,8 +1,9 @@
 {% extends "app_base.html" %}
-{% from "_components.html" import homework_percentage_badge, progress_bar, copy_email_button %}
+{% from "_components.html" import homework_percentage_badge, progress_bar, copy_email_button, student_progress_header, student_progress_cards, mastery_badge_styles, student_progress_print_styles %}
 
 {% block content %}
 <div class="space-y-6 students-roster-page">
+<div class="print:hidden space-y-6">
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">Students</h1>
@@ -90,6 +91,16 @@
       {% endfor %}
     </div>
   </div>
+</div>
+
+<div class="hidden print:block roster-print-students">
+  {% for student in students %}
+  <section class="roster-print-student">
+    {{ student_progress_header(student) }}
+    {{ student_progress_cards(student) }}
+  </section>
+  {% endfor %}
+</div>
 </div>
 
 <div id="addStudentModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40">
@@ -399,99 +410,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 </script>
+{{ mastery_badge_styles() }}
+{{ student_progress_print_styles() }}
 <style>
 @media print {
-  @page { size: letter portrait; margin: 0.3in; }
-
-  html,
-  body,
-  main {
-    background: #fff !important;
-    color: #0f172a !important;
+  .roster-print-student {
+    break-after: page;
+    page-break-after: always;
   }
-  .dark body {
-    background: #fff !important;
-  }
-  main {
-    max-width: 100% !important;
-    padding: 0 !important;
-  }
-
-  .students-roster-page,
-  .students-roster-page * {
-    background: transparent !important;
-    color: #0f172a !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
-  }
-
-  .students-roster-page.space-y-6 > :not([hidden]) ~ :not([hidden]) {
-    margin-top: 0.35rem !important;
-  }
-  .students-roster-page h1 {
-    font-size: 0.95rem !important;
-    line-height: 1.2 !important;
-  }
-  .students-roster-page h1 + p {
-    font-size: 0.7rem !important;
-    margin-top: 0.1rem !important;
-    line-height: 1.2 !important;
-    color: #334155 !important;
-  }
-  .students-roster-page .p-6 {
-    padding: 0.3rem 0.5rem !important;
-  }
-  .students-roster-page .mb-2 {
-    margin-bottom: 0.1rem !important;
-  }
-  .students-roster-page .text-2xl {
-    font-size: 0.95rem !important;
-    line-height: 1.2 !important;
-  }
-  .students-roster-page .student-roster-list {
-    column-count: 2;
-    column-gap: 1.25rem;
-    column-fill: balance;
-  }
-  .students-roster-page .student-row {
-    padding: 0.18rem 0.4rem !important;
-    break-inside: avoid;
-    page-break-inside: avoid;
-    -webkit-column-break-inside: avoid;
-  }
-  .students-roster-page .student-row h3 {
-    font-size: 0.72rem !important;
-    line-height: 1.15 !important;
-  }
-  .students-roster-page .student-row .mb-1 {
-    margin-bottom: 0.05rem !important;
-  }
-  .students-roster-page .student-row .text-sm {
-    font-size: 0.62rem !important;
-    line-height: 1.15 !important;
-    color: #334155 !important;
-  }
-  .students-roster-page .student-row .mt-1\.5 {
-    margin-top: 0.12rem !important;
-  }
-  .students-roster-page .divide-y > :not([hidden]) ~ :not([hidden]) {
-    border-top: 1px solid #cbd5e1 !important;
-  }
-  .students-roster-page .homework-badge {
-    padding: 0.04rem 0.28rem !important;
-    font-size: 0.55rem !important;
-    border: 1px solid #94a3b8 !important;
-  }
-  .students-roster-page .progress-bar-wrapper {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  .students-roster-page .progress-bar-wrapper .h-2 {
-    height: 0.22rem !important;
-    background: #e2e8f0 !important;
-  }
-  .students-roster-page .progress-bar-wrapper .bg-green-500 {
-    background: #22c55e !important;
+  .roster-print-student:last-child {
+    break-after: auto;
+    page-break-after: auto;
   }
 }
 </style>

@@ -1,22 +1,15 @@
 {% extends "app_base.html" %}
-{% from "_components.html" import progress_bar, copy_email_button %}
+{% from "_components.html" import student_progress_header, student_progress_cards, mastery_badge_styles, student_progress_print_styles %}
 
 {% block content %}
-<div class="space-y-6">
+<div class="space-y-6 student-detail-print">
   <div class="min-w-0 flex items-end justify-between gap-4">
     <div class="flex items-center gap-4 min-w-0 flex-1">
       <a href="{{ url_for('main.class_students', class_id=class_id) }}" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
         <svg class="w-5 h-5 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
       </a>
       <div class="flex-1 min-w-0">
-        <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">{{ student.name }}</h1>
-        {% if student.email %}
-        <div class="flex items-start gap-1.5 mt-1 min-w-0">
-          <span class="text-sm text-slate-500 dark:text-slate-400 select-text cursor-text break-all min-w-0">{{ student.email }}</span>
-          {{ copy_email_button(student.email) }}
-        </div>
-        {% endif %}
-        <p class="text-slate-600 dark:text-slate-400 text-sm mt-1">{{ class_name }}</p>
+        {{ student_progress_header(student, class_name=class_name, show_contact=true) }}
       </div>
     </div>
     <div class="print:hidden flex-shrink-0">
@@ -29,177 +22,14 @@
       </button>
     </div>
   </div>
-
-  {% set los = student.learning_objectives %}
-  {% set passed = los|selectattr('is_passed')|list|length %}
-  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6">
-    <div class="space-y-6">
-      <div>
-        <p class="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Learning Objectives</p>
-        <div class="grid grid-cols-2 gap-6">
-          <div>
-            <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Passed</p>
-            <p class="text-2xl font-semibold text-slate-900 dark:text-white">{{ passed }} / {{ los|length }}</p>
-          </div>
-          <div>
-            <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Progress</p>
-            {{ progress_bar(passed, los|length, show_label=true) }}
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm">
-    <div class="p-6 border-b border-slate-100 dark:border-slate-700">
-      <h2 class="font-semibold text-slate-900 dark:text-white">Learning Objectives</h2>
-    </div>
-    <div class="divide-y divide-slate-50 dark:divide-slate-700">
-      {% for lo in student.learning_objectives %}
-      {% set is_passed = lo.is_passed %}
-      <details class="group/lo">
-        <summary class="p-6 cursor-pointer list-none flex items-center justify-between gap-4 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-          <div class="flex items-center gap-3 min-w-0">
-            <svg class="w-4 h-4 text-slate-400 shrink-0 transition-transform group-open/lo:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            <h3 class="font-medium text-slate-900 dark:text-white truncate">{{ lo.vendor_code or lo.name }}</h3>
-          </div>
-          {% if is_passed %}
-          <span class="shrink-0 px-2 py-1 bg-green-500 text-white rounded-md text-xs font-medium">PASSED</span>
-          {% else %}
-          <span class="shrink-0 px-2 py-1 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 rounded-md text-xs font-medium">{{ lo.m_count }} / {{ lo.required_ms }} Ms</span>
-          {% endif %}
-        </summary>
-        <div class="px-6 pb-6">
-          <p class="text-slate-500 dark:text-slate-400 text-sm mb-1">Grades</p>
-          <div class="flex flex-wrap items-center gap-2">
-            {% set meta_list = lo.grades_meta if lo.grades_meta else [] %}
-            {% for g in lo.grades_list %}
-            {% set meta = meta_list[loop.index0] if loop.index0 < (meta_list|length) else None %}
-            {% set is_non_counting = (g in ('M', 'MR')) and meta and (meta.counts_for_mastery == false) %}
-            <span class="mastery-badge mastery-{{ g|lower }} px-2 py-0.5 text-xs font-semibold font-mono rounded border{% if is_non_counting %} non-counting-grade{% endif %}">{{ g }}</span>
-            {% endfor %}
-            <span class="text-xs text-slate-500 dark:text-slate-400">{{ lo.m_count }} / {{ lo.required_ms }} Ms{% if lo.mr_count %}<span class="ml-1">({{ lo.mr_count }} MR)</span>{% endif %}</span>
-          </div>
-        </div>
-      </details>
-      {% endfor %}
-    </div>
-  </div>
+  {{ student_progress_cards(student) }}
 </div>
 
+{{ mastery_badge_styles() }}
+{{ student_progress_print_styles() }}
 <style>
-.group\/lo > summary::-webkit-details-marker {
-  display: none;
-}
-.group\/lo > summary {
-  list-style: none;
-}
-/* Chevron rotation without relying on Tailwind named-group variants
-   (CDN builds often omit group-open/<name>:rotate-*). */
-.group\/lo > summary svg {
-  transition: transform 0.15s ease;
-}
-.group\/lo[open] > summary svg {
-  transform: rotate(90deg);
-}
-
-.mastery-m { background: #dcfce7; color: #15803d; border-color: #86efac; }
-.mastery-mr { background: #ecfdf5; color: #047857; border-color: #34d399; }
-.mastery-r { background: #fef9c3; color: #a16207; border-color: #fde047; }
-.mastery-rq { background: #ffedd5; color: #c2410c; border-color: #fdba74; }
-.mastery-p { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
-.mastery-x { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
-.mastery-a { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
-.mastery-i { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
-
-.mastery-badge.non-counting-grade {
-  box-shadow: inset 0 0 0 2px #ef4444;
-  background: rgba(239, 68, 68, 0.08);
-}
-
 @media print {
-  @page { size: letter portrait; margin: 0.22in; }
-
-  body { background: #fff !important; }
-  main {
-    max-width: 100% !important;
-    padding: 0 !important;
-  }
-
-  .space-y-6 > :not([hidden]) ~ :not([hidden]) {
-    margin-top: 0.45rem !important;
-  }
-
-  h1 {
-    font-size: 0.95rem !important;
-    line-height: 1.2 !important;
-  }
-  h2, h3 {
-    font-size: 0.78rem !important;
-    line-height: 1.2 !important;
-  }
-  p, span, div {
-    line-height: 1.15 !important;
-  }
-
-  .rounded-xl {
-    border-radius: 0.35rem !important;
-  }
-  .shadow-sm {
-    box-shadow: none !important;
-  }
-  .border,
-  .border-b,
-  .divide-y > :not([hidden]) ~ :not([hidden]) {
-    border: 0 !important;
-    border-top: 0 !important;
-    border-bottom: 0 !important;
-  }
-  .p-6 {
-    padding: 0.32rem !important;
-  }
-  .mb-3 { margin-bottom: 0.3rem !important; }
-  .mb-2 { margin-bottom: 0.2rem !important; }
-  .mt-1 { margin-top: 0.1rem !important; }
-  .gap-6 { gap: 0.32rem !important; }
-  .gap-4 { gap: 0.24rem !important; }
-  .gap-3 { gap: 0.25rem !important; }
-  .gap-2 { gap: 0.14rem !important; }
-
-  .text-2xl {
-    font-size: 0.86rem !important;
-    line-height: 1.2 !important;
-  }
-  .text-sm { font-size: 0.62rem !important; }
-  .text-xs { font-size: 0.56rem !important; }
-
-  /* Print header should show only the student's name. */
-  button[onclick="window.print()"] {
-    display: none !important;
-  }
-  h1 + div,
-  h1 + div + p {
-    display: none !important;
-  }
-
-  .mastery-badge {
-    padding: 0.08rem 0.28rem !important;
-    font-size: 0.52rem !important;
-  }
-
-  details {
-    display: block !important;
-  }
-  details > summary {
-    display: flex !important;
-    list-style: none !important;
-  }
-  details > summary svg {
-    display: none !important;
-  }
-  details > *:not(summary) {
-    display: block !important;
-  }
+  button[onclick="window.print()"] { display: none !important; }
 }
 </style>
 {% endblock %}
