@@ -46,6 +46,12 @@ from app.routes import (
     _BLANK_GRADESHEET_NOTE,
     _enrolled_import_name_index,
     _lookup_enrolled_import_student_id,
+    _is_same_instructor_name_candidate,
+    _first_seen_unique_sheet_names,
+    _list_same_instructor_other_class_enrollments,
+    _collect_preview_import_name_matches,
+    _plan_import_name_resolutions,
+    MAX_IMPORT_ROWS,
 )
 from app import create_app
 
@@ -518,6 +524,42 @@ class TestFormatNameLastFirst(unittest.TestCase):
         self.assertEqual(
             _student_display_name({"id": "x", "full_name": "John Smith"}),
             "Smith John",
+        )
+
+    def test_student_display_name_prefers_comma_sort_name(self):
+        cases = [
+            ("Kaiya Smith- Pauley", "Smith- Pauley, Kaiya", "Smith- Pauley Kaiya"),
+            ("Zachary Von Huben", "Von Huben, Zachary", "Von Huben Zachary"),
+            ("Evelyn Juarez Salgado", "Juarez Salgado, Evelyn", "Juarez Salgado Evelyn"),
+            ("Andrew Zetina Ariza", "Zetina Ariza, Andrew", "Zetina Ariza Andrew"),
+            ("Emilio Benito Velasco Jr", "Benito Velasco Jr, Emilio", "Benito Velasco Jr Emilio"),
+            ("Jaiden Alesna", "Alesna, Jaiden", "Alesna Jaiden"),
+        ]
+        for full_name, sort_name, expected in cases:
+            self.assertEqual(
+                _student_display_name({
+                    "id": "x",
+                    "full_name": full_name,
+                    "sort_name": sort_name,
+                }),
+                expected,
+                msg=full_name,
+            )
+
+    def test_student_display_name_empty_sort_name_falls_back(self):
+        self.assertEqual(
+            _student_display_name({
+                "id": "x",
+                "full_name": "John Smith",
+                "sort_name": "",
+            }),
+            "Smith John",
+        )
+
+    def test_no_comma_suffix_stays_with_preceding_token(self):
+        self.assertEqual(
+            _format_name_last_first("Emilio Benito Velasco Jr"),
+            "Velasco Jr Emilio Benito",
         )
 
 
@@ -2468,6 +2510,794 @@ class TestMaxLengthValidation(unittest.TestCase):
             )
         self.assertEqual(rv.status_code, 400)
         send_mock.assert_not_called()
+
+
+class _PreviewTableQuery:
+    def __init__(self, name, rows):
+        self.name = name
+        self.rows = rows
+        self._eq = {}
+        self._in = {}
+
+    def select(self, *args, **kwargs):
+        return self
+
+    def eq(self, field, val):
+        self._eq[field] = val
+        return self
+
+    def in_(self, field, vals):
+        self._in[field] = list(vals)
+        return self
+
+    def execute(self):
+        rows = list(self.rows)
+        if self.name == "classes":
+            if "instructor_id" in self._eq:
+                rows = [c for c in rows if c.get("instructor_id") == self._eq["instructor_id"]]
+            if "id" in self._in:
+                allowed = {str(x) for x in self._in["id"]}
+                rows = [c for c in rows if str(c.get("id")) in allowed]
+        elif self.name == "enrollments":
+            if "class_id" in self._in:
+                allowed = {str(x) for x in self._in["class_id"]}
+                rows = [e for e in rows if str(e.get("class_id")) in allowed]
+            if "student_id" in self._in:
+                allowed = {str(x) for x in self._in["student_id"]}
+                rows = [e for e in rows if str(e.get("student_id")) in allowed]
+        return MagicMock(data=rows)
+
+
+class TestPreviewImportNameMatches(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+
+    def test_fuzzy_john_jon_flags_emily_emma_and_john_jane_do_not(self):
+        self.assertTrue(_is_same_instructor_name_candidate(
+            "Jon Smith", "John Smith", "Smith, John"
+        ))
+        self.assertFalse(_is_same_instructor_name_candidate(
+            "Emily Chen", "Emma Chen", "Chen, Emma"
+        ))
+        self.assertFalse(_is_same_instructor_name_candidate(
+            "John Smith", "Jane Smith", "Smith, Jane"
+        ))
+
+    def test_last_first_sheet_names_exact_and_typo_flag(self):
+        self.assertTrue(_is_same_instructor_name_candidate(
+            "Smith, John", "John Smith", "Smith, John"
+        ))
+        self.assertTrue(_is_same_instructor_name_candidate(
+            "Smith, Jon", "John Smith", "Smith, John"
+        ))
+
+    def test_duplicate_input_names_keep_first_seen_spelling(self):
+        names, err = _first_seen_unique_sheet_names(
+            ["Jon Smith", "jon smith", "Jon Smith"]
+        )
+        self.assertIsNone(err)
+        self.assertEqual(names, ["Jon Smith"])
+
+    def _other_class_fixture(self):
+        classes = [
+            {"id": "class-a", "name": "Current", "instructor_id": "inst-1"},
+            {"id": "class-b", "name": "Algebra 2", "instructor_id": "inst-1"},
+            {"id": "class-c", "name": "Foreign", "instructor_id": "inst-2"},
+        ]
+        enrollments = [
+            {
+                "student_id": "same-ok",
+                "class_id": "class-b",
+                "profiles": {
+                    "id": "same-ok",
+                    "full_name": "John Smith",
+                    "sort_name": "Smith, John",
+                },
+            },
+            {
+                "student_id": "foreign-only",
+                "class_id": "class-c",
+                "profiles": {
+                    "id": "foreign-only",
+                    "full_name": "John Smith",
+                    "sort_name": "Smith, John",
+                },
+            },
+            {
+                "student_id": "dual-claimed",
+                "class_id": "class-b",
+                "profiles": {
+                    "id": "dual-claimed",
+                    "full_name": "Pat Lee",
+                    "sort_name": "Lee, Pat",
+                },
+            },
+            {
+                "student_id": "dual-claimed",
+                "class_id": "class-c",
+                "profiles": {
+                    "id": "dual-claimed",
+                    "full_name": "Pat Lee",
+                    "sort_name": "Lee, Pat",
+                },
+            },
+        ]
+        sa = MagicMock()
+        sa.table.side_effect = lambda name: _PreviewTableQuery(
+            name, classes if name == "classes" else enrollments
+        )
+        return sa
+
+    def test_list_excludes_foreign_and_dual_enrolled_claimed_ids(self):
+        from app import routes as r
+        sa = self._other_class_fixture()
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_class_instructor_id", return_value="inst-1"):
+            rows = _list_same_instructor_other_class_enrollments("class-a")
+        ids = {row["profile_id"] for row in rows}
+        self.assertIn("same-ok", ids)
+        self.assertNotIn("foreign-only", ids)
+        self.assertNotIn("dual-claimed", ids)
+
+    def test_fail_closed_elsewhere_lookup_returns_empty_list(self):
+        from app import routes as r
+        sa = self._other_class_fixture()
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_class_instructor_id", return_value="inst-1"), \
+                unittest.mock.patch.object(
+                    r, "_profile_ids_with_enrollment_elsewhere",
+                    side_effect=lambda pids, class_id: set(pids),
+                ):
+            rows = _list_same_instructor_other_class_enrollments("class-a")
+        self.assertEqual(rows, [])
+
+    def test_this_class_roster_name_is_never_returned(self):
+        from app import routes as r
+        others = [{
+            "profile_id": "p-other",
+            "full_name": "John Smith",
+            "sort_name": "Smith, John",
+            "class_id": "class-b",
+            "class_name": "Algebra 2",
+        }]
+        with unittest.mock.patch.object(
+            r, "_this_class_enrolled_import_index",
+            return_value=_enrolled_import_name_index(
+                [{"id": "p-here", "full_name": "John Smith"}]
+            ),
+        ), unittest.mock.patch.object(
+            r, "_list_same_instructor_other_class_enrollments", return_value=others
+        ):
+            matches = _collect_preview_import_name_matches(
+                "class-a", ["John Smith", "Jon Smith"]
+            )
+        names = [m["name"] for m in matches]
+        self.assertNotIn("John Smith", names)
+        self.assertEqual(names, ["Jon Smith"])
+        self.assertEqual(matches[0]["key"], "jon smith")
+        self.assertEqual(matches[0]["candidates"][0]["profile_id"], "p-other")
+        self.assertEqual(set(matches[0]["candidates"][0].keys()), {
+            "profile_id", "full_name", "class_name",
+        })
+
+    def test_non_owner_forbidden(self):
+        from app import routes as r
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=False):
+            rv = self.client.post(
+                "/api/class/class-a/preview-import-name-matches",
+                json={"names": ["Jon Smith"]},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 403)
+        self.assertFalse(rv.get_json()["success"])
+
+    def test_duplicate_names_route_returns_one_group(self):
+        from app import routes as r
+        others = [{
+            "profile_id": "p1",
+            "full_name": "John Smith",
+            "sort_name": "Smith, John",
+            "class_id": "class-b",
+            "class_name": "Algebra 2",
+        }]
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(
+                    r, "_this_class_enrolled_import_index", return_value={}
+                ), \
+                unittest.mock.patch.object(
+                    r, "_list_same_instructor_other_class_enrollments", return_value=others
+                ):
+            rv = self.client.post(
+                "/api/class/class-a/preview-import-name-matches",
+                json={"names": ["Jon Smith", "jon smith"]},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 200)
+        body = rv.get_json()
+        self.assertTrue(body["success"])
+        self.assertEqual(len(body["matches"]), 1)
+        self.assertEqual(body["matches"][0]["name"], "Jon Smith")
+        self.assertEqual(body["matches"][0]["key"], "jon smith")
+        self.assertEqual(body["name_keys"], ["jon smith", "jon smith"])
+
+    def test_name_keys_parallel_to_submitted_names(self):
+        from app import routes as r
+        others = [{
+            "profile_id": "p1",
+            "full_name": "John Smith",
+            "sort_name": "Smith, John",
+            "class_id": "class-b",
+            "class_name": "Algebra 2",
+        }]
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(
+                    r, "_this_class_enrolled_import_index", return_value={}
+                ), \
+                unittest.mock.patch.object(
+                    r, "_list_same_instructor_other_class_enrollments", return_value=others
+                ):
+            rv = self.client.post(
+                "/api/class/class-a/preview-import-name-matches",
+                json={"names": ["Jon Smith", "", "Ada Lovelace"]},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 200)
+        body = rv.get_json()
+        self.assertTrue(body["success"])
+        self.assertEqual(len(body["name_keys"]), 3)
+        self.assertEqual(body["name_keys"], ["jon smith", "", "ada lovelace"])
+        self.assertEqual(len(body["matches"]), 1)
+        self.assertEqual(body["matches"][0]["key"], "jon smith")
+
+
+class TestPlanImportNameResolutions(unittest.TestCase):
+    POOL = [
+        {
+            "profile_id": "p-john",
+            "full_name": "John Smith",
+            "sort_name": "Smith, John",
+            "class_id": "class-b",
+            "class_name": "Algebra 2",
+        },
+        {
+            "profile_id": "p-ada",
+            "full_name": "Ada Lovelace",
+            "sort_name": "Lovelace, Ada",
+            "class_id": "class-b",
+            "class_name": "Algebra 2",
+        },
+    ]
+
+    def test_tampered_attach_unknown_profile_id_is_invalid(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith"],
+            {},
+            self.POOL,
+            {"jon smith": {"action": "attach", "profile_id": "p-foreign"}},
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "invalid_attach")
+
+    def test_attach_in_pool_but_not_this_name_candidates_is_invalid(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith"],
+            {},
+            self.POOL,
+            {"jon smith": {"action": "attach", "profile_id": "p-ada"}},
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "invalid_attach")
+
+    def test_attach_on_key_with_no_candidates_is_ignored_create(self):
+        result = _plan_import_name_resolutions(
+            ["Zed Unique"],
+            {},
+            self.POOL,
+            {"zed unique": {"action": "attach", "profile_id": "p-john"}},
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["outcomes"]["zed unique"], ("create", None))
+        self.assertEqual(result["attaches"], [])
+
+    def test_attach_on_roster_key_is_ignored(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith"],
+            {"jon smith": "p-here"},
+            self.POOL,
+            {"jon smith": {"action": "attach", "profile_id": "p-john"}},
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["outcomes"]["jon smith"], ("roster", "p-here"))
+        self.assertEqual(result["attaches"], [])
+
+    def test_candidates_without_resolution_are_unresolved(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith"],
+            {},
+            self.POOL,
+            None,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "unresolved")
+        self.assertEqual(result["unresolved_names"], ["Jon Smith"])
+
+    def test_create_even_when_pool_has_exact_name_candidate(self):
+        result = _plan_import_name_resolutions(
+            ["John Smith"],
+            {},
+            self.POOL,
+            {"john smith": {"action": "create"}},
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["outcomes"]["john smith"], ("create", None))
+        self.assertEqual(result["attaches"], [])
+
+    def test_two_keys_attaching_same_profile_is_duplicate(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith", "Johnny Smith"],
+            {},
+            [
+                {
+                    "profile_id": "p-john",
+                    "full_name": "John Smith",
+                    "sort_name": "Smith, John",
+                    "class_id": "class-b",
+                    "class_name": "Algebra 2",
+                },
+            ],
+            {
+                "jon smith": {"action": "attach", "profile_id": "p-john"},
+                "johnny smith": {"action": "attach", "profile_id": "p-john"},
+            },
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "duplicate_attach")
+
+    def test_three_spellings_share_one_outcome(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith", "jon  smith", "Smith, Jon"],
+            {},
+            self.POOL,
+            {"jon smith": {"action": "attach", "profile_id": "p-john"}},
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["outcomes"]["jon smith"], ("attach", "p-john"))
+        self.assertEqual(result["outcomes"]["smith jon"], ("attach", "p-john"))
+        self.assertEqual(len(result["attaches"]), 1)
+        self.assertEqual(result["attaches"][0][1], "p-john")
+        self.assertEqual(result["attaches"][0][2], "Jon Smith")
+
+    def test_malformed_list_instead_of_dict(self):
+        result = _plan_import_name_resolutions(["Jon Smith"], {}, self.POOL, [])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "malformed")
+
+    def test_malformed_non_string_profile_id(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith"],
+            {},
+            self.POOL,
+            {"jon smith": {"action": "attach", "profile_id": 12}},
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "malformed")
+
+    def test_malformed_unknown_action(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith"],
+            {},
+            self.POOL,
+            {"jon smith": {"action": "merge"}},
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "malformed")
+
+    def test_malformed_too_many_entries(self):
+        blob = {f"name {i}": {"action": "create"} for i in range(MAX_IMPORT_ROWS + 1)}
+        result = _plan_import_name_resolutions(["Jon Smith"], {}, self.POOL, blob)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "malformed")
+
+    def test_malformed_wins_over_unresolved(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith"],
+            {},
+            self.POOL,
+            [],
+        )
+        self.assertEqual(result["error_type"], "malformed")
+        self.assertEqual(result["unresolved_names"], [])
+
+    def test_empty_pool_creates_non_roster_names(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith", "Ada Lovelace"],
+            {"ada lovelace": "p-roster-ada"},
+            [],
+            None,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["outcomes"]["jon smith"], ("create", None))
+        self.assertEqual(result["outcomes"]["ada lovelace"], ("roster", "p-roster-ada"))
+
+    def test_three_spellings_create_share_one_creates_entry(self):
+        result = _plan_import_name_resolutions(
+            ["Jon Smith", "jon  smith", "Smith, Jon"],
+            {},
+            [],
+            None,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["outcomes"]["jon smith"], ("create", None))
+        self.assertEqual(result["outcomes"]["smith jon"], ("create", None))
+        self.assertEqual(result["creates"], [("jon smith", "Jon Smith")])
+        self.assertEqual(result["attaches"], [])
+
+
+class _ImportWriteRecorder:
+    def __init__(self, roster_rows=None, existing_enrollments=None, attach_log_error=None):
+        self.roster_rows = roster_rows or []
+        self.existing_enrollments = existing_enrollments or []
+        self.attach_log_error = attach_log_error
+        self.inserts = {}
+        self.upserts = {}
+        self.full_name_lookups = []
+
+    def table(self, name):
+        return _ImportWriteQuery(self, name)
+
+    def write_rows(self, table):
+        return list(self.inserts.get(table, [])) + list(self.upserts.get(table, []))
+
+    def zero_writes(self):
+        write_tables = (
+            "learning_objectives",
+            "assignment_objectives",
+            "profiles",
+            "enrollments",
+            "grades",
+            "enrollment_attach_log",
+            "homework_scores",
+        )
+        return all(not self.write_rows(t) for t in write_tables)
+
+
+class _ImportWriteQuery:
+    def __init__(self, recorder, name):
+        self.recorder = recorder
+        self.name = name
+        self._eq = {}
+        self._in = {}
+        self._op = None
+
+    def select(self, *args, **kwargs):
+        return self
+
+    def eq(self, field, val):
+        self._eq[field] = val
+        return self
+
+    def in_(self, field, vals):
+        self._in[field] = list(vals)
+        if self.name == "profiles" and field == "full_name":
+            self.recorder.full_name_lookups.append(list(vals))
+        return self
+
+    def insert(self, rows):
+        self._op = "insert"
+        payload = rows if isinstance(rows, list) else [rows]
+        self.recorder.inserts.setdefault(self.name, []).extend(payload)
+        if self.name == "enrollment_attach_log" and self.recorder.attach_log_error:
+            raise self.recorder.attach_log_error
+        return self
+
+    def upsert(self, rows, **kwargs):
+        self._op = "upsert"
+        self.recorder.upserts.setdefault(self.name, []).extend(rows)
+        return self
+
+    def delete(self):
+        self._op = "delete"
+        return self
+
+    def execute(self):
+        if self._op == "insert" and self.name == "learning_objectives":
+            return MagicMock(data=[{"id": "lo-new"}])
+        if self._op in ("insert", "upsert", "delete"):
+            return MagicMock(data=[])
+        if self.name == "enrollments":
+            if "student_id" in self._in:
+                return MagicMock(data=self.recorder.existing_enrollments)
+            return MagicMock(data=self.recorder.roster_rows)
+        if self.name == "learning_objectives":
+            return MagicMock(data=[])
+        if self.name == "assignment_objectives":
+            return MagicMock(data=[])
+        return MagicMock(data=[])
+
+
+class TestImportGradesNameResolutions(unittest.TestCase):
+    POOL = [
+        {
+            "profile_id": "p-john",
+            "full_name": "John Smith",
+            "sort_name": "Smith, John",
+            "class_id": "class-b",
+            "class_name": "Algebra 2",
+        },
+        {
+            "profile_id": "p-ada",
+            "full_name": "Ada Lovelace",
+            "sort_name": "Lovelace, Ada",
+            "class_id": "class-b",
+            "class_name": "Algebra 2",
+        },
+    ]
+
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+
+    def _post_import(self, recorder, students, name_resolutions=None, pool=None, pool_error=None):
+        from app import routes as r
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+        payload = {
+            "class_id": "class-a",
+            "assignment_id": "asg-1",
+            "students": students,
+            "learning_objectives": ["A.1"],
+        }
+        if name_resolutions is not None:
+            payload["name_resolutions"] = name_resolutions
+        if pool_error is not None:
+            pool_cm = unittest.mock.patch.object(
+                r, "_list_same_instructor_other_class_enrollments",
+                side_effect=pool_error,
+            )
+        else:
+            pool_cm = unittest.mock.patch.object(
+                r, "_list_same_instructor_other_class_enrollments",
+                return_value=list(pool) if pool is not None else [],
+            )
+        with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
+                unittest.mock.patch.object(r, "supabase_admin", recorder), \
+                unittest.mock.patch.object(
+                    r, "_profile_ids_with_enrollment_elsewhere", return_value=set()
+                ), \
+                unittest.mock.patch.object(
+                    r.Homework, "resolve_hw_group_storage_key", return_value="HW1"
+                ), \
+                unittest.mock.patch.object(
+                    r.Homework, "get_hw_scores_map_for_assignment", return_value={}
+                ), \
+                pool_cm:
+            return self.client.post(
+                "/api/import-grades",
+                json=payload,
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+
+    def test_tampered_attach_foreign_profile_is_400_zero_writes(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [{"name": "Jon Smith", "grades": {"A.1": "A"}}],
+            name_resolutions={"jon smith": {"action": "attach", "profile_id": "p-foreign"}},
+            pool=self.POOL,
+        )
+        self.assertEqual(rv.status_code, 400)
+        self.assertFalse(rv.get_json()["success"])
+        self.assertTrue(rec.zero_writes())
+
+    def test_attach_same_instructor_id_not_in_name_candidates_is_400_zero_writes(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [{"name": "Jon Smith", "grades": {"A.1": "A"}}],
+            name_resolutions={"jon smith": {"action": "attach", "profile_id": "p-ada"}},
+            pool=self.POOL,
+        )
+        self.assertEqual(rv.status_code, 400)
+        self.assertFalse(rv.get_json()["success"])
+        self.assertTrue(rec.zero_writes())
+
+    def test_missing_resolution_for_flagged_name_is_409_zero_writes(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [{"name": "Jon Smith", "grades": {"A.1": "A"}}],
+            pool=self.POOL,
+        )
+        self.assertEqual(rv.status_code, 409)
+        body = rv.get_json()
+        self.assertFalse(body["success"])
+        self.assertEqual(body["unresolved_names"], ["Jon Smith"])
+        self.assertTrue(rec.zero_writes())
+        self.assertEqual(rec.write_rows("learning_objectives"), [])
+
+    def test_create_does_not_attach_global_exact_full_name_profile(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [{"name": "John Smith", "grades": {"A.1": "A"}}],
+            pool=[],
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rec.full_name_lookups, [])
+        profiles = rec.write_rows("profiles")
+        self.assertEqual(len(profiles), 1)
+        new_id = profiles[0]["id"]
+        self.assertNotEqual(new_id, "p-old-global")
+        enrolled = [row["student_id"] for row in rec.write_rows("enrollments")]
+        self.assertEqual(enrolled, [new_id])
+        self.assertNotIn("p-old-global", enrolled)
+
+    def test_two_names_attaching_one_profile_is_400_zero_writes(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [
+                {"name": "Jon Smith", "grades": {"A.1": "A"}},
+                {"name": "Johnny Smith", "grades": {"A.1": "A"}},
+            ],
+            name_resolutions={
+                "jon smith": {"action": "attach", "profile_id": "p-john"},
+                "johnny smith": {"action": "attach", "profile_id": "p-john"},
+            },
+            pool=[self.POOL[0]],
+        )
+        self.assertEqual(rv.status_code, 400)
+        self.assertTrue(rec.zero_writes())
+
+    def test_h3_foreign_name_with_no_resolution_creates_new_profile(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [{"name": "John Smith", "grades": {"A.1": "A"}}],
+            pool=[],
+        )
+        self.assertEqual(rv.status_code, 200)
+        profiles = rec.write_rows("profiles")
+        self.assertEqual(len(profiles), 1)
+        new_id = profiles[0]["id"]
+        self.assertNotEqual(new_id, "p-foreign-john")
+        enrolled = [row["student_id"] for row in rec.write_rows("enrollments")]
+        self.assertEqual(enrolled, [new_id])
+        self.assertNotIn("p-foreign-john", enrolled)
+
+    def test_candidate_pool_load_failure_is_500_zero_writes(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [{"name": "Jon Smith", "grades": {"A.1": "A"}}],
+            pool_error=RuntimeError("pool lookup failed"),
+        )
+        self.assertEqual(rv.status_code, 500)
+        self.assertTrue(rec.zero_writes())
+
+    def test_this_class_roster_name_uses_enrolled_id_without_resolution(self):
+        rec = _ImportWriteRecorder(
+            roster_rows=[{
+                "student_id": "p-here",
+                "profiles": {"id": "p-here", "full_name": "John Smith"},
+            }],
+            existing_enrollments=[{"student_id": "p-here"}],
+        )
+        rv = self._post_import(
+            rec,
+            [{"name": "John Smith", "grades": {"A.1": "A"}}],
+            pool=self.POOL,
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rec.write_rows("profiles"), [])
+        self.assertEqual(rec.write_rows("enrollments"), [])
+        grades = rec.write_rows("grades")
+        self.assertEqual(len(grades), 1)
+        self.assertEqual(grades[0]["student_id"], "p-here")
+
+    def test_valid_attach_enrolls_candidate_and_writes_attach_log(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [{"name": "Jon Smith", "grades": {"A.1": "A"}}],
+            name_resolutions={"jon smith": {"action": "attach", "profile_id": "p-john"}},
+            pool=self.POOL,
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rec.write_rows("profiles"), [])
+        enrolled = [row["student_id"] for row in rec.write_rows("enrollments")]
+        self.assertEqual(enrolled, ["p-john"])
+        logs = rec.write_rows("enrollment_attach_log")
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]["profile_id"], "p-john")
+        self.assertEqual(logs[0]["sheet_name"], "Jon Smith")
+        self.assertEqual(logs[0]["class_id"], "class-a")
+        self.assertEqual(logs[0]["instructor_id"], "inst1")
+
+    def test_duplicate_spellings_create_share_one_new_profile(self):
+        rec = _ImportWriteRecorder()
+        rv = self._post_import(
+            rec,
+            [
+                {"name": "Jon Smith", "grades": {"A.1": "A"}},
+                {"name": "Smith, Jon", "grades": {"A.1": "A"}},
+            ],
+            pool=[],
+        )
+        self.assertEqual(rv.status_code, 200)
+        profiles = rec.write_rows("profiles")
+        self.assertEqual(len(profiles), 1)
+        new_id = profiles[0]["id"]
+        grade_ids = [row["student_id"] for row in rec.write_rows("grades")]
+        self.assertEqual(grade_ids, [new_id])
+
+    def test_duplicate_grade_conflict_key_last_sheet_row_wins(self):
+        from app import routes as r
+
+        rec = _ImportWriteRecorder()
+        with unittest.mock.patch.object(
+            r.Homework,
+            "student_has_recorded_score",
+            return_value=True,
+        ):
+            rv = self._post_import(
+                rec,
+                [
+                    {"name": "John Smith", "grades": {"A.1": "M"}},
+                    {"name": "John Smith", "grades": {"A.1": "P"}},
+                ],
+                pool=[],
+            )
+
+        self.assertEqual(rv.status_code, 200)
+        grades = rec.write_rows("grades")
+        self.assertEqual(len(grades), 1)
+        self.assertEqual(grades[0]["top_score"], "P")
+
+        conflict_keys = [
+            (
+                row["student_id"],
+                row["learning_objective_id"],
+                row["assignment_id"],
+            )
+            for row in grades
+        ]
+        self.assertEqual(len(conflict_keys), len(set(conflict_keys)))
+
+    def test_attach_log_insert_failure_still_writes_grades(self):
+        rec = _ImportWriteRecorder(attach_log_error=RuntimeError("table missing"))
+        rv = self._post_import(
+            rec,
+            [{"name": "Jon Smith", "grades": {"A.1": "A"}}],
+            name_resolutions={"jon smith": {"action": "attach", "profile_id": "p-john"}},
+            pool=self.POOL,
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        grades = rec.write_rows("grades")
+        self.assertEqual(len(grades), 1)
+        self.assertEqual(grades[0]["student_id"], "p-john")
 
 
 if __name__ == '__main__':

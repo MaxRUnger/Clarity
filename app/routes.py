@@ -18,6 +18,7 @@ variable ``MULTI_WORKER=1`` to log a one-time warning at startup (see
 """
 
 import csv
+import difflib
 import hmac
 import io
 import logging
@@ -760,7 +761,11 @@ def organize_by_learning_objectives(students, learning_objectives):
                     "full_name": raw_fn,
                     "name": student.get("name")
                     or _student_display_name(
-                        {"id": student.get("id"), "full_name": student.get("full_name")}
+                        {
+                            "id": student.get("id"),
+                            "full_name": student.get("full_name"),
+                            "sort_name": student.get("sort_name"),
+                        }
                     ),
                     "top_score": top,
                     "second_score": sec,
@@ -823,6 +828,11 @@ def _format_name_last_first(raw: str) -> str:
     parts = s.split()
     if len(parts) == 1:
         return parts[0]
+    suffix = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv"}
+    if len(parts) >= 2 and parts[-1].strip().lower() in suffix:
+        last = f"{parts[-2]} {parts[-1]}"
+        first = " ".join(parts[:-2])
+        return f"{last} {first}".strip()
     last = parts[-1]
     first = " ".join(parts[:-1])
     return f"{last} {first}".strip()
@@ -834,6 +844,9 @@ def _student_display_name(prof: Dict[str, Any]) -> str:
     fn = (prof.get("full_name") or "").strip()
     if not fn or (pid and fn == pid):
         return "Unnamed student"
+    sort_name = (prof.get("sort_name") or "").strip()
+    if "," in sort_name:
+        return _format_name_last_first(sort_name)
     return _format_name_last_first(fn)
 
 
@@ -1142,7 +1155,11 @@ def _load_students_from_grades(class_id):
                     students_by_id[pid]["email"] = (p.get("email") or "").strip()
                     students_by_id[pid]["sort_name"] = (p.get("sort_name") or "").strip()
                     students_by_id[pid]["name"] = _student_display_name(
-                        {"id": pid, "full_name": p.get("full_name")}
+                        {
+                            "id": pid,
+                            "full_name": p.get("full_name"),
+                            "sort_name": p.get("sort_name"),
+                        }
                     )
         except Exception:
             pass
@@ -3060,13 +3077,13 @@ def student_history(class_id, student_id):
     enrollment_data = None
     try:
         enrollment = supabase_admin.table("enrollments").select(
-            "student_id, profiles(id, full_name, email)"
+            "student_id, profiles(id, full_name, sort_name, email)"
         ).eq("class_id", class_id).eq("student_id", student_id).single().execute()
         enrollment_data = enrollment.data
     except Exception:
         try:
             enrollment = supabase_admin.table("enrollments").select(
-                "student_id, profiles(id, full_name)"
+                "student_id, profiles(id, full_name, sort_name)"
             ).eq("class_id", class_id).eq("student_id", student_id).single().execute()
             enrollment_data = enrollment.data
         except Exception as e:
@@ -4134,7 +4151,7 @@ def get_available_students(class_id):
         if candidate_ids:
             prof_resp = (
                 supabase_admin.table("profiles")
-                .select("id, full_name")
+                .select("id, full_name, sort_name")
                 .eq("role", "student")
                 .in_("id", list(candidate_ids))
                 .execute()
@@ -4144,7 +4161,11 @@ def get_available_students(class_id):
         available = sorted(all_students, key=_student_row_sort_key)
         for s in available:
             s["name"] = _student_display_name(
-                {"id": s.get("id"), "full_name": s.get("full_name")}
+                {
+                    "id": s.get("id"),
+                    "full_name": s.get("full_name"),
+                    "sort_name": s.get("sort_name"),
+                }
             )
         return jsonify({"success": True, "students": available}), 200
     except Exception as e:
@@ -4316,6 +4337,394 @@ def _build_profiles_by_email_for_rows(rows: List[Dict[str, str]], class_id: str)
             if ek:
                 profiles_by_email[ek] = p
     return profiles_by_email
+
+
+def _sort_name_last_and_first(sort_name: str) -> Tuple[str, str]:
+    """Split a stored or generated ``Last, First`` sort_name into name keys."""
+    raw = (sort_name or "").strip()
+    if not raw:
+        return "", ""
+    if "," in raw:
+        last, first = raw.split(",", 1)
+        return _student_name_key(last), _student_name_key(first)
+    return _student_name_key(raw), ""
+
+
+def _is_same_instructor_name_candidate(
+    sheet_name: str, stored_full_name: str, stored_sort_name: str
+) -> bool:
+    """True when a gradesheet name should be offered as a same-instructor match."""
+    sheet = _normalize_spaces(sheet_name or "")
+    stored = _normalize_spaces(stored_full_name or "")
+    if not sheet or not stored:
+        return False
+    sheet_key = _student_name_key(sheet)
+    stored_key = _student_name_key(stored)
+    if sheet_key == stored_key:
+        return True
+    if sheet_key == _student_name_key(_format_name_last_first(stored)):
+        return True
+    if _student_name_key(_format_name_last_first(sheet)) == stored_key:
+        return True
+    sheet_sort = _generate_sort_name(sheet)
+    stored_sort = (stored_sort_name or "").strip() or _generate_sort_name(stored)
+    if _student_name_key(sheet_sort) == _student_name_key(stored_sort):
+        return True
+    if difflib.SequenceMatcher(None, sheet_key, stored_key).ratio() >= 0.90:
+        return True
+    sheet_last, sheet_first = _sort_name_last_and_first(sheet_sort)
+    stored_last, stored_first = _sort_name_last_and_first(stored_sort)
+    if sheet_last and stored_last and sheet_last == stored_last and sheet_first and stored_first:
+        if difflib.SequenceMatcher(None, sheet_first, stored_first).ratio() >= 0.85:
+            return True
+        shorter, longer = (
+            (sheet_first, stored_first)
+            if len(sheet_first) <= len(stored_first)
+            else (stored_first, sheet_first)
+        )
+        if len(shorter) >= 3 and longer.startswith(shorter):
+            return True
+    return False
+
+
+def _first_seen_unique_sheet_names(raw_names: List[str]) -> Tuple[List[str], Optional[str]]:
+    """Deduplicate by _student_name_key, preserving first-seen spelling."""
+    seen: set = set()
+    out: List[str] = []
+    for raw in raw_names:
+        nm = _normalize_spaces(str(raw or ""))
+        if not nm:
+            continue
+        if len(nm) > 255:
+            return [], "Name must be 255 characters or fewer"
+        key = _student_name_key(nm)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(nm)
+    return out, None
+
+
+def _list_same_instructor_other_class_enrollments(class_id: str) -> List[Dict[str, str]]:
+    """Enrollments in this instructor's other classes, never H3-claimed ids."""
+    owner_id = _class_instructor_id(class_id)
+    if not owner_id:
+        return []
+    classes_resp = (
+        supabase_admin.table("classes")
+        .select("id, name, instructor_id")
+        .eq("instructor_id", owner_id)
+        .execute()
+    )
+    other_classes = [
+        c for c in (classes_resp.data or [])
+        if c.get("id") and str(c["id"]) != str(class_id)
+    ]
+    if not other_classes:
+        return []
+    class_name_by_id = {
+        str(c["id"]): str(c.get("name") or "").strip()
+        for c in other_classes
+    }
+    other_ids = list(class_name_by_id.keys())
+    enr = (
+        supabase_admin.table("enrollments")
+        .select("student_id, class_id, profiles(id, full_name, sort_name)")
+        .in_("class_id", other_ids)
+        .execute()
+    )
+    by_pid: Dict[str, Dict[str, str]] = {}
+    for row in (enr.data or []):
+        prof = normalize_profile(row) or {}
+        pid = str(prof.get("id") or row.get("student_id") or "").strip()
+        cid = str(row.get("class_id") or "").strip()
+        fn = str(prof.get("full_name") or "").strip()
+        if not pid or not fn or cid not in class_name_by_id:
+            continue
+        candidate = {
+            "profile_id": pid,
+            "full_name": fn,
+            "sort_name": str(prof.get("sort_name") or "").strip(),
+            "class_id": cid,
+            "class_name": class_name_by_id.get(cid, ""),
+        }
+        existing = by_pid.get(pid)
+        if existing is None:
+            by_pid[pid] = candidate
+            continue
+        new_key = (candidate["class_name"].lower(), candidate["class_id"])
+        old_key = (existing["class_name"].lower(), existing["class_id"])
+        if new_key < old_key:
+            by_pid[pid] = candidate
+    pids = list(by_pid.keys())
+    claimed = _profile_ids_with_enrollment_elsewhere(pids, class_id)
+    return [row for row in by_pid.values() if row["profile_id"] not in claimed]
+
+
+def _this_class_enrolled_import_index(class_id: str) -> Dict[str, str]:
+    enr = (
+        supabase_admin.table("enrollments")
+        .select("student_id, profiles(id, full_name)")
+        .eq("class_id", class_id)
+        .execute()
+    )
+    enrolled_profiles: List[Dict[str, Any]] = []
+    for row in (enr.data or []):
+        prof = normalize_profile(row)
+        pid = str((prof or {}).get("id") or row.get("student_id") or "").strip()
+        fn = str((prof or {}).get("full_name") or "").strip()
+        if pid and fn:
+            enrolled_profiles.append({"id": pid, "full_name": fn})
+    return _enrolled_import_name_index(enrolled_profiles)
+
+
+def _collect_preview_import_name_matches(
+    class_id: str, sheet_names: List[str]
+) -> List[Dict[str, Any]]:
+    this_index = _this_class_enrolled_import_index(class_id)
+    others = _list_same_instructor_other_class_enrollments(class_id)
+    matches: List[Dict[str, Any]] = []
+    for nm in sheet_names:
+        if _lookup_enrolled_import_student_id(nm, this_index):
+            continue
+        cands: List[Dict[str, str]] = []
+        seen_cids: set = set()
+        for other in others:
+            pid = other["profile_id"]
+            if pid in seen_cids:
+                continue
+            if not _is_same_instructor_name_candidate(
+                nm, other["full_name"], other["sort_name"]
+            ):
+                continue
+            seen_cids.add(pid)
+            cands.append({
+                "profile_id": pid,
+                "full_name": other["full_name"],
+                "class_name": other["class_name"],
+            })
+        cands.sort(key=lambda c: (
+            c["class_name"].lower(),
+            c["full_name"].lower(),
+            c["profile_id"],
+        ))
+        if cands:
+            matches.append({
+                "name": nm,
+                "key": _student_name_key(nm),
+                "candidates": cands,
+            })
+    return matches
+
+
+def _import_resolution_alias_keys(name: str) -> List[str]:
+    nm = _normalize_spaces(str(name or ""))
+    if not nm:
+        return []
+    out: List[str] = []
+    for raw in (nm, _format_name_last_first(nm), _generate_sort_name(nm)):
+        key = _student_name_key(raw)
+        if key and key not in out:
+            out.append(key)
+    return out
+
+
+def _failure_import_name_plan(
+    error_type: str, message: str, unresolved_names: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    return {
+        "ok": False,
+        "error_type": error_type,
+        "message": message,
+        "unresolved_names": list(unresolved_names or []),
+    }
+
+
+def _validate_import_name_resolutions(
+    name_resolutions: Any,
+) -> Optional[Dict[str, Any]]:
+    if name_resolutions is None:
+        return None
+    if not isinstance(name_resolutions, dict):
+        return _failure_import_name_plan(
+            "malformed", "name_resolutions must be an object"
+        )
+    if len(name_resolutions) > MAX_IMPORT_ROWS:
+        return _failure_import_name_plan(
+            "malformed",
+            f"name_resolutions has too many entries (max {MAX_IMPORT_ROWS})",
+        )
+    for raw_key, raw_val in name_resolutions.items():
+        if not isinstance(raw_key, str):
+            return _failure_import_name_plan(
+                "malformed", "name_resolutions keys must be strings"
+            )
+        if not isinstance(raw_val, dict):
+            return _failure_import_name_plan(
+                "malformed", "name_resolutions values must be objects"
+            )
+        action = raw_val.get("action")
+        if action not in ("attach", "create"):
+            return _failure_import_name_plan(
+                "malformed",
+                "name_resolutions action must be attach or create",
+            )
+        if action == "attach":
+            pid = raw_val.get("profile_id")
+            if not isinstance(pid, str) or not pid.strip():
+                return _failure_import_name_plan(
+                    "malformed",
+                    "name_resolutions attach profile_id must be a non-empty string",
+                )
+    return None
+
+
+def _plan_import_name_resolutions(
+    unique_names,
+    roster_key_to_profile_id,
+    candidates_pool,
+    name_resolutions,
+) -> Dict[str, Any]:
+    """Pure planner: roster, create, or confirmed attach per name key.
+
+    Does not read or write the database. The caller loads candidates_pool
+    and maps error_type to an HTTP status.
+    """
+    malformed = _validate_import_name_resolutions(name_resolutions)
+    if malformed:
+        return malformed
+    resolutions = name_resolutions if isinstance(name_resolutions, dict) else {}
+    roster = roster_key_to_profile_id if isinstance(roster_key_to_profile_id, dict) else {}
+    pool = candidates_pool if isinstance(candidates_pool, list) else []
+
+    groups: List[Dict[str, Any]] = []
+    key_to_group: Dict[str, int] = {}
+    for raw in unique_names or []:
+        name = str(raw or "")
+        aliases = _import_resolution_alias_keys(name)
+        if not aliases:
+            continue
+        found = None
+        for alias in aliases:
+            if alias in key_to_group:
+                found = key_to_group[alias]
+                break
+        if found is None:
+            found = len(groups)
+            groups.append({
+                "primary_key": aliases[0],
+                "first_seen": name,
+                "aliases": list(aliases),
+                "names": [name],
+            })
+        else:
+            group = groups[found]
+            group["names"].append(name)
+            for alias in aliases:
+                if alias not in group["aliases"]:
+                    group["aliases"].append(alias)
+        for alias in aliases:
+            key_to_group[alias] = found
+
+    invalid_name = None
+    unresolved: List[str] = []
+    planned_by_index: Dict[int, Tuple[str, str, Optional[str], str]] = {}
+
+    for gi, group in enumerate(groups):
+        primary = group["primary_key"]
+        first_seen = group["first_seen"]
+        roster_pid = None
+        for alias in group["aliases"]:
+            raw_pid = roster.get(alias)
+            if raw_pid:
+                roster_pid = str(raw_pid).strip()
+                break
+        if roster_pid:
+            planned_by_index[gi] = (primary, "roster", roster_pid, first_seen)
+            continue
+
+        cand_ids: List[str] = []
+        seen_cids: set = set()
+        for other in pool:
+            if not isinstance(other, dict):
+                continue
+            pid = str(other.get("profile_id") or "").strip()
+            if not pid or pid in seen_cids:
+                continue
+            if not _is_same_instructor_name_candidate(
+                first_seen,
+                str(other.get("full_name") or ""),
+                str(other.get("sort_name") or ""),
+            ):
+                continue
+            seen_cids.add(pid)
+            cand_ids.append(pid)
+
+        res = None
+        for alias in group["aliases"]:
+            if alias in resolutions:
+                res = resolutions[alias]
+                break
+
+        if not cand_ids:
+            planned_by_index[gi] = (primary, "create", None, first_seen)
+            continue
+
+        if not res:
+            unresolved.append(first_seen)
+            continue
+
+        action = res.get("action")
+        if action == "create":
+            planned_by_index[gi] = (primary, "create", None, first_seen)
+            continue
+
+        attach_pid = str(res.get("profile_id") or "").strip()
+        if attach_pid not in seen_cids:
+            if invalid_name is None:
+                invalid_name = first_seen
+            continue
+        planned_by_index[gi] = (primary, "attach", attach_pid, first_seen)
+
+    if invalid_name:
+        return _failure_import_name_plan(
+            "invalid_attach",
+            f"Invalid attach for {invalid_name}",
+        )
+
+    attach_owner: Dict[str, str] = {}
+    for primary, outcome, pid, first_seen in planned_by_index.values():
+        if outcome != "attach" or not pid:
+            continue
+        prev = attach_owner.get(pid)
+        if prev and prev != primary:
+            return _failure_import_name_plan(
+                "duplicate_attach",
+                "Two names cannot attach to the same student",
+            )
+        attach_owner[pid] = primary
+
+    if unresolved:
+        return _failure_import_name_plan(
+            "unresolved",
+            "Some names need confirmation",
+            unresolved_names=unresolved,
+        )
+
+    outcomes: Dict[str, Tuple[str, Optional[str]]] = {}
+    attaches: List[Tuple[str, str, str]] = []
+    creates: List[Tuple[str, str]] = []
+    for gi, group in enumerate(groups):
+        primary, outcome, pid, first_seen = planned_by_index[gi]
+        tup = (outcome, pid)
+        for alias in group["aliases"]:
+            outcomes[alias] = tup
+        if outcome == "attach" and pid:
+            attaches.append((primary, pid, first_seen))
+        if outcome == "create":
+            creates.append((primary, first_seen))
+
+    return {"ok": True, "outcomes": outcomes, "attaches": attaches, "creates": creates}
 
 
 @main_bp.route("/api/class/<class_id>/upload_students", methods=["POST"])
@@ -4676,6 +5085,44 @@ def api_remove_student_from_class(class_id):
         return _safe_api_error("Could not remove student", 500, log_detail=e)
 
 
+@main_bp.route("/api/class/<class_id>/preview-import-name-matches", methods=["POST"])
+@api_instructor_required
+@rate_limited("preview_import_name_matches", limit=30, window_sec=900)
+def api_preview_import_name_matches(class_id):
+    if not _instructor_owns_class(class_id):
+        return jsonify({"success": False, "error": "Forbidden"}), 403
+    data, err_resp = _require_json_object()
+    if err_resp:
+        return err_resp[0], err_resp[1]
+    collected: List[str] = []
+    raw_names = data.get("names")
+    if isinstance(raw_names, list):
+        collected.extend("" if x is None else str(x) for x in raw_names)
+    raw_students = data.get("students")
+    if isinstance(raw_students, list):
+        for item in raw_students:
+            if isinstance(item, dict):
+                collected.append(str(item.get("name") or item.get("full_name") or ""))
+    if len(collected) > MAX_IMPORT_ROWS:
+        return jsonify({
+            "success": False,
+            "error": f"Too many students in one import (max {MAX_IMPORT_ROWS})",
+        }), 400
+    unique_names, name_err = _first_seen_unique_sheet_names(collected)
+    if name_err:
+        return jsonify({"success": False, "error": name_err}), 400
+    try:
+        matches = _collect_preview_import_name_matches(class_id, unique_names)
+    except Exception as e:
+        return _safe_api_error("Could not preview name matches", 500, log_detail=e)
+    name_keys = [_student_name_key(n) for n in collected]
+    return jsonify({
+        "success": True,
+        "matches": matches,
+        "name_keys": name_keys,
+    }), 200
+
+
 @main_bp.route("/api/import-grades", methods=["POST"])
 @api_login_required
 @rate_limited("import_grades", limit=30, window_sec=900)
@@ -4700,6 +5147,119 @@ def api_import_grades():
         lo for lo in extracted_los
         if not Homework.is_import_sheet_hw_column(lo)
     ]
+
+    # We keep duplicate name rows in `student_entries` so grades for the same
+    # student spread across two sheet rows still merge into one profile, but
+    # `unique_names` drives the DB lookup so we never hit the same name twice
+    # against PostgREST.
+    # Duplicate grade keys are resolved before the batch upsert.
+    student_entries: List[Tuple[str, Dict[str, Any]]] = []
+    for s in students:
+        nm = (s.get('name') or s.get('full_name') or '').strip()
+        if not nm:
+            continue
+        student_entries.append((nm, s))
+
+    unique_names = sorted({nm for nm, _ in student_entries}, key=str.lower)
+
+    roster_key_to_profile_id: Dict[str, str] = {}
+    roster_resolved_keys: set = set()
+    try:
+        enr = (
+            supabase_admin.table("enrollments")
+            .select("student_id, profiles(id, full_name)")
+            .eq("class_id", class_id)
+            .execute()
+        )
+        enrolled_profiles: List[Dict[str, Any]] = []
+        for row in (enr.data or []):
+            prof = normalize_profile(row)
+            pid = str((prof or {}).get("id") or row.get("student_id") or "").strip()
+            fn = str((prof or {}).get("full_name") or "").strip()
+            if pid and fn:
+                enrolled_profiles.append({"id": pid, "full_name": fn})
+        enrolled_index = _enrolled_import_name_index(enrolled_profiles)
+        for nm in unique_names:
+            hit = _lookup_enrolled_import_student_id(nm, enrolled_index)
+            if hit:
+                nk = _student_name_key(nm)
+                roster_key_to_profile_id[nk] = hit
+                roster_resolved_keys.add(nk)
+    except Exception as e:
+        logger.error("Import roster name index failed for class %s: %s", class_id, e)
+
+    profile_id_by_name: Dict[str, str] = dict(roster_key_to_profile_id)
+    if profile_id_by_name:
+        claimed_elsewhere = _profile_ids_with_enrollment_elsewhere(
+            list(profile_id_by_name.values()), class_id
+        )
+        if claimed_elsewhere:
+            profile_id_by_name = {
+                name: pid for name, pid in profile_id_by_name.items()
+                if name in roster_resolved_keys or pid not in claimed_elsewhere
+            }
+
+    try:
+        candidates_pool = _list_same_instructor_other_class_enrollments(str(class_id))
+    except Exception as e:
+        return _safe_api_error("Could not load name-match candidates", 500, log_detail=e)
+
+    planned = _plan_import_name_resolutions(
+        unique_names,
+        profile_id_by_name,
+        candidates_pool,
+        data.get("name_resolutions"),
+    )
+    if not planned.get("ok"):
+        if planned.get("error_type") == "unresolved":
+            return jsonify({
+                "success": False,
+                "error": planned["message"],
+                "unresolved_names": planned.get("unresolved_names") or [],
+            }), 409
+        return jsonify({
+            "success": False,
+            "error": planned.get("message") or "Invalid name resolutions",
+        }), 400
+
+    create_uuid_by_primary: Dict[str, str] = {}
+    new_profile_rows: List[Dict[str, Any]] = []
+    for primary, first_seen in planned.get("creates") or []:
+        new_id = str(uuid4())
+        create_uuid_by_primary[primary] = new_id
+        new_profile_rows.append({
+            "id": new_id,
+            "full_name": first_seen,
+            "sort_name": _generate_sort_name(first_seen),
+            "role": "student",
+        })
+
+    assigned_creates: Dict[str, str] = dict(create_uuid_by_primary)
+    spreading = True
+    while spreading:
+        spreading = False
+        for nm in unique_names:
+            aliases = _import_resolution_alias_keys(nm)
+            hit = None
+            for alias in aliases:
+                if alias in assigned_creates:
+                    hit = assigned_creates[alias]
+                    break
+            if not hit:
+                continue
+            for alias in aliases:
+                if alias not in assigned_creates:
+                    assigned_creates[alias] = hit
+                    spreading = True
+
+    profile_id_by_name = {}
+    for key, (outcome, pid) in (planned.get("outcomes") or {}).items():
+        if outcome in ("roster", "attach") and pid:
+            profile_id_by_name[key] = pid
+        elif outcome == "create":
+            uid = assigned_creates.get(key)
+            if uid:
+                profile_id_by_name[key] = uid
 
     try:
         los_resp = _select_class_pool_learning_objectives(
@@ -4774,101 +5334,6 @@ def api_import_grades():
         except Exception as e:
             logger.error("Error linking LOs to assignment: %s", e)
 
-    # We keep duplicate name rows in `student_entries` so grades for the same
-    # student spread across two sheet rows still merge into one profile, but
-    # `unique_names` drives the DB lookup so we never hit the same name twice
-    # against PostgREST.
-    student_entries: List[Tuple[str, Dict[str, Any]]] = []
-    seen_keys: set = set()
-    for s in students:
-        nm = (s.get('name') or s.get('full_name') or '').strip()
-        if not nm:
-            continue
-        key = nm.lower()
-        if key in seen_keys:
-            student_entries.append((nm, s))
-            continue
-        seen_keys.add(key)
-        student_entries.append((nm, s))
-
-    unique_names = sorted({nm for nm, _ in student_entries}, key=str.lower)
-
-    profile_id_by_name: Dict[str, str] = {}
-    roster_resolved_keys: set = set()
-    try:
-        enr = (
-            supabase_admin.table("enrollments")
-            .select("student_id, profiles(id, full_name)")
-            .eq("class_id", class_id)
-            .execute()
-        )
-        enrolled_profiles: List[Dict[str, Any]] = []
-        for row in (enr.data or []):
-            prof = normalize_profile(row)
-            pid = str((prof or {}).get("id") or row.get("student_id") or "").strip()
-            fn = str((prof or {}).get("full_name") or "").strip()
-            if pid and fn:
-                enrolled_profiles.append({"id": pid, "full_name": fn})
-        enrolled_index = _enrolled_import_name_index(enrolled_profiles)
-        for nm in unique_names:
-            hit = _lookup_enrolled_import_student_id(nm, enrolled_index)
-            if hit:
-                profile_id_by_name[nm.lower()] = hit
-                roster_resolved_keys.add(nm.lower())
-    except Exception as e:
-        logger.error("Import roster name index failed for class %s: %s", class_id, e)
-
-    # Bulk fetch existing profiles for these names.
-    if unique_names:
-        try:
-            CHUNK = 100
-            for i in range(0, len(unique_names), CHUNK):
-                batch = unique_names[i:i + CHUNK]
-                batch = [nm for nm in batch if nm.lower() not in profile_id_by_name]
-                if not batch:
-                    continue
-                resp = (
-                    supabase_admin.table("profiles")
-                    .select("id, full_name")
-                    .in_("full_name", batch)
-                    .execute()
-                )
-                for row in (resp.data or []):
-                    fn = (row.get('full_name') or '').strip()
-                    pid = row.get('id')
-                    if fn and pid and fn.lower() not in profile_id_by_name:
-                        profile_id_by_name[fn.lower()] = pid
-        except Exception as e:
-            logger.error("Bulk profile lookup failed: %s", e)
-
-    # A name match against the global profiles table can coincidentally hit
-    # another instructor's student. Only reuse a match with no enrollment in
-    # a different class; otherwise drop it so a fresh profile is created
-    # below instead of merging into a stranger's roster.
-    if profile_id_by_name:
-        claimed_elsewhere = _profile_ids_with_enrollment_elsewhere(
-            list(profile_id_by_name.values()), class_id
-        )
-        if claimed_elsewhere:
-            profile_id_by_name = {
-                name: pid for name, pid in profile_id_by_name.items()
-                if name in roster_resolved_keys or pid not in claimed_elsewhere
-            }
-
-    # Build missing-profile insert payload (preserve original semantics: new uuid + role=student).
-    new_profile_rows: List[Dict[str, Any]] = []
-    for nm in unique_names:
-        if nm.lower() in profile_id_by_name:
-            continue
-        new_id = str(uuid4())
-        profile_id_by_name[nm.lower()] = new_id
-        new_profile_rows.append({
-            "id": new_id,
-            "full_name": nm,
-            "sort_name": _generate_sort_name(nm),
-            "role": "student",
-        })
-
     if new_profile_rows:
         try:
             CHUNK = 150
@@ -4881,15 +5346,20 @@ def api_import_grades():
             # is skipped instead of dropping the entire batch. Names that fail
             # are removed from `profile_id_by_name` so subsequent grade rows
             # for them are also skipped, matching the old per-student loop.
-            failed: set = set()
+            failed_ids: set = set()
             for row in new_profile_rows:
                 try:
                     supabase_admin.table("profiles").insert(row).execute()
                 except Exception as inner:
                     logger.error("Error creating profile for '%s': %s", row.get('full_name'), inner)
-                    failed.add((row.get('full_name') or '').lower())
-            for k in failed:
-                profile_id_by_name.pop(k, None)
+                    failed_id = str(row.get("id") or "").strip()
+                    if failed_id:
+                        failed_ids.add(failed_id)
+            if failed_ids:
+                profile_id_by_name = {
+                    name: pid for name, pid in profile_id_by_name.items()
+                    if pid not in failed_ids
+                }
 
     # Bulk fetch existing enrollments for this class for the resolved profile IDs.
     profile_ids = [pid for pid in profile_id_by_name.values() if pid]
@@ -4928,8 +5398,22 @@ def api_import_grades():
         except Exception as e:
             logger.error("Bulk enrollment insert failed: %s", e)
 
+    for _primary, attach_pid, sheet_name in planned.get("attaches") or []:
+        try:
+            supabase_admin.table("enrollment_attach_log").insert({
+                "instructor_id": session.get("user_id"),
+                "class_id": class_id,
+                "profile_id": attach_pid,
+                "sheet_name": sheet_name,
+            }).execute()
+        except Exception as log_err:
+            logger.warning(
+                "enrollment_attach_log insert skipped (table may not exist yet): %s",
+                log_err,
+            )
+
     for full_name, student in student_entries:
-        profile_id = profile_id_by_name.get(full_name.lower())
+        profile_id = profile_id_by_name.get(_student_name_key(full_name))
         if not profile_id:
             continue
 
@@ -4990,6 +5474,22 @@ def api_import_grades():
             })
 
         imported += 1
+
+    # PostgreSQL rejects one upsert statement containing the same conflict key
+    # more than once. Reinsert duplicate keys so the last sheet row wins and
+    # the resulting order reflects each surviving row's final occurrence.
+    deduped_grade_rows: Dict[
+        Tuple[Any, Any, Any], Dict[str, Any]
+    ] = {}
+    for row in grade_rows:
+        conflict_key = (
+            row.get("student_id"),
+            row.get("learning_objective_id"),
+            row.get("assignment_id"),
+        )
+        deduped_grade_rows.pop(conflict_key, None)
+        deduped_grade_rows[conflict_key] = row
+    grade_rows = list(deduped_grade_rows.values())
 
     # Batch upsert grades — overwrites existing scores for the same student+LO+assignment
     try:

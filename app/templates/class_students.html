@@ -2,14 +2,21 @@
 {% from "_components.html" import homework_percentage_badge, progress_bar, copy_email_button %}
 
 {% block content %}
-<div class="space-y-6">
+<div class="space-y-6 students-roster-page">
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">Students</h1>
       <p class="text-slate-500 dark:text-slate-400 mt-1">{{ class_name }} · View individual student progress</p>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 print:hidden">
       <button id="addStudentBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium" type="button">+ Add student</button>
+      <button type="button" onclick="window.print()"
+        class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
+        </svg>
+        Print
+      </button>
       <a href="{{ url_for('main.class_detail', class_id=class_id) }}" class="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors text-sm font-medium text-slate-900 dark:text-white">← Back to Dashboard</a>
     </div>
   </div>
@@ -22,13 +29,13 @@
   </div>
 
   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm">
-    <div class="p-6 border-b border-slate-100 dark:border-slate-700">
+    <div class="p-6 border-b border-slate-100 dark:border-slate-700 print:hidden">
       <div class="relative">
         <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
         <input type="text" id="searchInput" placeholder="Search by name or email..." oninput="handleSearch()" class="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-700 border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-slate-900 dark:text-white dark:placeholder-slate-400">
       </div>
     </div>
-    <div class="divide-y divide-slate-50 dark:divide-slate-700">
+    <div class="student-roster-list divide-y divide-slate-50 dark:divide-slate-700">
       {% for student in students %}
       <div role="link" tabindex="0"
         class="student-row block px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer relative"
@@ -45,7 +52,7 @@
             <div class="mb-1">
               <h3 class="font-semibold text-slate-900 dark:text-white">{{ student.name }}</h3>
               {% if student.email %}
-              <div class="flex items-center gap-1 mt-1 min-w-0 pr-2">
+              <div class="flex items-center gap-1 mt-1 min-w-0 pr-2 print:hidden">
                 <span class="text-xs text-slate-500 dark:text-slate-400 select-text cursor-text truncate">{{ student.email }}</span>
                 {{ copy_email_button(student.email, compact=True) }}
               </div>
@@ -61,7 +68,7 @@
               {{ progress_bar(passed, los|length) }}
             </div>
           </div>
-          <div class="flex items-center gap-1 ml-2 shrink-0">
+          <div class="flex items-center gap-1 ml-2 shrink-0 print:hidden">
             <button type="button"
               onclick="event.stopPropagation(); openEditStudentModal(this.closest('[data-student-id]'))"
               title="Edit student"
@@ -75,7 +82,7 @@
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-          <svg class="w-5 h-5 text-slate-400 pointer-events-none ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+          <svg class="w-5 h-5 text-slate-400 pointer-events-none ml-1 print:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
         </div>
       </div>
       {% else %}
@@ -392,4 +399,100 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 </script>
+<style>
+@media print {
+  @page { size: letter portrait; margin: 0.3in; }
+
+  html,
+  body,
+  main {
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+  .dark body {
+    background: #fff !important;
+  }
+  main {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .students-roster-page,
+  .students-roster-page * {
+    background: transparent !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+
+  .students-roster-page.space-y-6 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.35rem !important;
+  }
+  .students-roster-page h1 {
+    font-size: 0.95rem !important;
+    line-height: 1.2 !important;
+  }
+  .students-roster-page h1 + p {
+    font-size: 0.7rem !important;
+    margin-top: 0.1rem !important;
+    line-height: 1.2 !important;
+    color: #334155 !important;
+  }
+  .students-roster-page .p-6 {
+    padding: 0.3rem 0.5rem !important;
+  }
+  .students-roster-page .mb-2 {
+    margin-bottom: 0.1rem !important;
+  }
+  .students-roster-page .text-2xl {
+    font-size: 0.95rem !important;
+    line-height: 1.2 !important;
+  }
+  .students-roster-page .student-roster-list {
+    column-count: 2;
+    column-gap: 1.25rem;
+    column-fill: balance;
+  }
+  .students-roster-page .student-row {
+    padding: 0.18rem 0.4rem !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    -webkit-column-break-inside: avoid;
+  }
+  .students-roster-page .student-row h3 {
+    font-size: 0.72rem !important;
+    line-height: 1.15 !important;
+  }
+  .students-roster-page .student-row .mb-1 {
+    margin-bottom: 0.05rem !important;
+  }
+  .students-roster-page .student-row .text-sm {
+    font-size: 0.62rem !important;
+    line-height: 1.15 !important;
+    color: #334155 !important;
+  }
+  .students-roster-page .student-row .mt-1\.5 {
+    margin-top: 0.12rem !important;
+  }
+  .students-roster-page .divide-y > :not([hidden]) ~ :not([hidden]) {
+    border-top: 1px solid #cbd5e1 !important;
+  }
+  .students-roster-page .homework-badge {
+    padding: 0.04rem 0.28rem !important;
+    font-size: 0.55rem !important;
+    border: 1px solid #94a3b8 !important;
+  }
+  .students-roster-page .progress-bar-wrapper {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .students-roster-page .progress-bar-wrapper .h-2 {
+    height: 0.22rem !important;
+    background: #e2e8f0 !important;
+  }
+  .students-roster-page .progress-bar-wrapper .bg-green-500 {
+    background: #22c55e !important;
+  }
+}
+</style>
 {% endblock %}

@@ -14,6 +14,11 @@
 
 let uploadedPDFData = null;
 let mobilePollInterval = null;
+let nameResolutions = {};
+let lastPreviewNames = null;
+let lastPreviewMatches = [];
+let lastPreviewNameKeys = [];
+let previewFetchGen = 0;
 
 function stopMobileUploadPoll() {
   if (mobilePollInterval) {
@@ -722,6 +727,13 @@ function displayExtractedLOs(data) {
 }
 
 function displayExtractedData(data) {
+  nameResolutions = {};
+  lastPreviewNames = null;
+  lastPreviewMatches = [];
+  lastPreviewNameKeys = [];
+  hideImportNameMatchError();
+  setImportNameConfirmCount(0);
+  setReviewContinueEnabled(true);
   const studentCount = document.getElementById('studentCount');
   if (studentCount && data.students) {
     studentCount.textContent = `${data.students.length} students found`;
@@ -824,6 +836,7 @@ function displayExtractedData(data) {
     html += `<tr>
       <td class="border border-slate-300 dark:border-slate-600 px-2 py-1">
         <input type="text" class="name-input" value="${escapeHTML(name)}" data-row="${rowIdx}" oninput="updateExtractedStudentName(${rowIdx}, this.value)">
+        <div class="name-match-slot" data-row="${rowIdx}"></div>
       </td>`;
 
     if (showHomework) {
@@ -981,6 +994,13 @@ function moveFocus(row, col) {
 function updateExtractedStudentName(idx, value) {
   if (!uploadedPDFData || !uploadedPDFData.students || !uploadedPDFData.students[idx]) return;
   uploadedPDFData.students[idx].name = value;
+  lastPreviewNames = null;
+  lastPreviewMatches = [];
+  lastPreviewNameKeys = [];
+  clearNameMatchBanners();
+  hideImportNameMatchError();
+  setImportNameConfirmCount(0);
+  setReviewContinueEnabled(true);
 }
 
 /**
@@ -1035,6 +1055,272 @@ function populateConfirmSummary() {
   summary.innerHTML = '';
 }
 
+function buildFilteredStudents() {
+  const includeLOs = new Set(assignmentLOs.map(v => v.toUpperCase()));
+  approvedExtraLOs.forEach(v => includeLOs.add(v.toUpperCase()));
+  const isCsv = (uploadedPDFData.extraction_path || '') === 'csv';
+  return (uploadedPDFData.students || []).map(s => {
+    const grades = {};
+    Object.keys(s.grades || {}).forEach(lo => {
+      if (isHomeworkHeader(lo)) return;
+      if (isCsv || includeLOs.has(lo.toUpperCase())) {
+        grades[lo] = s.grades[lo];
+      }
+    });
+    const out = { name: s.name, grades };
+    if (s.homework_pct != null && String(s.homework_pct).trim() !== '') {
+      out.homework_pct = s.homework_pct;
+    } else if (isCsv) {
+      out.homework_pct = null;
+    }
+    return out;
+  });
+}
+
+function previewNamesFromReview() {
+  return buildFilteredStudents().map(function (s) {
+    return s.name == null ? '' : String(s.name);
+  });
+}
+
+function namesListsEqual(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function setReviewContinueEnabled(enabled) {
+  var btn = document.getElementById('reviewContinueBtn');
+  if (!btn) return;
+  btn.disabled = !enabled;
+  if (enabled) {
+    btn.classList.remove('opacity-75', 'cursor-not-allowed');
+  } else {
+    btn.classList.add('opacity-75', 'cursor-not-allowed');
+  }
+}
+
+function setImportNameConfirmCount(n) {
+  var el = document.getElementById('importNameConfirmCount');
+  if (!el) return;
+  if (!n) {
+    el.textContent = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.textContent = n === 1 ? '1 name needs confirmation' : (n + ' names need confirmation');
+  el.classList.remove('hidden');
+}
+
+function hideImportNameMatchError() {
+  var el = document.getElementById('importNameMatchError');
+  if (el) el.classList.add('hidden');
+}
+
+function showImportNameMatchError(message) {
+  var el = document.getElementById('importNameMatchError');
+  var text = document.getElementById('importNameMatchErrorText');
+  var generic = 'Could not check student names. Try again before continuing.';
+  if (text) {
+    text.textContent = message ? String(message) : generic;
+  }
+  if (el) el.classList.remove('hidden');
+}
+
+function retryImportNameMatchPreview() {
+  lastPreviewNames = null;
+  continueFromReviewStep();
+}
+
+function clearNameMatchBanners() {
+  document.querySelectorAll('.name-match-slot').forEach(function (slot) {
+    slot.innerHTML = '';
+  });
+}
+
+function pruneNameResolutions(matches) {
+  var byKey = {};
+  (matches || []).forEach(function (match) {
+    if (match && match.key) byKey[match.key] = match;
+  });
+  Object.keys(nameResolutions).forEach(function (key) {
+    var match = byKey[key];
+    if (!match) {
+      delete nameResolutions[key];
+      return;
+    }
+    var res = nameResolutions[key];
+    if (!res || res.action !== 'attach') return;
+    var ok = false;
+    (match.candidates || []).forEach(function (c) {
+      if (String(c.profile_id) === String(res.profile_id)) ok = true;
+    });
+    if (!ok) delete nameResolutions[key];
+  });
+}
+
+function unresolvedMatchCount(matches) {
+  var n = 0;
+  (matches || []).forEach(function (match) {
+    if (match && match.key && !nameResolutions[match.key]) n += 1;
+  });
+  return n;
+}
+
+function refreshUnresolvedContinueState() {
+  var n = unresolvedMatchCount(lastPreviewMatches);
+  setImportNameConfirmCount(n);
+  setReviewContinueEnabled(n === 0);
+}
+
+function buildNameMatchBanner(match, sheetName, key) {
+  var wrap = document.createElement('div');
+  wrap.className = 'name-match-banner mt-2 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 text-sm';
+  wrap.setAttribute('data-match-key', key);
+
+  var heading = document.createElement('p');
+  heading.className = 'font-medium text-slate-900 dark:text-white mb-2';
+  heading.textContent = 'Is ' + sheetName + ' the same student as one of these, or a new student?';
+  wrap.appendChild(heading);
+
+  var groupName = 'name-match-' + key;
+  var chosen = nameResolutions[key];
+  (match.candidates || []).forEach(function (c) {
+    var label = document.createElement('label');
+    label.className = 'flex items-center gap-2 mb-1 text-slate-800 dark:text-slate-200 cursor-pointer';
+    var radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = groupName;
+    radio.value = String(c.profile_id);
+    radio.checked = !!(chosen && chosen.action === 'attach' && String(chosen.profile_id) === String(c.profile_id));
+    radio.addEventListener('change', function () {
+      nameResolutions[key] = { action: 'attach', profile_id: c.profile_id };
+      refreshUnresolvedContinueState();
+    });
+    label.appendChild(radio);
+    var span = document.createElement('span');
+    span.textContent = c.full_name + ' (' + c.class_name + ')';
+    label.appendChild(span);
+    wrap.appendChild(label);
+  });
+
+  var newLabel = document.createElement('label');
+  newLabel.className = 'flex items-center gap-2 text-slate-800 dark:text-slate-200 cursor-pointer';
+  var newRadio = document.createElement('input');
+  newRadio.type = 'radio';
+  newRadio.name = groupName;
+  newRadio.value = 'new';
+  newRadio.checked = !!(chosen && chosen.action === 'create');
+  newRadio.addEventListener('change', function () {
+    nameResolutions[key] = { action: 'create' };
+    refreshUnresolvedContinueState();
+  });
+  newLabel.appendChild(newRadio);
+  var newSpan = document.createElement('span');
+  newSpan.textContent = 'New student';
+  newLabel.appendChild(newSpan);
+  wrap.appendChild(newLabel);
+  return wrap;
+}
+
+function applyPreviewMatches(matches, nameKeys, names) {
+  clearNameMatchBanners();
+  var firstUnresolvedEl = null;
+  var usedKeys = {};
+  (matches || []).forEach(function (match) {
+    var key = match && match.key;
+    if (!key || usedKeys[key]) return;
+    usedKeys[key] = true;
+    var rowIdx = -1;
+    for (var i = 0; i < nameKeys.length; i++) {
+      if (nameKeys[i] === key) {
+        rowIdx = i;
+        break;
+      }
+    }
+    if (rowIdx < 0) return;
+    var slot = document.querySelector('.name-match-slot[data-row="' + rowIdx + '"]');
+    if (!slot) return;
+    var sheetName = names[rowIdx] || match.name || '';
+    var banner = buildNameMatchBanner(match, sheetName, key);
+    slot.appendChild(banner);
+    if (!nameResolutions[key] && !firstUnresolvedEl) firstUnresolvedEl = banner;
+  });
+  var unresolved = unresolvedMatchCount(matches);
+  setImportNameConfirmCount(unresolved);
+  if (unresolved === 0) {
+    setReviewContinueEnabled(true);
+    goToStep(4);
+    return;
+  }
+  setReviewContinueEnabled(false);
+  if (firstUnresolvedEl && firstUnresolvedEl.scrollIntoView) {
+    firstUnresolvedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+async function continueFromReviewStep() {
+  if (!uploadedPDFData || !uploadedPDFData.students) {
+    alert('No extracted data available. Please upload a CSV, PDF, or image first.');
+    return;
+  }
+  var classId = window.CLASS_ID;
+  if (!classId) { alert('Missing class ID.'); return; }
+
+  var names = previewNamesFromReview();
+  if (lastPreviewNames !== null && namesListsEqual(names, lastPreviewNames)) {
+    applyPreviewMatches(lastPreviewMatches, lastPreviewNameKeys, names);
+    return;
+  }
+
+  var gen = ++previewFetchGen;
+  setReviewContinueEnabled(false);
+  hideImportNameMatchError();
+
+  var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+  var csrf = csrfMeta ? csrfMeta.getAttribute('content') : '';
+  var res;
+  var body;
+  try {
+    res = await fetch('/api/class/' + encodeURIComponent(classId) + '/preview-import-name-matches', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrf || ''
+      },
+      body: JSON.stringify({ names: names })
+    });
+    body = await res.json().catch(function () { return {}; });
+  } catch (e) {
+    if (gen !== previewFetchGen) return;
+    showImportNameMatchError();
+    setReviewContinueEnabled(true);
+    return;
+  }
+  if (gen !== previewFetchGen) return;
+  var current = previewNamesFromReview();
+  if (!namesListsEqual(current, names)) {
+    return;
+  }
+  if (!res.ok || !body || !body.success) {
+    showImportNameMatchError(body && body.error);
+    setReviewContinueEnabled(true);
+    return;
+  }
+  if (!Array.isArray(body.name_keys) || body.name_keys.length !== names.length) {
+    showImportNameMatchError();
+    setReviewContinueEnabled(true);
+    return;
+  }
+  lastPreviewNames = names.slice();
+  lastPreviewMatches = body.matches || [];
+  lastPreviewNameKeys = body.name_keys.slice();
+  pruneNameResolutions(lastPreviewMatches);
+  applyPreviewMatches(lastPreviewMatches, lastPreviewNameKeys, names);
+}
+
 // ============================================================================
 // FORM SUBMISSION
 // ============================================================================
@@ -1083,22 +1369,7 @@ async function handleFormSubmit(e) {
   if (priorSkipList) priorSkipList.textContent = '';
 
   // Filter each student's grades to only include the approved LOs (not homework)
-  const filteredStudents = uploadedPDFData.students.map(s => {
-    const grades = {};
-    Object.keys(s.grades || {}).forEach(lo => {
-      if (isHomeworkHeader(lo)) return;
-      if (isCsv || includeLOs.has(lo.toUpperCase())) {
-        grades[lo] = s.grades[lo];
-      }
-    });
-    const out = { name: s.name, grades };
-    if (s.homework_pct != null && String(s.homework_pct).trim() !== '') {
-      out.homework_pct = s.homework_pct;
-    } else if (isCsv) {
-      out.homework_pct = null;
-    }
-    return out;
-  });
+  const filteredStudents = buildFilteredStudents();
 
   const filteredLOs = isCsv
     ? (uploadedPDFData.learning_objectives || []).filter(lo => !isHomeworkHeader(lo))
@@ -1110,7 +1381,8 @@ async function handleFormSubmit(e) {
     class_id: classId,
     assignment_id: assignmentId,
     students: filteredStudents,
-    learning_objectives: filteredLOs
+    learning_objectives: filteredLOs,
+    name_resolutions: nameResolutions
   };
 
   try {
@@ -1120,7 +1392,21 @@ async function handleFormSubmit(e) {
       body: JSON.stringify(payload)
     });
 
-    if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.error || 'Failed to import grades'); }
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      if ((resp.status === 409 || resp.status === 400) && err && err.error) {
+        lastPreviewNames = null;
+        if (importBtn) {
+          importBtn.disabled = false;
+          importBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Import Grades';
+          importBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+        }
+        goToStep(3);
+        showImportNameMatchError(err.error);
+        return;
+      }
+      throw new Error(err.error || 'Failed to import grades');
+    }
     const result = await resp.json();
     if (!result.success) throw new Error(result.error || 'Import failed');
 

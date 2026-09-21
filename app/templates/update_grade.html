@@ -353,14 +353,19 @@
         </div>
       </div>
 
-      <div class="flex gap-3">
+      <div class="flex gap-3 items-center">
         <button type="button" onclick="goToStep(2)" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white transition-colors text-sm">
           &larr; Back
         </button>
-        <button type="button" onclick="goToStep(4)" class="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center justify-center gap-2">
+        <button type="button" id="reviewContinueBtn" onclick="continueFromReviewStep()" class="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center justify-center gap-2">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           Continue to Confirm
         </button>
+        <span id="importNameConfirmCount" class="hidden text-sm font-medium text-amber-800 dark:text-amber-300 whitespace-nowrap"></span>
+      </div>
+      <div id="importNameMatchError" class="hidden mt-3 p-3 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/20 dark:border-red-700 text-sm text-red-800 dark:text-red-200">
+        <p id="importNameMatchErrorText"></p>
+        <button type="button" id="importNameMatchRetry" onclick="retryImportNameMatchPreview()" class="mt-2 text-sm font-medium underline">Retry</button>
       </div>
     </div>
   </div>
@@ -469,6 +474,6 @@
     }
   });
 </script>
-<script src="{{ url_for('static', filename='js/pdf_analyzer.js') }}?v=12"></script>
+<script src="{{ url_for('static', filename='js/pdf_analyzer.js') }}?v=14"></script>
 {% endif %}
 {% endblock %}
