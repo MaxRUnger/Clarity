@@ -1620,12 +1620,36 @@ def class_learning_objectives_summary(class_id):
 
     summary_rows.sort(key=lambda row: str(row.get("vendor_code") or "").lower())
 
+    grid_rows = []
+    for student in students_for_template:
+        by_lo = {
+            str(slo.get("learning_objective_id") or ""): slo
+            for slo in (student.get("learning_objectives") or [])
+        }
+        cells = []
+        for row in summary_rows:
+            matched = by_lo.get(row["id"])
+            if matched is None:
+                m_count = 0
+                required = row["required_ms"]
+            else:
+                m_count = int(matched.get("m_count") or 0)
+                required = matched.get("required_ms")
+                if required is None:
+                    required = row["required_ms"]
+            cells.append(f"{m_count}/{required}")
+        grid_rows.append({
+            "name": student.get("name") or "Student",
+            "cells": cells,
+        })
+
     return render_template(
         "class_learning_objectives_summary.html",
         class_id=class_id,
         class_name=class_data.get("name"),
         learning_objectives=summary_rows,
         total_students=total_students,
+        grid_rows=grid_rows,
     )
 
 @main_bp.route("/class/<class_id>/add_student", methods=["POST"])
@@ -3590,11 +3614,15 @@ def api_update_grade():
                 }), 400
 
         normalized = Grade.normalize_score(data.get("top_score"))
-        if assignment_id and normalized and normalized != "A":
+        hw_at_entry = None
+        if assignment_id:
             hw_map = Homework.get_hw_scores_map_for_assignment(
                 str(class_id), str(assignment_id)
             )
-            if not Homework.student_has_recorded_score(hw_map, data.get("student_id")):
+            sid = str(data.get("student_id") or "").strip()
+            if sid in hw_map:
+                hw_at_entry = hw_map[sid]
+            if normalized and normalized != "A" and not Homework.student_has_recorded_score(hw_map, data.get("student_id")):
                 return jsonify({
                     "success": False,
                     "error": _HW_REQUIRED_FOR_MARK_ERROR,
@@ -3602,7 +3630,8 @@ def api_update_grade():
 
         Grade.update_score(student_id=data['student_id'], lo_id=data['lo_id'], 
                             top_score=data['top_score'], second_score=data.get('second_score'),
-                            assignment_id=data.get('assignment_id'), changed_by=session['user_id'])
+                            assignment_id=data.get('assignment_id'), changed_by=session['user_id'],
+                            hw_score_at_entry=hw_at_entry)
         _log_grade_upserts(
             [{
                 "student_id": data["student_id"],
@@ -3766,6 +3795,7 @@ def save_grades(class_id):
                 "top_score": normalized,
                 "counts_for_mastery": counts_for_mastery,
                 "last_modified_by": session['user_id'],
+                "hw_score_at_entry": hw_map.get(sid) if sid in hw_map else None,
             }
             if assignment_id:
                 row["assignment_id"] = assignment_id
@@ -3778,14 +3808,14 @@ def save_grades(class_id):
                 ).execute()
             except Exception as schema_err:
                 # Fallback for deployments that have not yet run the migration:
-                # strip counts_for_mastery/last_modified_by and try again so saves don't 400.
+                # strip columns the database does not have yet and try again so saves don't 400.
                 msg = str(schema_err)
-                if "counts_for_mastery" in msg or "last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
+                if "hw_score_at_entry" in msg or "counts_for_mastery" in msg or "last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
                     logger.debug(
-                        "save_grades upsert failed on counts_for_mastery/last_modified_by (migration not run); retrying without them"
+                        "save_grades upsert failed on a grades column the database does not have yet; retrying without it"
                     )
                     legacy_rows = [
-                        {k: v for k, v in r.items() if k not in ('counts_for_mastery', 'last_modified_by')}
+                        {k: v for k, v in r.items() if k not in ('hw_score_at_entry', 'counts_for_mastery', 'last_modified_by')}
                         for r in grade_rows
                     ]
                     supabase_admin.table("grades").upsert(
@@ -5471,6 +5501,7 @@ def api_import_grades():
                 "top_score": normalized,
                 "assignment_id": assignment_id,
                 "last_modified_by": session['user_id'],
+                "hw_score_at_entry": hw_map.get(str(profile_id).strip()),
             })
 
         imported += 1
@@ -5506,11 +5537,11 @@ def api_import_grades():
                 logger.info("Upserted %d grades", len(chunk))
             except Exception as upsert_err:
                 msg = str(upsert_err)
-                if "last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
-                    # Fallback for deployments that haven't run the last_modified_by migration yet.
+                if "hw_score_at_entry" in msg or "last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
+                    # Fallback for deployments that haven't run the new-column migration yet.
                     try:
                         legacy_chunk = [
-                            {k: v for k, v in r.items() if k != 'last_modified_by'}
+                            {k: v for k, v in r.items() if k not in ('hw_score_at_entry', 'last_modified_by')}
                             for r in chunk
                         ]
                         supabase_admin.table("grades").upsert(

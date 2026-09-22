@@ -26,7 +26,7 @@
         </div>
       </div>
     </button>
-    <button type="button" onclick="document.getElementById('overdueRevisionsModal').classList.remove('hidden')" class="mark-only text-left bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm hover:scale-[1.02] transition-transform">
+    <button type="button" onclick="openOverdueRevisionsModal()" class="mark-only text-left bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm hover:scale-[1.02] transition-transform">
       <div class="flex items-start justify-between">
         <div>
           <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Overdue Revisions</p>
@@ -142,205 +142,187 @@
       </div>
     </div>
 
-    <!-- ~40%: learning objectives -->
-    <aside class="min-w-0 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
-      <div class="mb-5">
-        <h2 class="font-semibold text-slate-900 dark:text-white">Learning objectives</h2>
-        <p class="text-sm text-slate-500 dark:text-slate-400">Add objectives here or under Assignments. Link them to assignments when you manage assignments.</p>
-      </div>
-
+    <!-- ~40%: student progress -->
+    <style>
+      #studentProgressCard .student-progress-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgb(148 163 184 / 0.65) transparent;
+      }
+      #studentProgressCard .student-progress-scroll::-webkit-scrollbar {
+        width: 8px;
+      }
+      #studentProgressCard .student-progress-scroll::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #studentProgressCard .student-progress-scroll::-webkit-scrollbar-thumb {
+        background: rgb(148 163 184 / 0.65);
+        border-radius: 9999px;
+      }
+      .dark #studentProgressCard .student-progress-scroll {
+        scrollbar-color: rgb(100 116 139 / 0.8) transparent;
+      }
+      .dark #studentProgressCard .student-progress-scroll::-webkit-scrollbar-thumb {
+        background: rgb(100 116 139 / 0.8);
+      }
+    </style>
+    <aside id="studentProgressCard" class="min-w-0 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 lg:pr-2 lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:flex lg:flex-col lg:overflow-hidden">
+      <div class="student-progress-scroll lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
       <div class="mb-4">
-        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Objective Code</label>
-        <input type="text" id="loCode" placeholder="e.g., ALG-1.1"
-          class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+        <h2 class="font-semibold text-slate-900 dark:text-white">Student Progress</h2>
       </div>
-      <div class="mb-4">
-        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Description <span class="text-slate-400">(optional)</span></label>
-        <textarea id="loDescription" rows="1" data-max-height="420" placeholder="Brief description of the objective"
-          class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none overflow-hidden min-h-[2.75rem] leading-snug block"></textarea>
-      </div>
-      <div class="mb-6">
-        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Required Ms</label>
-        <input type="number" id="loRequiredMs" value="2" min="1" max="5"
-          class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
-      </div>
-
-      <form action="{{ url_for('main.create_learning_objective', class_id=class_id) }}" method="post" id="loForm">
-        <input type="hidden" name="form_type" value="create_lo">
-        <input type="hidden" name="return_to" value="dashboard">
-        <input type="hidden" name="code" id="hiddenLoCode">
-        <input type="hidden" name="description" id="hiddenLoDescription">
-        <input type="hidden" name="required_ms" id="hiddenLoRequiredMs">
-        <button type="button" onclick="dashboardCreateLO()" id="createLOBtn"
-          class="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2 shadow-sm shadow-blue-500/20">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-          Create Objective
-        </button>
-      </form>
-
-      <div class="mt-4 pt-4 border-t border-slate-200 dark:border-slate-600 space-y-2">
-        <button type="button" id="loCsvToggleBtn"
-          class="w-full px-4 py-2.5 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-          Upload Learning Objective
-        </button>
-        <div id="loCsvUploadPanel" class="hidden space-y-3 pt-1">
-          <p class="text-xs font-medium text-slate-600 dark:text-slate-400 uppercase tracking-wide">Import from CSV</p>
-          <input type="file" id="loCsvInput" accept=".csv,text/csv,application/csv" class="hidden">
-          <button type="button" id="loCsvChooseBtn" onclick="document.getElementById('loCsvInput').click()"
-            class="w-full px-4 py-2.5 border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-            Choose CSV from computer
-          </button>
-          <label for="loCsvTemplateCount" class="block text-sm font-medium text-slate-700 dark:text-slate-300">How many learning objectives are you importing?</label>
-          <input type="number" id="loCsvTemplateCount" min="1" max="500" value="10"
-            class="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <button type="button" onclick="downloadLoCsvTemplate()"
-            class="w-full px-4 py-2.5 border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-            Download CSV template
-          </button>
-          {% if lo_mobile_upload_token %}
-          <div class="rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/40 p-3 space-y-2">
-            <p class="text-xs font-semibold text-slate-800 dark:text-slate-100">Or use your phone</p>
-            <p class="text-xs text-slate-500 dark:text-slate-400">Scan the QR code to open the uploader on your phone</p>
-            {% if lo_mobile_upload_url_is_loopback %}
-            <div class="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
-              Phones cannot open <code class="rounded bg-white/70 px-0.5 dark:bg-slate-800">localhost</code>. Set <code class="rounded bg-white/70 px-0.5 dark:bg-slate-800">PUBLIC_BASE_URL</code> or use your LAN URL (same Wi‑Fi as the phone).
-            </div>
-            {% endif %}
-            <div class="flex justify-center py-1">
-              <div id="loQrCanvas" class="rounded-lg bg-white p-2 shadow-sm inline-block" aria-label="QR code for CSV upload from phone"></div>
-            </div>
-            <p id="loCsvMobileStatus" class="hidden text-xs text-green-600 dark:text-green-400 font-medium text-center"></p>
-          </div>
-          {% endif %}
-          <button type="button" id="loCsvPanelCloseBtn" class="w-full text-xs font-medium text-slate-600 dark:text-slate-300 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-500 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-700/60 hover:text-slate-800 dark:hover:text-white transition-colors">
-            Hide upload
-          </button>
-        </div>
-      </div>
-
-      <div class="mt-8">
-        <button type="button"
-          class="w-full flex items-center justify-between gap-2 rounded-lg px-1 py-2 -mx-1 mb-2 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors text-left"
-          onclick="toggleExistingLosSection(this)" aria-expanded="false" aria-controls="existingLosListWrapper">
-          <span class="font-medium text-slate-900 dark:text-white">Existing objectives</span>
-          <svg class="w-5 h-5 text-slate-400 chevron transition-transform shrink-0 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-          </svg>
-        </button>
-        <div id="existingLosListWrapper" class="hidden">
-        <div id="existingLosList" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-56 overflow-y-auto pr-1 content-start">
-          {% for lo in all_los %}
-          <div class="lo-row flex flex-col gap-1.5 px-2.5 py-2 bg-slate-50 dark:bg-slate-700 rounded-lg border border-slate-200/70 dark:border-slate-600/50 min-w-0"
-               data-lo-id="{{ lo.id }}"
-               data-lo-code="{{ (lo.vendor_code or '')|e }}"
-               data-lo-description="{{ (lo.description or '')|e }}"
-               data-lo-required="{{ lo.required_ms|default(2, true) }}">
-            <span class="lo-row-display text-xs font-medium text-slate-700 dark:text-slate-300 truncate min-w-0">{{ lo.vendor_code }}</span>
-            <div class="flex items-center justify-end gap-0.5 mt-auto pt-0.5 border-t border-slate-200/60 dark:border-slate-600/50">
-              <button type="button" class="lo-edit-btn p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors shrink-0" title="Edit">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-              </button>
-              <button type="button" class="lo-delete-btn p-1 text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors shrink-0" title="Delete">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-              </button>
-            </div>
-          </div>
-          {% else %}
-          <p class="col-span-full text-sm text-slate-500 dark:text-slate-400 py-2">No objectives yet. Create one above.</p>
-          {% endfor %}
-        </div>
-        </div>
+      <div id="progressAssignmentRow" class="flex gap-2 overflow-x-auto pb-3"></div>
+      <div id="progressStudentList" class="divide-y divide-slate-100 dark:divide-slate-700 border-t border-slate-100 dark:border-slate-700"></div>
       </div>
     </aside>
-  </div>
+    <script id="progressAssignmentsJson" type="application/json">{{ assignments | tojson }}</script>
+    <script>
+    (function () {
+      var assignments = JSON.parse(document.getElementById('progressAssignmentsJson').textContent || '[]');
+      var row = document.getElementById('progressAssignmentRow');
+      var activeId = assignments.length ? String(assignments[0].id) : '';
+      var activeClass = 'shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white';
+      var idleClass = 'shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300';
 
-  <!-- Learning objectives CSV preview (nothing saved until user confirms) -->
-  <div id="loCsvPreviewModal" class="hidden fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
-       role="dialog" aria-modal="true"
-       onclick="if (event.target === this && typeof closeLoCsvPreviewModal === 'function') closeLoCsvPreviewModal()">
-    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
-      <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-start justify-between gap-3 shrink-0">
-        <div>
-          <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Confirm import</h3>
-          <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Review codes and objectives from your file. Set <strong class="text-slate-700 dark:text-slate-300">Ms</strong> (1–5) for each new row. Only <strong class="text-slate-700 dark:text-slate-300">new</strong> codes are imported; rows already in this class are skipped.</p>
-        </div>
-        <button type="button" onclick="closeLoCsvPreviewModal()" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shrink-0" aria-label="Close">
-          <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <div id="loCsvPreviewWarnings" class="hidden px-5 py-2.5 text-xs bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-100 border-b border-amber-100 dark:border-amber-900/40 shrink-0 whitespace-pre-wrap"></div>
-      <div class="flex-1 min-h-0 overflow-auto p-4">
-        <table class="w-full text-sm text-left border-collapse">
-          <thead class="text-xs uppercase text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/50">
-            <tr>
-              <th class="px-2 py-2 font-medium">Code (title)</th>
-              <th class="px-2 py-2 font-medium">Description (optional)</th>
-              <th class="px-2 py-2 font-medium w-24">Ms (1–5)</th>
-              <th class="px-2 py-2 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody id="loCsvPreviewTbody" class="divide-y divide-slate-100 dark:divide-slate-700 text-slate-800 dark:text-slate-200"></tbody>
-        </table>
-      </div>
-      <div class="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-2 justify-end shrink-0 bg-slate-50/90 dark:bg-slate-900/50">
-        <button type="button" id="loCsvPreviewCancel" onclick="closeLoCsvPreviewModal()"
-          class="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">Cancel</button>
-        <button type="button" id="loCsvPreviewConfirm"
-          class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Import confirmed rows</button>
-      </div>
-    </div>
-  </div>
+      function renderAssignments() {
+        row.innerHTML = '';
+        if (!assignments.length) {
+          row.innerHTML = '<p class="text-sm text-slate-500 dark:text-slate-400">No assignments yet.</p>';
+          return;
+        }
+        assignments.forEach(function (assignment) {
+          var id = String(assignment.id);
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = assignment.name || 'Assignment';
+          btn.className = id === activeId ? activeClass : idleClass;
+          btn.addEventListener('click', function () {
+            activeId = id;
+            renderAssignments();
+            if (typeof window.renderProgressStudents === 'function') window.renderProgressStudents(activeId);
+          });
+          row.appendChild(btn);
+        });
+      }
 
-  <!-- Edit learning objective (same row id — grades stay linked) -->
-  <div id="editLoModal" class="hidden fixed inset-0 z-[61] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
-       role="dialog" aria-modal="true" onclick="if (event.target === this) closeEditLoModal()">
-    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 w-full max-w-md p-6" onclick="event.stopPropagation()">
-      <div class="flex items-start justify-between gap-3 mb-4">
-        <div>
-          <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Edit objective</h3>
-          <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Updates labels and settings only. All grades and assignment links stay on this objective.</p>
-        </div>
-        <button type="button" onclick="closeEditLoModal()" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500" aria-label="Close">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <div class="space-y-3">
-        <div>
-          <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Objective code</label>
-          <input type="text" id="editLoCode" class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Description <span class="text-slate-400 font-normal">(optional)</span></label>
-          <textarea id="editLoDescription" rows="1" data-max-height="360" class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden min-h-[2.75rem] leading-snug block"></textarea>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Required Ms</label>
-          <input type="number" id="editLoRequiredMs" min="1" max="5" class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-      </div>
-      <div class="flex gap-2 justify-end mt-6">
-        <button type="button" onclick="closeEditLoModal()" class="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">Cancel</button>
-        <button type="button" id="editLoSaveBtn" onclick="saveEditLo()" class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors">Save changes</button>
-      </div>
-    </div>
+      window.getActiveProgressAssignmentId = function () { return activeId; };
+      renderAssignments();
+    })();
+    </script>
+    <script id="progressStudentsJson" type="application/json">{{ students | tojson }}</script>
+    <script>
+    (function () {
+      var students = JSON.parse(document.getElementById('progressStudentsJson').textContent || '[]');
+      var assignments = JSON.parse(document.getElementById('progressAssignmentsJson').textContent || '[]');
+      var list = document.getElementById('progressStudentList');
+      var classId = '{{ class_id }}';
+      var gradeCache = {};
+
+      function losFor(assignmentId) {
+        var assignment = assignments.find(function (item) { return String(item.id) === String(assignmentId); });
+        var links = assignment && assignment.assignment_objectives ? assignment.assignment_objectives : [];
+        return links.map(function (link) {
+          var lo = link.learning_objectives || {};
+          return { id: String(link.learning_objective_id || ''), code: lo.vendor_code || 'LO' };
+        }).filter(function (lo) { return lo.id; });
+      }
+
+      function paint(assignmentId, grades) {
+        list.innerHTML = '';
+        if (!students.length) {
+          list.innerHTML = '<p class="px-1 py-4 text-sm text-slate-500 dark:text-slate-400">No active students.</p>';
+          return;
+        }
+        var los = losFor(assignmentId);
+        students.forEach(function (student) {
+          var row = document.createElement('div');
+          row.className = 'py-3';
+          var name = document.createElement('button');
+          name.type = 'button';
+          name.className = 'w-full flex items-center justify-between gap-2 font-medium text-left text-slate-900 dark:text-white';
+          var nameLabel = document.createElement('span');
+          nameLabel.textContent = student.name || 'Student';
+          var chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          chevron.setAttribute('class', 'w-5 h-5 text-slate-400 shrink-0 transition-transform');
+          chevron.setAttribute('fill', 'none');
+          chevron.setAttribute('stroke', 'currentColor');
+          chevron.setAttribute('viewBox', '0 0 24 24');
+          chevron.setAttribute('aria-hidden', 'true');
+          var chevronPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          chevronPath.setAttribute('stroke-linecap', 'round');
+          chevronPath.setAttribute('stroke-linejoin', 'round');
+          chevronPath.setAttribute('stroke-width', '2');
+          chevronPath.setAttribute('d', 'M19 9l-7 7-7-7');
+          chevron.appendChild(chevronPath);
+          name.appendChild(nameLabel);
+          name.appendChild(chevron);
+          var letters = document.createElement('div');
+          letters.className = 'mt-2 hidden flex-wrap gap-1';
+          los.forEach(function (lo) {
+            var key = String(student.id) + '|' + lo.id;
+            var letter = grades && grades[key] ? String(grades[key]) : '—';
+            var chip = document.createElement('span');
+            chip.className = 'px-1.5 py-0.5 rounded text-xs font-mono bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200';
+            chip.textContent = lo.code + ' ' + letter;
+            letters.appendChild(chip);
+          });
+          var history = document.createElement('a');
+          history.className = 'mt-2 block w-full text-xs font-medium text-blue-600 dark:text-blue-400';
+          history.href = '/class/' + encodeURIComponent(classId) + '/student/' + encodeURIComponent(student.id) + '/history';
+          history.textContent = 'Full history';
+          letters.appendChild(history);
+          name.addEventListener('click', function () {
+            var open = letters.classList.contains('hidden');
+            letters.classList.toggle('hidden', !open);
+            letters.classList.toggle('flex', open);
+            chevron.classList.toggle('rotate-180', open);
+          });
+          row.appendChild(name);
+          row.appendChild(letters);
+          list.appendChild(row);
+        });
+      }
+
+      window.renderProgressStudents = function (assignmentId) {
+        if (!assignmentId) {
+          paint('', {});
+          return;
+        }
+        if (gradeCache[assignmentId]) {
+          paint(assignmentId, gradeCache[assignmentId]);
+          return;
+        }
+        paint(assignmentId, {});
+        fetch('/api/class/' + encodeURIComponent(classId) + '/assignment/' + encodeURIComponent(assignmentId) + '/grades', { credentials: 'same-origin' })
+          .then(function (res) { return res.json(); })
+          .then(function (data) {
+            var grades = data && data.grades ? data.grades : {};
+            gradeCache[assignmentId] = grades;
+            if (window.getActiveProgressAssignmentId && window.getActiveProgressAssignmentId() === String(assignmentId)) {
+              paint(assignmentId, grades);
+            }
+          });
+      };
+
+      if (window.getActiveProgressAssignmentId) {
+        window.renderProgressStudents(window.getActiveProgressAssignmentId());
+      }
+    })();
+    </script>
   </div>
 </div>
 
-<div id="overdueRevisionsModal" class="mark-only hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-8">
+<div id="overdueRevisionsModal" class="mark-only hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-8 overflow-hidden overscroll-contain">
   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
     <div class="p-6 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
       <div>
         <h2 class="font-semibold text-slate-900 dark:text-white">Overdue Revisions Report</h2>
         <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Students with revisions past due date</p>
       </div>
-      <button type="button" onclick="document.getElementById('overdueRevisionsModal').classList.add('hidden')" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+      <button type="button" onclick="closeOverdueRevisionsModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
         <svg class="w-5 h-5 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
       </button>
     </div>
-    <div class="flex-1 overflow-y-auto p-6">
+    <div class="flex-1 overflow-y-auto overscroll-contain p-6">
       {% if overdue_revisions %}
       <div class="space-y-3">
         {% for rev in overdue_revisions %}
@@ -350,7 +332,7 @@
             <p class="text-sm text-slate-600 dark:text-slate-400">{{ rev.lo_name }} · {{ rev.assignment_name }}</p>
           </div>
           <div class="text-right">
-            <span class="px-2 py-1 bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 text-xs font-medium rounded-full">RQ</span>
+            <span class="px-2 py-1 bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 text-xs font-medium rounded-full">{{ rev.top_score }}</span>
             <p class="text-xs text-red-500 mt-1">Due {{ rev.revision_due }}</p>
           </div>
         </div>
@@ -648,6 +630,24 @@ function maybeOpenManageStudentsModalFromQuery() {
   // Clean up the URL after restoring modal state.
   currentUrl.searchParams.delete('manage_students');
   window.history.replaceState({}, '', currentUrl.toString());
+}
+
+function setPageScrollLocked(locked) {
+  document.documentElement.classList.toggle('overflow-hidden', locked);
+  document.body.classList.toggle('overflow-hidden', locked);
+}
+
+function openOverdueRevisionsModal() {
+  var modal = document.getElementById('overdueRevisionsModal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  setPageScrollLocked(true);
+}
+
+function closeOverdueRevisionsModal() {
+  var modal = document.getElementById('overdueRevisionsModal');
+  if (modal) modal.classList.add('hidden');
+  setPageScrollLocked(false);
 }
 
 maybeOpenManageStudentsModalFromQuery();
@@ -1580,9 +1580,6 @@ function startLoCsvMobilePoll() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', function () {
-  startLoCsvMobilePoll();
-});
 </script>
 <script>
 if (window.ClarityUI && typeof window.ClarityUI.applyInstructorModeVisibility === 'function') {

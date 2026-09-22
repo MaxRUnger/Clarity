@@ -307,7 +307,7 @@ class Grade:
         return None
 
     @staticmethod
-    def update_score(student_id, lo_id, top_score, second_score=None, assignment_id=None, changed_by=None):
+    def update_score(student_id, lo_id, top_score, second_score=None, assignment_id=None, changed_by=None, hw_score_at_entry=None):
         """Upserts a grade for a student, learning objective, and assignment.
 
         The database enforces that scores are one of the mastery codes (e.g. M, R, P, X).
@@ -329,6 +329,7 @@ class Grade:
             data["assignment_id"] = assignment_id
         if changed_by is not None:
             data["last_modified_by"] = changed_by
+        data["hw_score_at_entry"] = hw_score_at_entry
 
         # Ensure `upsert` updates existing grades instead of throwing on duplicates.
         # Supabase requires specifying the conflict target for proper behavior.
@@ -336,16 +337,17 @@ class Grade:
             return supabase_admin.table("grades").upsert(data, on_conflict="student_id,learning_objective_id,assignment_id").execute()
         except Exception as e:
             msg = str(e)
-            if changed_by is not None and ("last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower()):
-                # Fallback for deployments that haven't run the last_modified_by migration yet.
+            if "hw_score_at_entry" in msg or "last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
+                # Fallback for deployments that haven't run the new-column migration yet.
+                data.pop("hw_score_at_entry", None)
                 data.pop("last_modified_by", None)
                 return supabase_admin.table("grades").upsert(data, on_conflict="student_id,learning_objective_id,assignment_id").execute()
             raise
 
     @staticmethod
     def get_overdue_revisions(class_id):
-        """Return RQ grades where the assignment's revision_due date has passed
-        and the student was eligible to revise to mastery (HW >= revision threshold).
+        """Return R and RQ grades where the assignment's revision_due date has passed
+        and the student was eligible to revise to mastery (HW >= 75, pass does not qualify).
 
         Batched: loads all needed assignment/homework-group data and homework_scores in a
         small fixed number of queries instead of per-assignment queries inside a loop.
@@ -355,11 +357,22 @@ class Grade:
             lo_ids = Course.get_all_lo_ids_for_class(class_id)
             if not lo_ids:
                 return []
-            resp = supabase_admin.table("grades").select(
-                "student_id, top_score, assignment_id, "
-                "assignments(id, name, revision_due), "
-                "learning_objectives(id, name, vendor_code)"
-            ).eq("top_score", "RQ").in_("learning_objective_id", lo_ids).execute()
+            try:
+                resp = supabase_admin.table("grades").select(
+                    "student_id, top_score, assignment_id, hw_score_at_entry, "
+                    "assignments(id, name, revision_due), "
+                    "learning_objectives(id, name, vendor_code)"
+                ).in_("top_score", ["R", "RQ"]).in_("learning_objective_id", lo_ids).execute()
+            except Exception as schema_err:
+                logger.debug(
+                    "Overdue select failed (likely missing hw_score_at_entry); falling back: %s",
+                    schema_err,
+                )
+                resp = supabase_admin.table("grades").select(
+                    "student_id, top_score, assignment_id, "
+                    "assignments(id, name, revision_due), "
+                    "learning_objectives(id, name, vendor_code)"
+                ).in_("top_score", ["R", "RQ"]).in_("learning_objective_id", lo_ids).execute()
 
             grade_rows = list(resp.data or [])
             assignment_ids = sorted({
@@ -458,13 +471,9 @@ class Grade:
                     merged.update(scores_by_key.get(aid, {}))
                 return merged
 
-            eligibility_by_assignment: Dict[str, Dict[str, bool]] = {}
+            hw_by_assignment: Dict[str, Dict[str, Any]] = {}
             for aid in assignment_ids:
-                hw_map = _hw_map_for_assignment(aid)
-                eligibility_by_assignment[aid] = {
-                    sid: Homework.is_revision_to_m_eligible_hw_score(score)
-                    for sid, score in hw_map.items()
-                }
+                hw_by_assignment[aid] = _hw_map_for_assignment(aid)
 
             overdue = []
             for g in grade_rows:
@@ -473,8 +482,12 @@ class Grade:
                 if not rev_due or rev_due >= today:
                     continue
                 aid = g.get('assignment_id')
-                eligible = eligibility_by_assignment.get(aid, {}).get(g['student_id'], False)
-                if not eligible:
+                snapshot = g.get('hw_score_at_entry')
+                if snapshot is None:
+                    score = hw_by_assignment.get(aid, {}).get(g['student_id'])
+                else:
+                    score = snapshot
+                if not Homework.is_revision_to_m_eligible_hw_score(score):
                     continue
                 lo = g.get('learning_objectives') or {}
                 overdue.append({
@@ -482,6 +495,7 @@ class Grade:
                     'assignment_name': assignment.get('name', ''),
                     'revision_due': rev_due,
                     'lo_name': lo.get('vendor_code') or lo.get('name', 'Unknown LO'),
+                    'top_score': g.get('top_score') or '',
                 })
             return overdue
         except Exception as e:

@@ -159,7 +159,7 @@
   <div id="assignmentReport" class="space-y-4">
     <!-- All Data View -->
     <div id="view-all" class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 print:shadow-none print:border-0">
-      <div class="p-6 border-b border-slate-100 dark:border-slate-700">
+      <div class="grade-sheet-header p-6 border-b border-slate-100 dark:border-slate-700">
         <h2 id="assignmentReportHeading" class="font-semibold text-slate-900 dark:text-white">Assignment Report</h2>
         <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{{ class_name }}</p>
       </div>
@@ -341,6 +341,45 @@ td[data-lo-id] .mastery-badge {
 #assignmentReport.measuring-print td:nth-child(2) {
   display: none !important;
 }
+#assignmentReport.measuring-print .print\:hidden {
+  display: none !important;
+}
+#assignmentReport.measuring-print th:first-child,
+#assignmentReport.measuring-print td:first-child {
+  white-space: nowrap !important;
+}
+#assignmentReport.measuring-print .mastery-badge {
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+#assignmentReport.measuring-print .hw-score-display {
+  font-size: 12px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+#assignmentReport.measuring-print .grade-sheet-header {
+  padding: 2px 0 4px !important;
+}
+#assignmentReport.measuring-print .grade-sheet-header h2,
+#assignmentReport.measuring-print .grade-sheet-header h3 {
+  font-size: 13px !important;
+  line-height: 1.15 !important;
+  margin: 0 !important;
+}
+#assignmentReport.measuring-print .grade-sheet-header p {
+  font-size: 11px !important;
+  line-height: 1.15 !important;
+  margin: 0 !important;
+}
 
 @media print {
   @page { size: letter landscape; margin: 0.2in; }
@@ -375,10 +414,22 @@ td[data-lo-id] .mastery-badge {
   }
   #assignmentReport {
     --print-scale: 1;
-    zoom: var(--print-scale);
     margin: 0 !important;
     padding: 0 !important;
-    transform: none !important;
+  }
+  #assignmentReport .grade-sheet-header {
+    padding: 2px 0 4px !important;
+  }
+  #assignmentReport .grade-sheet-header h2,
+  #assignmentReport .grade-sheet-header h3 {
+    font-size: 13px !important;
+    line-height: 1.15 !important;
+    margin: 0 !important;
+  }
+  #assignmentReport .grade-sheet-header p {
+    font-size: 11px !important;
+    line-height: 1.15 !important;
+    margin: 0 !important;
   }
   #assignmentReport .overflow-x-auto {
     overflow: visible !important;
@@ -386,11 +437,11 @@ td[data-lo-id] .mastery-badge {
   #assignmentReport table {
     width: 100% !important;
     table-layout: fixed !important;
-    font-size: 13px !important;
+    font-size: calc(13px * var(--print-scale)) !important;
   }
   #assignmentReport th,
   #assignmentReport td {
-    padding: 2px 2px !important;
+    padding: calc(2px * var(--print-scale)) calc(2px * var(--print-scale)) !important;
     line-height: 1.1 !important;
     letter-spacing: 0 !important;
   }
@@ -421,9 +472,9 @@ td[data-lo-id] .mastery-badge {
     height: auto !important;
     min-width: 0 !important;
     min-height: 0 !important;
-    font-size: 12px !important;
+    font-size: calc(12px * var(--print-scale)) !important;
     line-height: 1 !important;
-    padding: 0 !important;
+    padding: calc(0px * var(--print-scale)) !important;
     border: 0 !important;
     border-radius: 0 !important;
     background: transparent !important;
@@ -431,8 +482,8 @@ td[data-lo-id] .mastery-badge {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
   }
   #assignmentReport .hw-score-display {
-    font-size: 12px !important;
-    padding: 0 !important;
+    font-size: calc(12px * var(--print-scale)) !important;
+    padding: calc(0px * var(--print-scale)) !important;
     border: 0 !important;
     border-radius: 0 !important;
     background: transparent !important;
@@ -977,7 +1028,7 @@ function renderAllAssignmentsView(typeFilter) {
       .filter(Boolean);
 
     html += '<div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 print:shadow-none print:border-0">';
-    html += '  <div class="p-6 border-b border-slate-100 dark:border-slate-700">';
+    html += '  <div class="grade-sheet-header p-6 border-b border-slate-100 dark:border-slate-700">';
     html += '    <h3 class="font-semibold text-slate-900 dark:text-white">' + escapeHtml(assignmentName) + '</h3>';
     html += '    <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{{ class_name }}</p>';
     html += '  </div>';
@@ -1436,17 +1487,44 @@ function applySinglePagePrintScale() {
 
   const pageHeightPx = 7.9 * 96;
   const targetTable = visiblePanel.querySelector('table');
-  const measuredHeight = (targetTable ? targetTable.getBoundingClientRect().height : visiblePanel.getBoundingClientRect().height) + 72;
+  const sheetHeader = visiblePanel.querySelector('.grade-sheet-header');
+  const tableRect = targetTable ? targetTable.getBoundingClientRect() : null;
+  const assignmentReportHeight = assignmentReport.getBoundingClientRect().height;
+  const visiblePanelHeight = visiblePanel.getBoundingClientRect().height;
+  const tableHeight = tableRect
+    ? tableRect.height
+    : visiblePanel.getBoundingClientRect().height;
+  const headerHeight = sheetHeader ? sheetHeader.getBoundingClientRect().height : 0;
+  const measuredHeight = tableHeight + headerHeight;
+  const tableRectHeight = tableRect ? tableRect.height : null;
 
   assignmentReport.classList.remove(measureClass);
 
-  // Page width is naturally filled by table-layout: fixed + width: 100%.
-  // Only scale DOWN if the table is taller than one page.
+  // Width stays on the table (width:100%, table-layout:fixed).
+  // heightScale > 1 means the measured sheet is shorter than the page.
   const heightScale = pageHeightPx / Math.max(1, measuredHeight);
-  // Be a bit more conservative so slightly larger rosters (e.g. 34 students)
-  // still fit on one physical page across printer/browser differences.
-  const safetyFactor = 0.9;
-  const finalScale = Math.max(0.25, Math.min(1, heightScale * safetyFactor));
+  // Shrink path keeps the 0.9 margin so a tall roster still fits one page.
+  const shrinkSafety = 0.9;
+  // Grow path uses 0.97. The sheet title is a fixed print size and the 1px borders do not scale,
+  // so a raw heightScale already prints short of the measured target.
+  const growSlack = 0.97;
+  // 1.5 is 19.5px table text, about 14.6pt. Past that, a one-letter grade
+  // and a name in the 14% column read as display type.
+  const scaleCap = 1.5;
+  const fitted = heightScale > 1 ? heightScale * growSlack : heightScale * shrinkSafety;
+  const finalScale = Math.max(0.25, Math.min(scaleCap, fitted));
+  console.log('[print-scale]', {
+    pageHeightPx: pageHeightPx,
+    measuredHeight: measuredHeight,
+    headerHeight: headerHeight,
+    tableHeight: tableHeight,
+    heightScale: heightScale,
+    fitted: fitted,
+    finalScale: finalScale,
+    assignmentReportHeight: assignmentReportHeight,
+    visiblePanelHeight: visiblePanelHeight,
+    tableRectHeight: tableRectHeight
+  });
   assignmentReport.style.setProperty('--print-scale', String(finalScale));
 }
 
