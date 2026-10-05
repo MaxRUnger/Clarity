@@ -310,7 +310,7 @@ class TestStoredCanvasNames(unittest.TestCase):
 
     def test_csv_keeps_last_comma_first(self):
         rows, warnings = parse_students_csv_text(
-            'name\n"Juarez Salgado, Evelyn"\n'
+            'name,email\n"Juarez Salgado, Evelyn",evelyn@example.edu\n'
         )
         self.assertEqual(warnings, [])
         self.assertEqual(rows[0]["full_name"], "Juarez Salgado, Evelyn")
@@ -3134,6 +3134,263 @@ class TestStudentEmailMatch(unittest.TestCase):
             "class_id": "c1",
             "student_id": "stu-1",
         }])
+
+    def _post_csv(self, client, sa, path, text):
+        from app import routes as r
+        payload = {"file": (io.BytesIO(text.encode("utf-8")), "students.csv")}
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_rate_limit", return_value=True):
+            return client.post(
+                path,
+                data=payload,
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+
+    def _jane_elsewhere(self):
+        return self._sa(
+            [{"id": "c1"}, {"id": "c-other"}],
+            [{
+                "class_id": "c-other",
+                "student_id": "stu-1",
+                "profiles": {
+                    "id": "stu-1",
+                    "full_name": "Doe, Jane",
+                    "email": "jane@example.edu",
+                },
+            }],
+        )
+
+    def test_csv_email_already_in_this_class_writes_nothing(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa(
+            [{"id": "c1"}],
+            [{
+                "class_id": "c1",
+                "student_id": "stu-1",
+                "profiles": {
+                    "id": "stu-1",
+                    "full_name": "Doe, Jane",
+                    "email": "jane@example.edu",
+                },
+            }],
+        )
+        text = (
+            "Student Name,email\n"
+            '"Doe, Jane",jane@example.edu\n'
+            '"Smith, Ann",ann@example.edu\n'
+        )
+        rv = self._post_csv(client, sa, "/api/class/c1/upload_students", text)
+        self.assertEqual(rv.status_code, 400)
+        self.assertIn(
+            "Row 2: jane@example.edu is already in this class.",
+            rv.get_json()["errors"],
+        )
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [])
+
+    def test_csv_reuses_a_profile_when_the_name_key_matches(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._jane_elsewhere()
+        text = 'Student Name,email\n"doe,  jane",jane@example.edu\n'
+        preview = self._post_csv(
+            client, sa, "/api/class/c1/preview-upload-students", text,
+        )
+        self.assertEqual(preview.status_code, 200)
+        body = preview.get_json()
+        self.assertNotIn("warnings", body)
+        self.assertEqual(body["rows"], [{
+            "full_name": "Doe, Jane",
+            "email": "jane@example.edu",
+            "action": "reuse",
+            "status": "Will enroll",
+        }])
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [])
+        upload = self._post_csv(client, sa, "/api/class/c1/upload_students", text)
+        self.assertEqual(upload.status_code, 200)
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [{
+            "class_id": "c1",
+            "student_id": "stu-1",
+        }])
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "class_detail.html",
+        )
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertNotIn("studentUploadPreviewWarnings", src)
+        self.assertNotIn("Some rows may have been skipped", src)
+
+    def test_csv_rejects_a_reused_email_when_the_name_differs(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._jane_elsewhere()
+        text = (
+            "Student Name,email\n"
+            '"Smith, Ann",jane@example.edu\n'
+            '"Smith, Bea",bea@example.edu\n'
+        )
+        sentence = (
+            "Row 2: jane@example.edu belongs to Doe, Jane. "
+            "Enter the name as Doe, Jane."
+        )
+        upload = self._post_csv(client, sa, "/api/class/c1/upload_students", text)
+        preview = self._post_csv(
+            client, sa, "/api/class/c1/preview-upload-students", text,
+        )
+        self.assertEqual(upload.status_code, 400)
+        self.assertEqual(preview.status_code, 400)
+        self.assertEqual(upload.get_json()["errors"], preview.get_json()["errors"])
+        self.assertIn(sentence, upload.get_json()["errors"])
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [])
+
+    def test_csv_creates_a_profile_when_the_email_is_not_in_this_instructors_classes(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([{"id": "c1"}], [])
+        text = 'Student Name,email\n"Smith, Cali",Cali@Example.EDU\n'
+        rv = self._post_csv(client, sa, "/api/class/c1/upload_students", text)
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(profiles.inserts[0]["email"], "cali@example.edu")
+        self.assertEqual(profiles.inserts[0]["full_name"], "Smith, Cali")
+        self.assertEqual(profiles.inserts[0]["role"], "student")
+        self.assertEqual(enrollments.inserts[0]["class_id"], "c1")
+        self.assertEqual(enrollments.inserts[0]["student_id"], profiles.inserts[0]["id"])
+        self.assertFalse(profiles.selected)
+        self.assertIn(("instructor_id", "inst1"), classes.eq_calls)
+
+    def test_csv_duplicate_email_in_the_file_writes_nothing(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([{"id": "c1"}], [])
+        text = (
+            "Student Name,email\n"
+            '"Smith, Ann",ann@example.edu\n'
+            '"Smith, Bea",ann@example.edu\n'
+        )
+        rv = self._post_csv(client, sa, "/api/class/c1/upload_students", text)
+        self.assertEqual(rv.status_code, 400)
+        self.assertIn(
+            "Row 3: ann@example.edu is listed more than once.",
+            rv.get_json()["errors"],
+        )
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [])
+
+    def test_csv_rejects_a_missing_or_invalid_email_and_a_name_without_a_comma(self):
+        client = self._client()
+        samples = (
+            (
+                'Student Name,email\n"Smith, Ann",\n',
+                "Row 2: Email is required.",
+            ),
+            (
+                'Student Name,email\n"Smith, Ann",not-an-email\n',
+                "Row 2: Invalid email format.",
+            ),
+            (
+                "Student Name,email\nCali Smith,cali@example.edu\n",
+                "Row 2: " + COMMA_REQUIRED,
+            ),
+        )
+        for text, sentence in samples:
+            sa, classes, enrollments, profiles = self._sa([{"id": "c1"}], [])
+            rv = self._post_csv(client, sa, "/api/class/c1/upload_students", text)
+            self.assertEqual(rv.status_code, 400)
+            self.assertIn(sentence, rv.get_json()["errors"])
+            self.assertEqual(profiles.inserts, [])
+            self.assertEqual(enrollments.inserts, [])
+            sa.table.assert_not_called()
+
+    def test_add_student_and_csv_share_one_outcome(self):
+        from app.routes import decide_student_enrollment
+        index = {
+            "jane@example.edu": {
+                "profile_id": "stu-1",
+                "full_name": "Doe, Jane",
+                "class_ids": {"c-other"},
+            },
+        }
+        self.assertEqual(
+            decide_student_enrollment(index, "c1", "jane@example.edu", "Smith, Ann"),
+            ("name_differs", "Doe, Jane", "stu-1"),
+        )
+        self.assertEqual(
+            decide_student_enrollment(index, "c1", "jane@example.edu", "doe,  jane"),
+            ("reuse", "Doe, Jane", "stu-1"),
+        )
+        client = self._client()
+        sa, classes, enrollments, profiles = self._jane_elsewhere()
+        added = self._post_add(
+            client, sa, {"name": "Smith, Ann", "email": "jane@example.edu"},
+        )
+        uploaded = self._post_csv(
+            client,
+            sa,
+            "/api/class/c1/upload_students",
+            'Student Name,email\n"Smith, Ann",jane@example.edu\n',
+        )
+        self.assertEqual(added.status_code, 409)
+        self.assertEqual(uploaded.status_code, 400)
+        self.assertIn("Doe, Jane", added.get_json()["error"])
+        self.assertIn("Doe, Jane", uploaded.get_json()["error"])
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [])
+        sa, classes, enrollments, profiles = self._jane_elsewhere()
+        added = self._post_add(
+            client, sa, {"name": "doe,  jane", "email": "jane@example.edu"},
+        )
+        self.assertEqual(added.status_code, 200)
+        self.assertEqual(enrollments.inserts, [{
+            "class_id": "c1",
+            "student_id": "stu-1",
+        }])
+        sa, classes, enrollments, profiles = self._jane_elsewhere()
+        uploaded = self._post_csv(
+            client,
+            sa,
+            "/api/class/c1/upload_students",
+            'Student Name,email\n"doe,  jane",jane@example.edu\n',
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [{
+            "class_id": "c1",
+            "student_id": "stu-1",
+        }])
+
+    def test_csv_trailing_commas_parse_as_one_row(self):
+        rows, errors = parse_students_csv_text(
+            'Student Name,email\n"Doe, Jane",jane@example.edu,,\n'
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["full_name"], "Doe, Jane")
+        self.assertEqual(rows[0]["email"], "jane@example.edu")
+
+    def test_csv_unquoted_comma_asks_for_quotes(self):
+        rows, errors = parse_students_csv_text(
+            "Student Name,email\nDoe, Jane,jane@example.edu\n"
+        )
+        self.assertEqual(rows, [])
+        self.assertEqual(errors, [
+            'Row 2: Put the name in quotes, like "Doe, Jane".',
+        ])
+
+    def test_csv_error_summary_caps_at_25_rows(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([{"id": "c1"}], [])
+        lines = ["Student Name,email"]
+        for i in range(30):
+            lines.append('"Smith, Ann%s",' % i)
+        text = "\n".join(lines) + "\n"
+        rv = self._post_csv(client, sa, "/api/class/c1/upload_students", text)
+        body = rv.get_json()
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(len(body["errors"]), 30)
+        self.assertEqual(body["error"].count("Email is required."), 25)
+        self.assertTrue(body["error"].endswith("\nand 5 more rows have errors."))
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [])
 
 if __name__ == '__main__':
     unittest.main()

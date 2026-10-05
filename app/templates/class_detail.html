@@ -427,6 +427,7 @@
     <div class="p-6 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
       <div>
         <h2 class="font-semibold text-slate-900 dark:text-white">Upload Students CSV</h2>
+        <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">Columns are Student Name and email. Put the name in quotes, like "Doe, Jane". Email is required.</p>
       </div>
       <button type="button" onclick="closeUploadStudentsModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
         <svg class="w-5 h-5 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -442,7 +443,7 @@
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
         Download CSV template
       </button>
-      <p id="uploadStudentsError" class="hidden text-sm text-red-600 dark:text-red-400"></p>
+      <p id="uploadStudentsError" class="hidden text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap"></p>
       <div class="flex gap-3 pt-1">
         <button type="button" onclick="closeUploadStudentsModal()" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors">Cancel</button>
         <button type="button" id="uploadStudentsSubmitBtn" onclick="submitUploadStudents()" class="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm shadow-emerald-500/20">Preview Import</button>
@@ -464,7 +465,6 @@
         <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
     </div>
-    <div id="studentUploadPreviewWarnings" class="hidden px-5 py-2.5 text-xs bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-100 border-b border-amber-100 dark:border-amber-900/40 whitespace-pre-wrap"></div>
     <div class="flex-1 min-h-0 overflow-auto p-4">
       <table class="w-full text-sm text-left border-collapse">
         <thead class="text-xs uppercase text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/50">
@@ -477,7 +477,7 @@
         <tbody id="studentUploadPreviewTbody" class="divide-y divide-slate-100 dark:divide-slate-700 text-slate-800 dark:text-slate-200"></tbody>
       </table>
     </div>
-    <div id="studentUploadPreviewError" class="hidden px-5 py-2 text-sm text-red-600 dark:text-red-400 border-t border-red-100 dark:border-red-900/40"></div>
+    <div id="studentUploadPreviewError" class="hidden px-5 py-2 text-sm text-red-600 dark:text-red-400 border-t border-red-100 dark:border-red-900/40 whitespace-pre-wrap"></div>
     <div class="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-2 justify-end shrink-0 bg-slate-50/90 dark:bg-slate-900/50">
       <button type="button" onclick="closeStudentUploadPreviewModal(); openUploadStudentsModal();" class="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">Back</button>
       <button type="button" id="studentUploadPreviewConfirm" onclick="confirmStudentUploadImport()" class="px-4 py-2 text-sm font-medium rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Import confirmed rows</button>
@@ -886,7 +886,6 @@ function renderStudentUploadPreviewTable(rows) {
   tbody.innerHTML = '';
   (rows || []).forEach((row) => {
     const tr = document.createElement('tr');
-    if (row.action === 'skip') tr.className = 'bg-slate-50/90 dark:bg-slate-800/40';
 
     const nameTd = document.createElement('td');
     nameTd.className = 'px-2 py-2 align-top';
@@ -901,9 +900,7 @@ function renderStudentUploadPreviewTable(rows) {
     const statusTd = document.createElement('td');
     statusTd.className = 'px-2 py-2 align-top text-xs font-medium';
     statusTd.textContent = String(row.status || '');
-    if (row.action === 'skip') statusTd.classList.add('text-slate-500', 'dark:text-slate-400');
-    else if (row.action === 'update_missing_email') statusTd.classList.add('text-blue-700', 'dark:text-blue-300');
-    else statusTd.classList.add('text-green-700', 'dark:text-green-300');
+    statusTd.classList.add('text-green-700', 'dark:text-green-300');
     tr.appendChild(statusTd);
 
     tbody.appendChild(tr);
@@ -981,18 +978,6 @@ function submitUploadStudents() {
 
       renderStudentUploadPreviewTable(data.rows || []);
 
-      const warnEl = document.getElementById('studentUploadPreviewWarnings');
-      if (warnEl) {
-        const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
-        if (warnings.length) {
-          warnEl.textContent = warnings.join('\n');
-          warnEl.classList.remove('hidden');
-        } else {
-          warnEl.classList.add('hidden');
-          warnEl.textContent = '';
-        }
-      }
-
       closeUploadStudentsModal(false);
       openStudentUploadPreviewModal();
     })
@@ -1057,14 +1042,7 @@ function confirmStudentUploadImport() {
         }
         return;
       }
-      const stats = data.stats || {};
-      const warningCount = Array.isArray(data.warnings) ? data.warnings.length : 0;
-      // Avoid exposing internal import/debug counters on the student-facing upload UI.
-      if (warningCount > 0) {
-        alert('Student upload complete. Some rows may have been skipped or require review.');
-      } else {
-        alert('Student upload complete.');
-      }
+      alert('Student upload complete.');
       const nextUrl = new URL(window.location.href);
       nextUrl.searchParams.set('manage_students', '1');
       window.location.assign(nextUrl.toString());

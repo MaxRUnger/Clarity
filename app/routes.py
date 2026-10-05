@@ -59,7 +59,6 @@ from app.student_names import (
     COMMA_REQUIRED,
     display_name,
     name_key,
-    normalize_spaces,
     raw_name_from_csv_fields,
     normalize_email,
     require_canvas_name,
@@ -291,10 +290,6 @@ def parse_learning_objectives_csv_text(text: str) -> Tuple[List[Dict[str, Any]],
     return rows_out, warnings
 
 
-def _student_email_key(email: str) -> str:
-    return (email or "").strip().lower()
-
-
 def _allowed_grade_upload_signature(file_bytes: bytes, filename: str) -> bool:
     fn = str(filename or "").strip().lower()
     if fn.endswith(".pdf"):
@@ -380,6 +375,12 @@ def parse_students_csv_text(text: str) -> Tuple[List[Dict[str, str]], List[str]]
 
     rows: List[Dict[str, str]] = []
     for line_no, raw in enumerate(reader, start=2):
+        extras = raw.get(None)
+        if extras and any((value or "").strip() for value in extras):
+            warnings.append(
+                f'Row {line_no}: Put the name in quotes, like "Doe, Jane".'
+            )
+            continue
         row = _csv_row_norm_keys(raw)
         if not any(row.values()):
             continue
@@ -396,11 +397,21 @@ def parse_students_csv_text(text: str) -> Tuple[List[Dict[str, str]], List[str]]
             full_name = require_canvas_name(raw_name_from_csv_fields(first, last))
         else:
             full_name = require_canvas_name(raw_name)
+        raw_email = (row.get("email") or row.get("student_email") or "").strip()
+        email = normalize_email(raw_email) if raw_email else None
         if not full_name:
             warnings.append(f"Row {line_no}: {COMMA_REQUIRED}")
+        if not raw_email:
+            warnings.append(f"Row {line_no}: Email is required.")
+        elif not email:
+            warnings.append(f"Row {line_no}: Invalid email format.")
+        if not full_name or not email:
             continue
-        email = _student_email_key(row.get("email") or row.get("student_email") or "")
-        rows.append({"full_name": _csv_formula_safe(full_name), "email": email})
+        rows.append({
+            "full_name": _csv_formula_safe(full_name),
+            "email": email,
+            "line": str(line_no),
+        })
 
     if not rows and not warnings:
         return [], ["File is empty"]
@@ -1485,14 +1496,22 @@ def _instructor_student_email_index(owner_id: str) -> Dict[str, Dict[str, Any]]:
     return index
 
 
-def classify_student_email(index, class_id, email):
-    """Return already_in_class, reuse, or create for one lowercased email."""
+def decide_student_enrollment(index, class_id, email, typed_name):
+    """Return outcome, stored name, and profile id for one normalized email.
+
+    outcome is already_in_class, name_differs, reuse, or create.
+    stored_name and profile_id are empty when the outcome is create.
+    """
     entry = (index or {}).get(email)
     if not entry:
-        return "create", None
+        return "create", "", ""
+    stored_name = entry.get("full_name") or ""
+    profile_id = str(entry.get("profile_id") or "")
     if str(class_id) in (entry.get("class_ids") or ()):
-        return "already_in_class", entry
-    return "reuse", entry
+        return "already_in_class", stored_name, profile_id
+    if name_key(typed_name) != name_key(stored_name):
+        return "name_differs", stored_name, profile_id
+    return "reuse", stored_name, profile_id
 
 
 @main_bp.route("/class/<class_id>/add_student", methods=["POST"])
@@ -1521,25 +1540,26 @@ def add_student(class_id):
     owner_id = session.get("user_id")
     try:
         index = _instructor_student_email_index(owner_id)
-        action, entry = classify_student_email(index, class_id, email)
-        if action == "already_in_class":
+        outcome, stored_name, profile_id = decide_student_enrollment(
+            index, class_id, email, name
+        )
+        if outcome == "already_in_class":
             return jsonify({
                 "success": False,
                 "error": "A student with that email is already in this class",
             }), 409
-        if action == "reuse":
-            stored_name = entry.get("full_name") or ""
-            if name_key(name) != name_key(stored_name):
-                return jsonify({
-                    "success": False,
-                    "error": (
-                        f"That email belongs to {stored_name}. "
-                        f"Enter the name as {stored_name} to add them to this class."
-                    ),
-                }), 409
+        if outcome == "name_differs":
+            return jsonify({
+                "success": False,
+                "error": (
+                    f"That email belongs to {stored_name}. "
+                    f"Enter the name as {stored_name} to add them to this class."
+                ),
+            }), 409
+        if outcome == "reuse":
             supabase_admin.table("enrollments").insert({
                 "class_id": class_id,
-                "student_id": entry["profile_id"],
+                "student_id": profile_id,
             }).execute()
             return jsonify({
                 "success": True,
@@ -2608,7 +2628,7 @@ def _parse_lo_csv_upload() -> Tuple[Optional[str], Optional[List[Dict[str, Any]]
 
 
 def _parse_student_csv_upload() -> Tuple[Optional[str], Optional[List[Dict[str, str]]], List[str]]:
-    """Read CSV from request.files['file']; return (error_message or None, rows or None, warnings)."""
+    """Read CSV from request.files['file']; return (error_message or None, rows or None, row errors)."""
     f = request.files.get("file")
     if not f or not (f.filename or "").strip():
         return "Please choose a CSV file.", None, []
@@ -2622,16 +2642,12 @@ def _parse_student_csv_upload() -> Tuple[Optional[str], Optional[List[Dict[str, 
     except Exception:
         return "Could not read CSV file", None, []
 
-    rows, parse_warnings = parse_students_csv_text(text)
-    if not rows:
-        return (
-            parse_warnings[0] if parse_warnings else "No valid student rows found",
-            None,
-            parse_warnings,
-        )
+    rows, parse_errors = parse_students_csv_text(text)
+    if not rows and parse_errors and not str(parse_errors[0]).startswith("Row "):
+        return parse_errors[0], None, parse_errors
     if len(rows) > MAX_IMPORT_ROWS:
-        return f"CSV has too many rows (max {MAX_IMPORT_ROWS})", None, parse_warnings
-    return None, rows, parse_warnings
+        return f"CSV has too many rows (max {MAX_IMPORT_ROWS})", None, parse_errors
+    return None, rows, parse_errors
 
 
 @main_bp.route("/api/class/<class_id>/preview-learning-objectives", methods=["POST"])
@@ -4033,132 +4049,62 @@ def get_available_students(class_id):
         return _safe_api_error("Could not load available students", 500, log_detail=e)
 
 
-def _build_student_upload_enrollment_indexes(class_id: str):
-    """Return class enrollment indexes used by CSV preview/import student upload flows."""
-    enroll_resp = (
-        supabase_admin.table("enrollments")
-        .select("student_id")
-        .eq("class_id", class_id)
-        .execute()
-    )
-    enrolled_ids = [str(r.get("student_id")) for r in (enroll_resp.data or []) if r.get("student_id")]
-    enrolled_set = set(enrolled_ids)
+def _student_csv_rejection(errors: List[str]):
+    shown = errors[:25]
+    summary = "\n".join(shown)
+    extra = len(errors) - len(shown)
+    if extra:
+        summary += f"\nand {extra} more rows have errors."
+    return jsonify({
+        "success": False,
+        "error": summary,
+        "errors": errors,
+    }), 400
 
-    enrolled_profiles: List[Dict[str, Any]] = []
-    if enrolled_ids:
-        prof_resp = (
-            supabase_admin.table("profiles")
-            .select("id, full_name, email")
-            .in_("id", enrolled_ids)
-            .execute()
-        )
-        enrolled_profiles = prof_resp.data or []
 
-    enrolled_by_email: Dict[str, Dict[str, Any]] = {}
-    enrolled_by_name: Dict[str, List[Dict[str, Any]]] = {}
-    missing_email_by_name: Dict[str, List[Dict[str, Any]]] = {}
-    for p in enrolled_profiles:
-        sid = str(p.get("id") or "").strip()
-        if not sid:
+def _classify_student_csv_rows(class_id, owner_id, rows, parse_errors):
+    """Return row errors and actions. A non-empty error list means write nothing."""
+    errors = list(parse_errors)
+    if not rows:
+        return errors, []
+    index = _instructor_student_email_index(owner_id)
+    seen = set()
+    actions = []
+    for row in sorted(rows, key=lambda item: int(item["line"])):
+        line = row["line"]
+        email = row["email"]
+        name = row["full_name"]
+        if email in seen:
+            errors.append(f"Row {line}: {email} is listed more than once.")
             continue
-        profile = {
-            "id": sid,
-            "full_name": normalize_spaces((p.get("full_name") or "").strip()),
-            "email": _student_email_key((p.get("email") or "").strip()),
-        }
-        if profile["email"]:
-            enrolled_by_email[profile["email"]] = profile
-        nk = name_key(profile["full_name"])
-        enrolled_by_name.setdefault(nk, []).append(profile)
-        if not profile["email"]:
-            missing_email_by_name.setdefault(nk, []).append(profile)
-
-    return enrolled_set, enrolled_by_email, enrolled_by_name, missing_email_by_name
-
-
-def _profile_ids_with_enrollment_elsewhere(profile_ids: List[str], class_id: str) -> set:
-    """Subset of profile_ids already enrolled in a class owned by a DIFFERENT
-    instructor than the one who owns class_id.
-
-    Used to avoid silently attaching a globally-matched profile (by email or
-    name) that already belongs to a different instructor's roster onto this
-    instructor's class. Deliberately NOT triggered by enrollment in another
-    class owned by the SAME instructor — that's normal multi-class reuse and
-    must keep working. Fails closed: a lookup error is treated as "claimed
-    elsewhere" so we never attach when the safety check itself is broken.
-    """
-    ids = [str(pid) for pid in set(profile_ids) if pid]
-    if not ids:
-        return set()
-    try:
-        owner_id = _class_instructor_id(class_id)
-        resp = (
-            supabase_admin.table("enrollments")
-            .select("student_id, class_id")
-            .in_("student_id", ids)
-            .execute()
+        seen.add(email)
+        outcome, stored_name, profile_id = decide_student_enrollment(
+            index, class_id, email, name
         )
-        rows = [r for r in (resp.data or []) if r.get("student_id")]
-        other_class_ids = {
-            str(r["class_id"]) for r in rows
-            if r.get("class_id") and str(r["class_id"]) != str(class_id)
-        }
-        if not other_class_ids:
-            return set()
-
-        classes_resp = (
-            supabase_admin.table("classes")
-            .select("id, instructor_id")
-            .in_("id", list(other_class_ids))
-            .execute()
-        )
-        foreign_class_ids = {
-            str(c["id"]) for c in (classes_resp.data or [])
-            if c.get("id") and not _user_ids_equal(c.get("instructor_id"), owner_id)
-        }
-        if not foreign_class_ids:
-            return set()
-        return {
-            str(r["student_id"]) for r in rows
-            if str(r.get("class_id")) in foreign_class_ids
-        }
-    except Exception as e:
-        logger.error("enrollment-elsewhere lookup failed: %s", e)
-        return set(ids)
-
-
-def _build_profiles_by_email_for_rows(rows: List[Dict[str, str]], class_id: str) -> Dict[str, Dict[str, Any]]:
-    """Return global profile lookup by normalized email for provided CSV rows.
-
-    Excludes matches already enrolled in a different class — a global email
-    match belonging to another instructor's roster is treated as "no match"
-    so we never silently attach a stranger's account to this class.
-    """
-    provided_email_keys = {
-        _student_email_key(r.get("email") or "")
-        for r in rows
-        if _student_email_key(r.get("email") or "")
-    }
-    profiles_by_email: Dict[str, Dict[str, Any]] = {}
-    if provided_email_keys:
-        global_email_resp = (
-            supabase_admin.table("profiles")
-            .select("id, full_name, email")
-            .in_("email", list(provided_email_keys))
-            .execute()
-        )
-        candidates = global_email_resp.data or []
-        claimed_elsewhere = _profile_ids_with_enrollment_elsewhere(
-            [str(p.get("id")) for p in candidates if p.get("id")], class_id
-        )
-        for p in candidates:
-            pid = str(p.get("id") or "")
-            if pid and pid in claimed_elsewhere:
-                continue
-            ek = _student_email_key(p.get("email") or "")
-            if ek:
-                profiles_by_email[ek] = p
-    return profiles_by_email
+        if outcome == "already_in_class":
+            errors.append(f"Row {line}: {email} is already in this class.")
+        elif outcome == "name_differs":
+            errors.append(
+                f"Row {line}: {email} belongs to {stored_name}. "
+                f"Enter the name as {stored_name}."
+            )
+        elif outcome == "reuse":
+            actions.append({
+                "outcome": "reuse",
+                "full_name": stored_name,
+                "email": email,
+                "profile_id": profile_id,
+            })
+        else:
+            actions.append({
+                "outcome": "create",
+                "full_name": name,
+                "email": email,
+                "profile_id": "",
+            })
+    if errors:
+        return errors, []
+    return [], actions
 
 
 @main_bp.route("/api/class/<class_id>/upload_students", methods=["POST"])
@@ -4167,186 +4113,50 @@ def _build_profiles_by_email_for_rows(rows: List[Dict[str, str]], class_id: str)
 def api_upload_students_to_class(class_id):
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
-    err, rows, parse_warnings = _parse_student_csv_upload()
+    err, rows, parse_errors = _parse_student_csv_upload()
     if err:
         return jsonify({
             "success": False,
             "error": err,
-            "warnings": parse_warnings,
+            "errors": parse_errors,
         }), 400
 
     try:
-        enrolled_set, enrolled_by_email, enrolled_by_name, missing_email_by_name = (
-            _build_student_upload_enrollment_indexes(class_id)
+        errors, actions = _classify_student_csv_rows(
+            class_id, session.get("user_id"), rows or [], parse_errors
         )
-        profiles_by_email = _build_profiles_by_email_for_rows(rows, class_id)
-
-        stats = {
-            "created_profiles": 0,
-            "enrolled_existing_profiles": 0,
-            "updated_missing_emails": 0,
-            "skipped_existing": 0,
-        }
-        upload_name_seen_count: Dict[str, int] = {}
-        file_seen_emails: set = set()
-        warnings = list(parse_warnings)
-
-        for row in rows:
-            full_name = normalize_spaces(row.get("full_name") or "")
-            if not full_name:
-                continue
-            row_name_key = name_key(full_name)
-
-            email = _student_email_key(row.get("email") or "")
-            if email:
-                if email in file_seen_emails:
-                    warnings.append(f"Duplicate email in file skipped: {email}")
-                    continue
-                file_seen_emails.add(email)
-
-                existing_in_class = enrolled_by_email.get(email)
-                if existing_in_class:
-                    stats["skipped_existing"] += 1
-                    continue
-
-                missing_candidates = missing_email_by_name.get(row_name_key) or []
-                if missing_candidates:
-                    target = missing_candidates.pop(0)
-                    target_id = target.get("id")
-                    if target_id:
-                        supabase_admin.table("profiles").update({"email": email}).eq("id", target_id).execute()
-                        target["email"] = email
-                        enrolled_by_email[email] = target
-                        profiles_by_email[email] = {
-                            "id": target_id,
-                            "full_name": target.get("full_name") or full_name,
-                            "email": email,
-                        }
-                        stats["updated_missing_emails"] += 1
-                        continue
-
-                existing_profile = profiles_by_email.get(email)
-                if existing_profile and existing_profile.get("id"):
-                    existing_id = str(existing_profile.get("id"))
-                    if existing_id not in enrolled_set:
-                        supabase_admin.table("enrollments").insert({
-                            "class_id": class_id,
-                            "student_id": existing_id,
-                        }).execute()
-                        enrolled_set.add(existing_id)
-                        stats["enrolled_existing_profiles"] += 1
-                    else:
-                        stats["skipped_existing"] += 1
-                    enrolled_by_email[email] = {
-                        "id": existing_id,
-                        "full_name": normalize_spaces(
-                            (existing_profile.get("full_name") or full_name).strip()
-                        ),
-                        "email": email,
-                    }
-                    continue
-
-                student_id = str(uuid4())
-                insert_profile = {
-                    "id": student_id,
-                    "full_name": full_name,
-                    "role": "student",
-                    "email": email,
-                }
-                try:
-                    supabase_admin.table("profiles").insert(insert_profile).execute()
-                except Exception:
-                    lookup = (
-                        supabase_admin.table("profiles")
-                        .select("id, full_name, email")
-                        .eq("email", email)
-                        .limit(1)
-                        .execute()
-                    )
-                    if lookup.data:
-                        found = lookup.data[0]
-                        existing_id = str(found.get("id"))
-                        if existing_id in _profile_ids_with_enrollment_elsewhere([existing_id], class_id):
-                            # Email belongs to another instructor's student — don't
-                            # attach; create a separate profile without that email.
-                            new_id = str(uuid4())
-                            supabase_admin.table("profiles").insert({
-                                "id": new_id,
-                                "full_name": full_name,
-                                "role": "student",
-                            }).execute()
-                            supabase_admin.table("enrollments").insert({
-                                "class_id": class_id,
-                                "student_id": new_id,
-                            }).execute()
-                            enrolled_set.add(new_id)
-                            enrolled_by_name.setdefault(row_name_key, []).append(
-                                {"id": new_id, "full_name": full_name, "email": ""}
-                            )
-                            stats["created_profiles"] += 1
-                            warnings.append(
-                                f"Email {email} is already used by another account — "
-                                f"created a separate profile for {full_name} without that email."
-                            )
-                            continue
-                        if existing_id not in enrolled_set:
-                            supabase_admin.table("enrollments").insert({
-                                "class_id": class_id,
-                                "student_id": existing_id,
-                            }).execute()
-                            enrolled_set.add(existing_id)
-                            stats["enrolled_existing_profiles"] += 1
-                        else:
-                            stats["skipped_existing"] += 1
-                        enrolled_by_email[email] = {
-                            "id": existing_id,
-                            "full_name": normalize_spaces((found.get("full_name") or full_name).strip()),
-                            "email": email,
-                        }
-                        continue
-                    raise
-
+        if errors:
+            return _student_csv_rejection(errors)
+        created = 0
+        enrolled = 0
+        for action in actions:
+            if action["outcome"] == "reuse":
                 supabase_admin.table("enrollments").insert({
                     "class_id": class_id,
-                    "student_id": student_id,
+                    "student_id": action["profile_id"],
                 }).execute()
-                enrolled_set.add(student_id)
-                enrolled_profile = {"id": student_id, "full_name": full_name, "email": email}
-                enrolled_by_email[email] = enrolled_profile
-                enrolled_by_name.setdefault(row_name_key, []).append(enrolled_profile)
-                profiles_by_email[email] = enrolled_profile
-                stats["created_profiles"] += 1
+                enrolled += 1
                 continue
-
-            seen_count = upload_name_seen_count.get(row_name_key, 0)
-            upload_name_seen_count[row_name_key] = seen_count + 1
-            existing_with_name = enrolled_by_name.get(row_name_key) or []
-            if seen_count < len(existing_with_name):
-                stats["skipped_existing"] += 1
-                continue
-
             student_id = str(uuid4())
             supabase_admin.table("profiles").insert({
                 "id": student_id,
-                "full_name": full_name,
+                "full_name": action["full_name"],
                 "role": "student",
+                "email": action["email"],
             }).execute()
             supabase_admin.table("enrollments").insert({
                 "class_id": class_id,
                 "student_id": student_id,
             }).execute()
-            enrolled_set.add(student_id)
-            created = {"id": student_id, "full_name": full_name, "email": ""}
-            enrolled_by_name.setdefault(row_name_key, []).append(created)
-            missing_email_by_name.setdefault(row_name_key, []).append(created)
-            stats["created_profiles"] += 1
-
+            created += 1
         return jsonify({
             "success": True,
             "message": "Student upload complete",
-            "stats": stats,
-            "warnings": warnings,
-            "total_rows": len(rows),
+            "stats": {
+                "created_profiles": created,
+                "enrolled_existing_profiles": enrolled,
+            },
+            "total_rows": len(actions),
         })
     except Exception as e:
         logger.error("Error uploading students for class %s: %s", class_id, e)
@@ -4359,113 +4169,43 @@ def api_upload_students_to_class(class_id):
 def api_preview_upload_students(class_id):
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
-    err, rows, parse_warnings = _parse_student_csv_upload()
+    err, rows, parse_errors = _parse_student_csv_upload()
     if err:
         return jsonify({
             "success": False,
             "error": err,
-            "warnings": parse_warnings,
+            "errors": parse_errors,
         }), 400
 
     try:
-        _, enrolled_by_email, enrolled_by_name, missing_email_by_name = (
-            _build_student_upload_enrollment_indexes(class_id)
+        errors, actions = _classify_student_csv_rows(
+            class_id, session.get("user_id"), rows or [], parse_errors
         )
-        profiles_by_email = _build_profiles_by_email_for_rows(rows, class_id)
-
-        preview_rows: List[Dict[str, Any]] = []
-        stats = {
-            "will_create": 0,
-            "will_enroll_existing": 0,
-            "will_update_missing_email": 0,
-            "will_skip": 0,
-        }
-        upload_name_seen_count: Dict[str, int] = {}
-        file_seen_emails: set = set()
-        warnings = list(parse_warnings)
-
-        for row in rows:
-            full_name = normalize_spaces(row.get("full_name") or "")
-            if not full_name:
-                continue
-            row_name_key = name_key(full_name)
-            email = _student_email_key(row.get("email") or "")
-
-            action = "skip"
-            status = "Already in class"
-
-            if email:
-                if email in file_seen_emails:
-                    action = "skip"
-                    status = "Duplicate email in upload"
-                    warnings.append(f"Duplicate email in file skipped: {email}")
-                    stats["will_skip"] += 1
-                else:
-                    file_seen_emails.add(email)
-                    if enrolled_by_email.get(email):
-                        action = "skip"
-                        status = "Already in class (email match)"
-                        stats["will_skip"] += 1
-                    else:
-                        missing_candidates = missing_email_by_name.get(row_name_key) or []
-                        if missing_candidates:
-                            target = missing_candidates.pop(0)
-                            target["email"] = email
-                            enrolled_by_email[email] = target
-                            action = "update_missing_email"
-                            status = "Will attach email to existing student"
-                            stats["will_update_missing_email"] += 1
-                        else:
-                            existing_profile = profiles_by_email.get(email)
-                            if existing_profile and existing_profile.get("id"):
-                                action = "enroll_existing"
-                                status = "Will enroll existing profile by email"
-                                stats["will_enroll_existing"] += 1
-                                enrolled_by_email[email] = {
-                                    "id": str(existing_profile.get("id")),
-                                    "full_name": normalize_spaces(
-                                        (existing_profile.get("full_name") or full_name).strip()
-                                    ),
-                                    "email": email,
-                                }
-                            else:
-                                action = "create"
-                                status = "Will create and enroll"
-                                stats["will_create"] += 1
-                                placeholder = {"id": f"new-{len(preview_rows)}", "full_name": full_name, "email": email}
-                                enrolled_by_email[email] = placeholder
-                                enrolled_by_name.setdefault(row_name_key, []).append(placeholder)
-                                profiles_by_email[email] = placeholder
+        if errors:
+            return _student_csv_rejection(errors)
+        preview_rows = []
+        will_create = 0
+        will_enroll = 0
+        for action in actions:
+            if action["outcome"] == "reuse":
+                status = "Will enroll"
+                will_enroll += 1
             else:
-                seen_count = upload_name_seen_count.get(row_name_key, 0)
-                upload_name_seen_count[row_name_key] = seen_count + 1
-                existing_with_name = enrolled_by_name.get(row_name_key) or []
-                if seen_count < len(existing_with_name):
-                    action = "skip"
-                    status = "Already in class (name match)"
-                    stats["will_skip"] += 1
-                else:
-                    action = "create"
-                    status = "Will create and enroll (no email)"
-                    stats["will_create"] += 1
-                    placeholder = {"id": f"new-{len(preview_rows)}", "full_name": full_name, "email": ""}
-                    enrolled_by_name.setdefault(row_name_key, []).append(placeholder)
-                    missing_email_by_name.setdefault(row_name_key, []).append(placeholder)
-
-            preview_rows.append(
-                {
-                    "full_name": full_name,
-                    "email": email,
-                    "action": action,
-                    "status": status,
-                }
-            )
-
+                status = "Will create and enroll"
+                will_create += 1
+            preview_rows.append({
+                "full_name": action["full_name"],
+                "email": action["email"],
+                "action": action["outcome"],
+                "status": status,
+            })
         return jsonify({
             "success": True,
             "rows": preview_rows,
-            "stats": stats,
-            "warnings": warnings,
+            "stats": {
+                "will_create": will_create,
+                "will_enroll_existing": will_enroll,
+            },
             "count": len(preview_rows),
         })
     except Exception as e:
