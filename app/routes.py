@@ -1266,13 +1266,11 @@ def student_dashboard():
     if data:
         # Get class settings for auto-convert
         enrollments = data.get('enrollments', [])
-        class_id = None
         if enrollments:
             cls = enrollments[0].get('classes', {})
             if cls:
                 auto_convert_m = cls.get('auto_convert_m', False)
                 class_name = cls.get('name')
-                class_id = cls.get('id')
 
         # Build lo_lookup from embedded learning_objectives on each grade
         raw_grades = data.get('grades', []) or []
@@ -3030,7 +3028,6 @@ def class_speed_grader(class_id):
     assignments = load_assignments_for_class(class_id)
 
     raw_enrollments = class_data.get('enrollments', [])
-    lo_lookup = {str(lo.get('id')): lo for lo in class_data.get('learning_objectives', [])}
     students = []
     for enrollment in raw_enrollments:
         prof = normalize_profile(enrollment)
@@ -3387,139 +3384,6 @@ def add_class():
     except Exception as e:
         logger.error("Failed to create class: %s", e)
         return "Failed to create class.", 500
-
-
-@main_bp.route("/api/update_grade", methods=["POST"], endpoint='api_update_grade')
-@api_login_required
-def api_update_grade():
-    data = request.get_json() or {}
-    try:
-        supplied_class_id = data.get("class_id")
-        assignment_id = data.get("assignment_id")
-        lo_id = data.get("lo_id")
-
-        # Always derive the authoritative class_id from the related entities
-        # (assignment / learning objective) — never trust the caller's value
-        # alone, since they could send a class_id they own while passing a
-        # foreign assignment_id / lo_id.
-        derived_from_assignment = None
-        derived_from_lo = None
-
-        if assignment_id:
-            try:
-                a = (
-                    supabase_admin.table("assignments")
-                    .select("class_id")
-                    .eq("id", assignment_id)
-                    .limit(1)
-                    .execute()
-                )
-                if a.data:
-                    derived_from_assignment = a.data[0].get("class_id")
-            except Exception:
-                derived_from_assignment = None
-        if lo_id:
-            try:
-                lo = (
-                    supabase_admin.table("learning_objectives")
-                    .select("class_id")
-                    .eq("id", lo_id)
-                    .limit(1)
-                    .execute()
-                )
-                if lo.data:
-                    derived_from_lo = lo.data[0].get("class_id")
-            except Exception:
-                derived_from_lo = None
-
-        # If both assignment and LO are present they must agree on a class.
-        if (
-            derived_from_assignment
-            and derived_from_lo
-            and str(derived_from_assignment) != str(derived_from_lo)
-        ):
-            return jsonify({"success": False, "error": "Forbidden"}), 403
-
-        true_class_id = derived_from_assignment or derived_from_lo
-
-        # If the caller supplied a class_id, it must match the derived one.
-        if (
-            supplied_class_id
-            and true_class_id
-            and str(supplied_class_id) != str(true_class_id)
-        ):
-            return jsonify({"success": False, "error": "Forbidden"}), 403
-
-        # Fall back to the caller-supplied value only when nothing could be
-        # derived (e.g. legacy callers without assignment/lo). Ownership is
-        # still enforced below.
-        class_id = true_class_id or supplied_class_id
-
-        if not class_id or not _instructor_owns_class(str(class_id)):
-            return jsonify({"success": False, "error": "Forbidden"}), 403
-
-        if not _student_enrolled_in_class(str(class_id), str(data.get('student_id') or '')):
-            return jsonify({"success": False, "error": "Student is not enrolled in this class"}), 403
-
-        if lo_id:
-            allowed_lo_ids = _allowed_lo_ids_for_grading(
-                str(class_id), str(assignment_id) if assignment_id else None
-            )
-            if str(lo_id) not in allowed_lo_ids:
-                return jsonify({
-                    "success": False,
-                    "error": "Invalid learning objective for this assignment",
-                }), 400
-
-        normalized = Grade.normalize_score(data.get("top_score"))
-        hw_at_entry = None
-        if assignment_id:
-            hw_map = Homework.get_hw_scores_map_for_assignment(
-                str(class_id), str(assignment_id)
-            )
-            sid = str(data.get("student_id") or "").strip()
-            if sid in hw_map:
-                hw_at_entry = hw_map[sid]
-            if normalized and normalized != "A" and not Homework.student_has_recorded_score(hw_map, data.get("student_id")):
-                return jsonify({
-                    "success": False,
-                    "error": _HW_REQUIRED_FOR_MARK_ERROR,
-                }), 400
-
-        Grade.update_score(student_id=data['student_id'], lo_id=data['lo_id'], 
-                            top_score=data['top_score'], second_score=data.get('second_score'),
-                            assignment_id=data.get('assignment_id'), changed_by=session['user_id'],
-                            hw_score_at_entry=hw_at_entry)
-        _log_grade_upserts(
-            [{
-                "student_id": data["student_id"],
-                "learning_objective_id": data["lo_id"],
-                "assignment_id": data.get("assignment_id"),
-                "top_score": Grade.normalize_score(data.get("top_score")),
-                "counts_for_mastery": None,
-            }],
-            str(class_id),
-            session["user_id"],
-        )
-        return jsonify({"success": True})
-    except Exception as e:
-        return _safe_api_error("Could not update grade", 500, log_detail=e)
-
-
-@main_bp.route("/api/class/<class_id>/assignments")
-@api_login_required
-def api_class_assignments(class_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    try:
-        result = supabase_admin.table("assignments") \
-            .select("*") \
-            .eq("class_id", class_id) \
-            .order("created_at", desc=False) \
-            .execute()
-        return jsonify({"success": True, "assignments": result.data or []}), 200
-    except Exception as e:
-        return _safe_api_error("Could not load assignments", 500, log_detail=e)
 
 
 @main_bp.route("/api/class/<class_id>/save-grades", methods=["POST"])

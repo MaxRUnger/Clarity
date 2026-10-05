@@ -2310,7 +2310,7 @@ class TestGradeChangeLogUpserts(unittest.TestCase):
 
     Before fix: _log_grade_upserts did not exist — grade_change_log only ever
     received DELETE rows from _log_grade_deletions. Every score written via
-    save_grades, api_update_grade, or api_import_grades was invisible in the
+    save_grades or api_import_grades was invisible in the
     audit log.
     After fix: save_grades calls _log_grade_upserts after a successful upsert,
     producing operation="UPSERT" rows that mirror the rows written to the grades

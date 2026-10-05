@@ -288,44 +288,6 @@ class Grade:
         return None
 
     @staticmethod
-    def update_score(student_id, lo_id, top_score, second_score=None, assignment_id=None, changed_by=None, hw_score_at_entry=None):
-        """Upserts a grade for a student, learning objective, and assignment.
-
-        The database enforces that scores are one of the mastery codes (e.g. M, R, P, X).
-        When we receive numeric scores (e.g. from Gemini), we map them to a mastery code
-        so the import pipeline doesn't fail due to check constraints.
-        """
-
-        normalized_top = Grade.normalize_score(top_score)
-        normalized_second = Grade.normalize_score(second_score)
-
-        data = {
-            "student_id": student_id,
-            "learning_objective_id": lo_id,
-            "top_score": normalized_top
-        }
-        if normalized_second is not None:
-            data["second_score"] = normalized_second
-        if assignment_id is not None:
-            data["assignment_id"] = assignment_id
-        if changed_by is not None:
-            data["last_modified_by"] = changed_by
-        data["hw_score_at_entry"] = hw_score_at_entry
-
-        # Ensure `upsert` updates existing grades instead of throwing on duplicates.
-        # Supabase requires specifying the conflict target for proper behavior.
-        try:
-            return supabase_admin.table("grades").upsert(data, on_conflict="student_id,learning_objective_id,assignment_id").execute()
-        except Exception as e:
-            msg = str(e)
-            if "hw_score_at_entry" in msg or "last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
-                # Fallback for deployments that haven't run the new-column migration yet.
-                data.pop("hw_score_at_entry", None)
-                data.pop("last_modified_by", None)
-                return supabase_admin.table("grades").upsert(data, on_conflict="student_id,learning_objective_id,assignment_id").execute()
-            raise
-
-    @staticmethod
     def get_overdue_revisions(class_id):
         """Return R and RQ grades where the assignment's revision_due date has passed
         and the student was eligible to revise to mastery (HW >= 75, pass does not qualify).

@@ -767,16 +767,6 @@ function toggleAssignment(el) {
   chevron.classList.toggle('rotate-180');
 }
 
-function toggleExistingLosSection(btn) {
-  var wrap = document.getElementById('existingLosListWrapper');
-  if (!wrap || !btn) return;
-  var chev = btn.querySelector('.chevron');
-  wrap.classList.toggle('hidden');
-  if (chev) {
-    chev.classList.toggle('rotate-180', wrap.classList.contains('hidden'));
-  }
-  btn.setAttribute('aria-expanded', wrap.classList.contains('hidden') ? 'false' : 'true');
-}
 let __cachedStudentItems = null;
 let __cachedAssignmentItems = null;
 function _studentItems() {
@@ -1060,20 +1050,6 @@ function confirmStudentUploadImport() {
         confirmBtn.textContent = previousText || 'Import confirmed rows';
       }
     });
-}
-
-function dashboardCreateLO() {
-  const loForm = document.getElementById('loForm');
-  if (!loForm) return;
-  document.getElementById('hiddenLoCode').value = document.getElementById('loCode').value;
-  document.getElementById('hiddenLoDescription').value = document.getElementById('loDescription').value;
-  document.getElementById('hiddenLoRequiredMs').value = document.getElementById('loRequiredMs').value;
-  const btn = document.getElementById('createLOBtn');
-  if (btn) {
-    btn.disabled = true;
-    btn.classList.add('opacity-60', 'cursor-not-allowed');
-  }
-  loForm.submit();
 }
 
 var editLoCurrentId = null;
