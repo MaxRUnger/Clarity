@@ -14,11 +14,18 @@
 
 let uploadedPDFData = null;
 let mobilePollInterval = null;
-let nameResolutions = {};
-let lastPreviewNames = null;
-let lastPreviewMatches = [];
-let lastPreviewNameKeys = [];
-let previewFetchGen = 0;
+let classRoster = [];
+
+(function loadClassRoster() {
+  var el = document.getElementById('classRosterJson');
+  if (!el) return;
+  try {
+    var parsed = JSON.parse(el.textContent || '[]');
+    if (Array.isArray(parsed)) classRoster = parsed;
+  } catch (err) {
+    classRoster = [];
+  }
+})();
 
 function stopMobileUploadPoll() {
   if (mobilePollInterval) {
@@ -727,10 +734,6 @@ function displayExtractedLOs(data) {
 }
 
 function displayExtractedData(data) {
-  nameResolutions = {};
-  lastPreviewNames = null;
-  lastPreviewMatches = [];
-  lastPreviewNameKeys = [];
   hideImportNameMatchError();
   setImportNameConfirmCount(0);
   setReviewContinueEnabled(true);
@@ -860,6 +863,7 @@ function displayExtractedData(data) {
 
   // Attach speed-grader keyboard handlers to all .grade-cell
   attachGradeCellHandlers();
+  paintNameFlags();
 }
 
 function escapeHTML(str) {
@@ -989,13 +993,9 @@ function moveFocus(row, col) {
 function updateExtractedStudentName(idx, value) {
   if (!uploadedPDFData || !uploadedPDFData.students || !uploadedPDFData.students[idx]) return;
   uploadedPDFData.students[idx].name = value;
-  lastPreviewNames = null;
-  lastPreviewMatches = [];
-  lastPreviewNameKeys = [];
-  clearNameMatchBanners();
   hideImportNameMatchError();
-  setImportNameConfirmCount(0);
   setReviewContinueEnabled(true);
+  paintNameFlags();
 }
 
 function updateExtractedHomeworkPct(idx, value) {
@@ -1051,20 +1051,6 @@ function buildFilteredStudents() {
   });
 }
 
-function previewNamesFromReview() {
-  return buildFilteredStudents().map(function (s) {
-    return s.name == null ? '' : String(s.name);
-  });
-}
-
-function namesListsEqual(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
 function setReviewContinueEnabled(enabled) {
   var btn = document.getElementById('reviewContinueBtn');
   if (!btn) return;
@@ -1084,7 +1070,7 @@ function setImportNameConfirmCount(n) {
     el.classList.add('hidden');
     return;
   }
-  el.textContent = n === 1 ? '1 name needs confirmation' : (n + ' names need confirmation');
+  el.textContent = n === 1 ? "1 name won't be imported" : (n + " names won't be imported");
   el.classList.remove('hidden');
 }
 
@@ -1103,196 +1089,227 @@ function showImportNameMatchError(message) {
   if (el) el.classList.remove('hidden');
 }
 
-function retryImportNameMatchPreview() {
-  lastPreviewNames = null;
-  continueFromReviewStep();
-}
-
 function clearNameMatchBanners() {
   document.querySelectorAll('.name-match-slot').forEach(function (slot) {
     slot.innerHTML = '';
   });
 }
 
-function pruneNameResolutions(matches) {
-  var byKey = {};
-  (matches || []).forEach(function (match) {
-    if (match && match.key) byKey[match.key] = match;
+function computeNameFlags(students, roster) {
+  var counts = {};
+  (roster || []).forEach(function (entry) {
+    var key = window.StudentNames.nameKey(entry && entry.full_name);
+    if (!key) return;
+    counts[key] = (counts[key] || 0) + 1;
   });
-  Object.keys(nameResolutions).forEach(function (key) {
-    var match = byKey[key];
-    if (!match) {
-      delete nameResolutions[key];
-      return;
-    }
-    var res = nameResolutions[key];
-    if (!res || res.action !== 'attach') return;
-    var ok = false;
-    (match.candidates || []).forEach(function (c) {
-      if (String(c.profile_id) === String(res.profile_id)) ok = true;
-    });
-    if (!ok) delete nameResolutions[key];
+  var unmatched = [];
+  var ambiguous = [];
+  (students || []).forEach(function (student, index) {
+    var name = student && student.name != null ? String(student.name) : '';
+    var key = window.StudentNames.nameKey(name);
+    if (!key) return;
+    var count = counts[key] || 0;
+    var row = { index: index, name: name, key: key };
+    if (count > 1) ambiguous.push(row);
+    else if (count === 0) unmatched.push(row);
   });
+  return { unmatched: unmatched, ambiguous: ambiguous };
 }
 
-function unresolvedMatchCount(matches) {
+function uniqueUnmatchedCount(flags) {
+  var seen = {};
   var n = 0;
-  (matches || []).forEach(function (match) {
-    if (match && match.key && !nameResolutions[match.key]) n += 1;
+  (flags.unmatched || []).forEach(function (row) {
+    if (!row.key || seen[row.key]) return;
+    seen[row.key] = true;
+    n += 1;
   });
   return n;
 }
 
-function refreshUnresolvedContinueState() {
-  var n = unresolvedMatchCount(lastPreviewMatches);
-  setImportNameConfirmCount(n);
-  setReviewContinueEnabled(n === 0);
+function ignoredNamesFromFlags(flags) {
+  var seen = {};
+  var names = [];
+  (flags.unmatched || []).forEach(function (row) {
+    if (!row.key || seen[row.key]) return;
+    seen[row.key] = true;
+    names.push(row.name);
+  });
+  return names;
 }
 
-function buildNameMatchBanner(match, sheetName, key) {
-  var wrap = document.createElement('div');
-  wrap.className = 'name-match-banner mt-2 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 text-sm';
-  wrap.setAttribute('data-match-key', key);
+function restoreImportButton() {
+  var importBtn = document.getElementById('importBtn');
+  if (!importBtn) return;
+  importBtn.disabled = false;
+  importBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Import Grades';
+  importBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+}
 
-  var heading = document.createElement('p');
-  heading.className = 'font-medium text-slate-900 dark:text-white mb-2';
-  heading.textContent = 'Is ' + sheetName + ' the same student as one of these, or a new student?';
-  wrap.appendChild(heading);
+function sheetNameAt(index) {
+  var students = uploadedPDFData && uploadedPDFData.students;
+  var student = students && students[index];
+  return student && student.name != null ? String(student.name) : '';
+}
 
-  var groupName = 'name-match-' + key;
-  var chosen = nameResolutions[key];
-  (match.candidates || []).forEach(function (c) {
-    var label = document.createElement('label');
-    label.className = 'flex items-center gap-2 mb-1 text-slate-800 dark:text-slate-200 cursor-pointer';
-    var radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.name = groupName;
-    radio.value = String(c.profile_id);
-    radio.checked = !!(chosen && chosen.action === 'attach' && String(chosen.profile_id) === String(c.profile_id));
-    radio.addEventListener('change', function () {
-      nameResolutions[key] = { action: 'attach', profile_id: c.profile_id };
-      refreshUnresolvedContinueState();
+function saveAddedStudent(index, nameInput, emailInput, errorEl, saveBtn) {
+  var typed = nameInput.value.trim();
+  var email = emailInput.value.trim();
+  var sheetName = sheetNameAt(index);
+  errorEl.textContent = '';
+  if (!typed || !email) {
+    errorEl.textContent = 'Both email and name are required.';
+    return;
+  }
+  if (window.StudentNames.nameKey(typed) !== window.StudentNames.nameKey(sheetName)) {
+    errorEl.textContent = 'That name does not match this sheet row.';
+    return;
+  }
+  if (!window.CLASS_ID) {
+    errorEl.textContent = 'Missing class ID.';
+    return;
+  }
+  saveBtn.disabled = true;
+  fetch('/class/' + encodeURIComponent(window.CLASS_ID) + '/add_student', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email, name: typed })
+  }).then(function (res) {
+    return res.json().then(function (data) {
+      return { ok: res.ok, data: data || {} };
+    }).catch(function () {
+      return { ok: false, data: {} };
     });
-    label.appendChild(radio);
-    var span = document.createElement('span');
-    span.textContent = c.full_name + ' (' + c.class_name + ')';
-    label.appendChild(span);
-    wrap.appendChild(label);
+  }).then(function (result) {
+    saveBtn.disabled = false;
+    if (result.ok && result.data && result.data.success) {
+      classRoster.push({ full_name: typed });
+      paintNameFlags();
+      return;
+    }
+    errorEl.textContent = (result.data && result.data.error) ? String(result.data.error) : 'Unable to add student.';
+  }).catch(function () {
+    saveBtn.disabled = false;
+    errorEl.textContent = 'Unable to add student.';
+  });
+}
+
+function buildUnmatchedNameFlag(row) {
+  var wrap = document.createElement('div');
+  wrap.className = 'mt-2';
+
+  var note = document.createElement('p');
+  note.className = 'text-sm font-medium text-amber-800 dark:text-amber-300';
+  note.textContent = "Not in this class, won't be imported";
+  wrap.appendChild(note);
+
+  var addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'mt-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700';
+  addBtn.textContent = 'Add student';
+
+  var form = document.createElement('div');
+  form.className = 'mt-2 space-y-2 hidden';
+
+  var fieldClass = 'mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+  var nameLabel = document.createElement('label');
+  nameLabel.className = 'block text-sm font-medium text-slate-700 dark:text-slate-300';
+  nameLabel.textContent = 'Name (Last, First)';
+  var nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.required = true;
+  nameInput.value = row.name;
+  nameInput.className = fieldClass;
+  nameLabel.appendChild(nameInput);
+
+  var emailLabel = document.createElement('label');
+  emailLabel.className = 'block text-sm font-medium text-slate-700 dark:text-slate-300';
+  emailLabel.textContent = 'Email';
+  var emailInput = document.createElement('input');
+  emailInput.type = 'email';
+  emailInput.required = true;
+  emailInput.className = fieldClass;
+  emailLabel.appendChild(emailInput);
+
+  var errorEl = document.createElement('p');
+  errorEl.className = 'text-sm text-red-600 dark:text-red-400';
+
+  var actions = document.createElement('div');
+  actions.className = 'flex gap-2';
+  var saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700';
+  saveBtn.textContent = 'Save';
+  var cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'px-3 py-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg text-sm font-medium text-slate-900 dark:text-white';
+  cancelBtn.textContent = 'Cancel';
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+
+  form.appendChild(nameLabel);
+  form.appendChild(emailLabel);
+  form.appendChild(errorEl);
+  form.appendChild(actions);
+
+  function keepEnterInsideRow(event) {
+    if (event.key === 'Enter') event.preventDefault();
+  }
+  nameInput.addEventListener('keydown', keepEnterInsideRow);
+  emailInput.addEventListener('keydown', keepEnterInsideRow);
+
+  addBtn.addEventListener('click', function () {
+    addBtn.classList.add('hidden');
+    form.classList.remove('hidden');
+    nameInput.value = sheetNameAt(row.index);
+    emailInput.value = '';
+    errorEl.textContent = '';
+    nameInput.focus();
+  });
+  cancelBtn.addEventListener('click', function () {
+    form.classList.add('hidden');
+    addBtn.classList.remove('hidden');
+    errorEl.textContent = '';
+  });
+  saveBtn.addEventListener('click', function () {
+    saveAddedStudent(row.index, nameInput, emailInput, errorEl, saveBtn);
   });
 
-  var newLabel = document.createElement('label');
-  newLabel.className = 'flex items-center gap-2 text-slate-800 dark:text-slate-200 cursor-pointer';
-  var newRadio = document.createElement('input');
-  newRadio.type = 'radio';
-  newRadio.name = groupName;
-  newRadio.value = 'new';
-  newRadio.checked = !!(chosen && chosen.action === 'create');
-  newRadio.addEventListener('change', function () {
-    nameResolutions[key] = { action: 'create' };
-    refreshUnresolvedContinueState();
-  });
-  newLabel.appendChild(newRadio);
-  var newSpan = document.createElement('span');
-  newSpan.textContent = 'New student';
-  newLabel.appendChild(newSpan);
-  wrap.appendChild(newLabel);
+  wrap.appendChild(addBtn);
+  wrap.appendChild(form);
   return wrap;
 }
 
-function applyPreviewMatches(matches, nameKeys, names) {
+function paintNameFlags() {
   clearNameMatchBanners();
-  var firstUnresolvedEl = null;
-  var usedKeys = {};
-  (matches || []).forEach(function (match) {
-    var key = match && match.key;
-    if (!key || usedKeys[key]) return;
-    usedKeys[key] = true;
-    var rowIdx = -1;
-    for (var i = 0; i < nameKeys.length; i++) {
-      if (nameKeys[i] === key) {
-        rowIdx = i;
-        break;
-      }
-    }
-    if (rowIdx < 0) return;
-    var slot = document.querySelector('.name-match-slot[data-row="' + rowIdx + '"]');
+  var students = (uploadedPDFData && uploadedPDFData.students) || [];
+  var flags = computeNameFlags(students, classRoster);
+  setImportNameConfirmCount(uniqueUnmatchedCount(flags));
+  flags.ambiguous.forEach(function (row) {
+    var slot = document.querySelector('.name-match-slot[data-row="' + row.index + '"]');
     if (!slot) return;
-    var sheetName = names[rowIdx] || match.name || '';
-    var banner = buildNameMatchBanner(match, sheetName, key);
-    slot.appendChild(banner);
-    if (!nameResolutions[key] && !firstUnresolvedEl) firstUnresolvedEl = banner;
+    var note = document.createElement('p');
+    note.className = 'mt-2 text-sm font-medium text-amber-800 dark:text-amber-300';
+    note.textContent = 'Two students in this class are named ' + row.name + '. Rename one before importing.';
+    slot.appendChild(note);
   });
-  var unresolved = unresolvedMatchCount(matches);
-  setImportNameConfirmCount(unresolved);
-  if (unresolved === 0) {
-    setReviewContinueEnabled(true);
-    goToStep(4);
-    return;
-  }
-  setReviewContinueEnabled(false);
-  if (firstUnresolvedEl && firstUnresolvedEl.scrollIntoView) {
-    firstUnresolvedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
+  flags.unmatched.forEach(function (row) {
+    var slot = document.querySelector('.name-match-slot[data-row="' + row.index + '"]');
+    if (!slot) return;
+    slot.appendChild(buildUnmatchedNameFlag(row));
+  });
 }
 
-async function continueFromReviewStep() {
+function continueFromReviewStep() {
   if (!uploadedPDFData || !uploadedPDFData.students) {
     alert('No extracted data available. Please upload a CSV, PDF, or image first.');
     return;
   }
-  var classId = window.CLASS_ID;
-  if (!classId) { alert('Missing class ID.'); return; }
-
-  var names = previewNamesFromReview();
-  if (lastPreviewNames !== null && namesListsEqual(names, lastPreviewNames)) {
-    applyPreviewMatches(lastPreviewMatches, lastPreviewNameKeys, names);
-    return;
-  }
-
-  var gen = ++previewFetchGen;
-  setReviewContinueEnabled(false);
-  hideImportNameMatchError();
-
-  var csrfMeta = document.querySelector('meta[name="csrf-token"]');
-  var csrf = csrfMeta ? csrfMeta.getAttribute('content') : '';
-  var res;
-  var body;
-  try {
-    res = await fetch('/api/class/' + encodeURIComponent(classId) + '/preview-import-name-matches', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-Token': csrf || ''
-      },
-      body: JSON.stringify({ names: names })
-    });
-    body = await res.json().catch(function () { return {}; });
-  } catch (e) {
-    if (gen !== previewFetchGen) return;
-    showImportNameMatchError();
-    setReviewContinueEnabled(true);
-    return;
-  }
-  if (gen !== previewFetchGen) return;
-  var current = previewNamesFromReview();
-  if (!namesListsEqual(current, names)) {
-    return;
-  }
-  if (!res.ok || !body || !body.success) {
-    showImportNameMatchError(body && body.error);
-    setReviewContinueEnabled(true);
-    return;
-  }
-  if (!Array.isArray(body.name_keys) || body.name_keys.length !== names.length) {
-    showImportNameMatchError();
-    setReviewContinueEnabled(true);
-    return;
-  }
-  lastPreviewNames = names.slice();
-  lastPreviewMatches = body.matches || [];
-  lastPreviewNameKeys = body.name_keys.slice();
-  pruneNameResolutions(lastPreviewMatches);
-  applyPreviewMatches(lastPreviewMatches, lastPreviewNameKeys, names);
+  paintNameFlags();
+  setReviewContinueEnabled(true);
+  goToStep(4);
 }
 
 // ============================================================================
@@ -1351,12 +1368,13 @@ async function handleFormSubmit(e) {
         includeLOs.has(lo.toUpperCase())
       );
 
+  const nameFlags = computeNameFlags(filteredStudents, classRoster);
   const payload = {
     class_id: classId,
     assignment_id: assignmentId,
     students: filteredStudents,
     learning_objectives: filteredLOs,
-    name_resolutions: nameResolutions
+    ignored_names: ignoredNamesFromFlags(nameFlags)
   };
 
   try {
@@ -1368,13 +1386,27 @@ async function handleFormSubmit(e) {
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
+      if (resp.status === 409 && err && err.error === 'ambiguous_name') {
+        restoreImportButton();
+        goToStep(3);
+        paintNameFlags();
+        showImportNameMatchError(
+          'Two students in this class are named ' + (err.name || '') + '. Rename one before importing.'
+        );
+        return;
+      }
+      if (resp.status === 409 && err && Array.isArray(err.unresolved_names)) {
+        restoreImportButton();
+        goToStep(3);
+        paintNameFlags();
+        var listed = err.unresolved_names.filter(Boolean).join(', ');
+        showImportNameMatchError(
+          listed ? ('Some names need confirmation: ' + listed) : 'Some names need confirmation'
+        );
+        return;
+      }
       if ((resp.status === 409 || resp.status === 400) && err && err.error) {
-        lastPreviewNames = null;
-        if (importBtn) {
-          importBtn.disabled = false;
-          importBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Import Grades';
-          importBtn.classList.remove('opacity-75', 'cursor-not-allowed');
-        }
+        restoreImportButton();
         goToStep(3);
         showImportNameMatchError(err.error);
         return;
@@ -1401,11 +1433,7 @@ async function handleFormSubmit(e) {
         reportsLink.setAttribute('href', '/class/' + classId + '/reports');
       }
       boxEl.classList.remove('hidden');
-      if (importBtn) {
-        importBtn.disabled = false;
-        importBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Import Grades';
-        importBtn.classList.remove('opacity-75', 'cursor-not-allowed');
-      }
+      restoreImportButton();
       return;
     }
 
@@ -1413,11 +1441,6 @@ async function handleFormSubmit(e) {
   } catch (err) {
     console.error('Import error:', err);
     alert('Error importing grades: ' + (err.message || err));
-    // Re-enable button so they can retry
-    if (importBtn) {
-      importBtn.disabled = false;
-      importBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Import Grades';
-      importBtn.classList.remove('opacity-75', 'cursor-not-allowed');
-    }
+    restoreImportButton();
   }
 }

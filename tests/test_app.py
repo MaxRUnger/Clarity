@@ -41,6 +41,7 @@ from app.routes import (
     _BLANK_GRADESHEET_NOTE,
     _enrolled_import_name_index,
     _lookup_enrolled_import_student_id,
+    MAX_IMPORT_ROWS,
 )
 from app import create_app
 from app.student_names import COMMA_REQUIRED, display_name, row_sort_key
@@ -1779,7 +1780,7 @@ class TestImportRosterNameMatch(unittest.TestCase):
         students = [{"name": "Doe, Jane", "grades": {"D1": "A"}}]
         cases = [
             "Doe, Jane",
-            ["x"] * 501,
+            ["x"] * (MAX_IMPORT_ROWS + 1),
             [123],
             ["A" * 256],
         ]
@@ -1795,6 +1796,91 @@ class TestImportRosterNameMatch(unittest.TestCase):
             self.assertEqual(grade_rows, [])
             self.assertNotIn("profiles.insert", writes)
             self.assertNotIn("enrollments.insert", writes)
+
+
+class TestUpdateGradeRoster(unittest.TestCase):
+    def test_update_grade_roster_is_id_and_full_name_including_muted(self):
+        from app import routes as r
+
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        class_data = {
+            "name": "Algebra",
+            "enrollments": [
+                {
+                    "muted": False,
+                    "profiles": {
+                        "id": "stu-active",
+                        "full_name": "Zenith, Bob",
+                        "email": "bob@example.com",
+                        "role": "student",
+                    },
+                },
+                {
+                    "muted": True,
+                    "profiles": {
+                        "id": "stu-muted",
+                        "full_name": "Adams, Zoe",
+                        "email": "zoe@example.com",
+                        "role": "student",
+                    },
+                },
+                {
+                    "muted": False,
+                    "profiles": {
+                        "id": "  ",
+                        "full_name": "Blank, Id",
+                        "email": "blank@example.com",
+                    },
+                },
+            ],
+        }
+        captured = {}
+
+        def fake_render(template_name, **kwargs):
+            captured["template"] = template_name
+            captured["roster"] = kwargs.get("roster")
+            return "ok"
+
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+        with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r.Course, "get_full_class_data", return_value=class_data), \
+                unittest.mock.patch.object(r, "load_assignments_for_class", return_value=[]), \
+                unittest.mock.patch.object(r, "render_template", side_effect=fake_render):
+            rv = client.get("/class/class-a/update_grade")
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(captured["template"], "update_grade.html")
+        roster = captured["roster"]
+        self.assertEqual(roster, [
+            {"id": "stu-muted", "full_name": "Adams, Zoe"},
+            {"id": "stu-active", "full_name": "Zenith, Bob"},
+        ])
+        for row in roster:
+            self.assertEqual(set(row.keys()), {"id", "full_name"})
+
+    def test_update_grade_template_roster_script_and_analyzer_version(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "update_grade.html",
+        )
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn(
+            '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
+            src,
+        )
+        self.assertIn("pdf_analyzer.js') }}?v=16", src)
+
+    def test_pdf_analyzer_posts_ignored_names_without_preview(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
+        )
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertNotIn("preview-import-name-matches", src)
+        self.assertNotIn("name_resolutions", src)
+        self.assertIn("ignored_names", src)
 
 
 class TestImportBlankCellActions(unittest.TestCase):

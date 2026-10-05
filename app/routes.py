@@ -3026,6 +3026,19 @@ def update_grade_handler(class_id):
         template_kwargs["mobile_upload_url"] = mobile_upload_url
         template_kwargs["mobile_upload_url_is_loopback"] = _url_looks_like_loopback(mobile_upload_url)
 
+    roster = []
+    for enrollment in class_data.get("enrollments") or []:
+        prof = normalize_profile(enrollment)
+        sid = str(prof.get("id") or "").strip()
+        if not sid:
+            continue
+        roster.append({
+            "id": sid,
+            "full_name": prof.get("full_name") or "",
+        })
+    roster.sort(key=row_sort_key)
+    template_kwargs["roster"] = roster
+
     return render_template("update_grade.html", **template_kwargs)
 
 @main_bp.route("/class/<class_id>/mobile-upload/<token>")
@@ -4512,10 +4525,10 @@ def api_import_grades():
         ignored_raw = []
     if not isinstance(ignored_raw, list):
         return jsonify({"success": False, "error": "ignored_names must be a list"}), 400
-    if len(ignored_raw) > 500:
+    if len(ignored_raw) > MAX_IMPORT_ROWS:
         return jsonify({
             "success": False,
-            "error": "ignored_names has too many entries (max 500)",
+            "error": f"ignored_names has too many entries (max {MAX_IMPORT_ROWS})",
         }), 400
     ignored_keys: set = set()
     for item in ignored_raw:

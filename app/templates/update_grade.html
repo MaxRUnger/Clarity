@@ -365,7 +365,6 @@
       </div>
       <div id="importNameMatchError" class="hidden mt-3 p-3 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/20 dark:border-red-700 text-sm text-red-800 dark:text-red-200">
         <p id="importNameMatchErrorText"></p>
-        <button type="button" id="importNameMatchRetry" onclick="retryImportNameMatchPreview()" class="mt-2 text-sm font-medium underline">Retry</button>
       </div>
     </div>
   </div>
@@ -415,6 +414,7 @@
      data-mobile-upload-token="{{ mobile_upload_token|e }}"
      data-mobile-upload-url="{{ mobile_upload_url|e }}"
      style="display:none"></div>
+<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>
 <script>
   window.CLASS_ID = "{{ class_id }}";
   // Pass assignment LO data from server to JS
@@ -474,6 +474,6 @@
     }
   });
 </script>
-<script src="{{ url_for('static', filename='js/pdf_analyzer.js') }}?v=15"></script>
+<script src="{{ url_for('static', filename='js/pdf_analyzer.js') }}?v=16"></script>
 {% endif %}
 {% endblock %}
