@@ -1126,12 +1126,11 @@ function getIndividualReportParts(student, assignmentIdOverride) {
 function buildEmailPayloadForStudent(student, assignmentIdOverride) {
   const parts = getIndividualReportParts(student, assignmentIdOverride);
   const lines = [
-    'Hello,',
+    'Hello student,',
     '',
     'Class: ' + (parts.className || ''),
     'Assignment: ' + parts.assignmentLabel,
     'Date: ' + new Date().toLocaleDateString(),
-    'Student: ' + (parts.student.name || ''),
     '',
   ];
   lines.push('Learning objectives and scores shown in this report:');
@@ -1153,11 +1152,10 @@ function buildEmailPayloadForStudent(student, assignmentIdOverride) {
 function buildAllAssignmentsEmailPayloadForStudent(student) {
   const className = document.querySelector('#view-all p.text-sm')?.textContent.trim() || '';
   const lines = [
-    'Hello,',
+    'Hello student,',
     '',
     'Class: ' + (className || ''),
     'Date: ' + new Date().toLocaleDateString(),
-    'Student: ' + (student.name || ''),
     '',
     'Assignments included in this report:',
     ''

@@ -178,12 +178,11 @@ function emailStudentHistoryReport(btnEl) {
     return;
   }
   var lines = [
-    'Hello,',
+    'Hello student,',
     '',
     'Here is your student history report (same information as the printable page).',
     '',
     'Class: ' + (p.class_name || ''),
-    'Student: ' + (p.student_name || ''),
     'Date: ' + new Date().toLocaleDateString(),
     '',
   ];

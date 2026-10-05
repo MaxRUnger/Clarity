@@ -2722,7 +2722,7 @@ def api_send_single_report_email(class_id, student_id):
     try:
         enrollment = (
             supabase_admin.table("enrollments")
-            .select("student_id, profiles(id, full_name, email)")
+            .select("student_id, profiles(id, email)")
             .eq("class_id", class_id)
             .eq("student_id", student_id)
             .limit(1)

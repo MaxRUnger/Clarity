@@ -1301,6 +1301,47 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         self.assertIn("/api/class/${classId}/student/${encodeURIComponent(studentId)}/send-report-email", src)
         self.assertIn("/api/class/${classId}/send-report-emails", src)
 
+    def test_report_email_builders_omit_the_student_name(self):
+        reports_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "class_reports.html",
+        )
+        history_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "student_history.html",
+        )
+        with open(reports_path, encoding="utf-8") as fh:
+            reports_src = fh.read()
+        with open(history_path, encoding="utf-8") as fh:
+            history_src = fh.read()
+
+        def extract(src, name):
+            marker = "function " + name + "("
+            start = src.find(marker)
+            self.assertGreaterEqual(start, 0, name)
+            brace = src.find("{", start)
+            depth = 0
+            end = -1
+            for i in range(brace, len(src)):
+                if src[i] == "{":
+                    depth += 1
+                elif src[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            self.assertGreaterEqual(end, 0, name)
+            return src[start:end]
+
+        builders = [
+            extract(reports_src, "buildEmailPayloadForStudent"),
+            extract(reports_src, "buildAllAssignmentsEmailPayloadForStudent"),
+            extract(history_src, "emailStudentHistoryReport"),
+        ]
+        for body in builders:
+            self.assertIn("Hello student,", body)
+            self.assertNotIn("parts.student.name", body)
+            self.assertNotIn("p.student_name", body)
+            self.assertNotIn("student.name", body)
+
 
 class TestParseBlankGradesheetCsv(unittest.TestCase):
     VENDORS = ["D1", "D2", "D3"]
