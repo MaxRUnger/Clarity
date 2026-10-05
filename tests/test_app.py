@@ -1870,7 +1870,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
             src,
         )
-        self.assertIn("pdf_analyzer.js') }}?v=16", src)
+        self.assertIn("pdf_analyzer.js') }}?v=17", src)
 
     def test_pdf_analyzer_posts_ignored_names_without_preview(self):
         path = os.path.join(
@@ -1881,6 +1881,31 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertNotIn("preview-import-name-matches", src)
         self.assertNotIn("name_resolutions", src)
         self.assertIn("ignored_names", src)
+
+    def test_add_student_flag_inputs_are_not_native_constraints(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
+        )
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        marker = "function buildUnmatchedNameFlag("
+        start = src.find(marker)
+        self.assertGreaterEqual(start, 0)
+        brace = src.find("{", start)
+        depth = 0
+        end = -1
+        for i in range(brace, len(src)):
+            if src[i] == "{":
+                depth += 1
+            elif src[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        self.assertGreaterEqual(end, 0)
+        body = src[start:end]
+        self.assertNotIn(".required = true", body)
+        self.assertNotIn("type = 'email'", body)
 
 
 class TestImportBlankCellActions(unittest.TestCase):

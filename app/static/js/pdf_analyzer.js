@@ -1219,7 +1219,6 @@ function buildUnmatchedNameFlag(row) {
   nameLabel.textContent = 'Name (Last, First)';
   var nameInput = document.createElement('input');
   nameInput.type = 'text';
-  nameInput.required = true;
   nameInput.value = row.name;
   nameInput.className = fieldClass;
   nameLabel.appendChild(nameInput);
@@ -1228,8 +1227,9 @@ function buildUnmatchedNameFlag(row) {
   emailLabel.className = 'block text-sm font-medium text-slate-700 dark:text-slate-300';
   emailLabel.textContent = 'Email';
   var emailInput = document.createElement('input');
-  emailInput.type = 'email';
-  emailInput.required = true;
+  emailInput.type = 'text';
+  emailInput.inputMode = 'email';
+  emailInput.autocomplete = 'off';
   emailInput.className = fieldClass;
   emailLabel.appendChild(emailInput);
 
@@ -1271,6 +1271,7 @@ function buildUnmatchedNameFlag(row) {
   cancelBtn.addEventListener('click', function () {
     form.classList.add('hidden');
     addBtn.classList.remove('hidden');
+    emailInput.value = '';
     errorEl.textContent = '';
   });
   saveBtn.addEventListener('click', function () {
