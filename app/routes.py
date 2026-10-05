@@ -23,7 +23,6 @@ import hmac
 import io
 import logging
 import os
-import pyuca
 import re
 import secrets
 import requests
@@ -57,6 +56,16 @@ from app.models import (
     ASSIGNMENT_TYPES,
 )
 from app.dao.gemini_analyzer import get_gemini_analyzer
+from app.student_names import (
+    COMMA_REQUIRED,
+    display_name,
+    name_key,
+    normalize_spaces,
+    raw_name_from_csv_fields,
+    require_canvas_name,
+    row_sort_key,
+    collator_key,
+)
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -190,10 +199,6 @@ def _consume_one_time_form_token(namespace: str, token: str) -> bool:
 
 DEFAULT_REQUIRED_MS = 2
 
-# Unicode Collation Algorithm collator — instantiated once at module load for
-# performance. Used by all student-sorting functions to match Canvas ordering.
-_uca_collator = pyuca.Collator()
-
 # Shared caps for all bulk-import entry points (CSV and JSON body alike).
 # Bytes cap matches the pre-existing LO CSV limit; row cap keeps a single
 # request from blocking a worker on thousands of upserts / DoS-ing memory.
@@ -286,41 +291,8 @@ def parse_learning_objectives_csv_text(text: str) -> Tuple[List[Dict[str, Any]],
     return rows_out, warnings
 
 
-def _normalize_spaces(value: str) -> str:
-    return " ".join((value or "").strip().split())
-
-
-def _student_name_from_csv_row(row: Dict[str, str]) -> str:
-    raw = (
-        row.get("full_name")
-        or row.get("student_name")
-        or row.get("name")
-        or row.get("student")
-        or ""
-    ).strip()
-    first = (row.get("first_name") or row.get("first") or "").strip()
-    last = (row.get("last_name") or row.get("last") or "").strip()
-    if not raw and (first or last):
-        raw = f"{first} {last}".strip()
-    raw = _normalize_spaces(raw)
-    if not raw:
-        return ""
-    if "," in raw:
-        left, right = raw.split(",", 1)
-        last_name = _normalize_spaces(left)
-        rest = _normalize_spaces(right)
-        if rest and last_name:
-            return f"{rest} {last_name}".strip()
-        return rest or last_name
-    return raw
-
-
 def _student_email_key(email: str) -> str:
     return (email or "").strip().lower()
-
-
-def _student_name_key(name: str) -> str:
-    return _normalize_spaces((name or "").replace(",", " ").lower())
 
 
 def _allowed_grade_upload_signature(file_bytes: bytes, filename: str) -> bool:
@@ -407,18 +379,33 @@ def parse_students_csv_text(text: str) -> Tuple[List[Dict[str, str]], List[str]]
         ]
 
     rows: List[Dict[str, str]] = []
-    for raw in reader:
+    for line_no, raw in enumerate(reader, start=2):
         row = _csv_row_norm_keys(raw)
-        full_name = _student_name_from_csv_row(row)
+        if not any(row.values()):
+            continue
+        raw_name = (
+            row.get("full_name")
+            or row.get("student_name")
+            or row.get("name")
+            or row.get("student")
+            or ""
+        )
+        first = row.get("first_name") or row.get("first") or ""
+        last = row.get("last_name") or row.get("last") or ""
+        if not str(raw_name).strip() and (str(first).strip() or str(last).strip()):
+            full_name = require_canvas_name(raw_name_from_csv_fields(first, last))
+        else:
+            full_name = require_canvas_name(raw_name)
         if not full_name:
+            warnings.append(f"Row {line_no}: {COMMA_REQUIRED}")
             continue
         email = _student_email_key(row.get("email") or row.get("student_email") or "")
         rows.append({"full_name": _csv_formula_safe(full_name), "email": email})
 
-    if not rows:
-        return [], ["No student rows found"]
+    if not rows and not warnings:
+        return [], ["File is empty"]
 
-    rows.sort(key=lambda r: _student_sort_key_last_name(r.get("full_name")))
+    rows.sort(key=row_sort_key)
     return rows, warnings
 
 
@@ -755,18 +742,12 @@ def organize_by_learning_objectives(students, learning_objectives):
                 if Grade.is_mastery_mark(sec):
                     m_count += 1
 
-                raw_fn = (student.get("full_name") or "").strip()
+                raw_fn = student.get("full_name") or ""
                 student_data = {
                     "id": student["id"],
                     "full_name": raw_fn,
                     "name": student.get("name")
-                    or _student_display_name(
-                        {
-                            "id": student.get("id"),
-                            "full_name": student.get("full_name"),
-                            "sort_name": student.get("sort_name"),
-                        }
-                    ),
+                    or display_name(raw_fn),
                     "top_score": top,
                     "second_score": sec,
                 }
@@ -780,7 +761,7 @@ def organize_by_learning_objectives(students, learning_objectives):
 
     for lo in lo_dict.values():
         for col in ("students_with_2m", "students_with_1m", "students_with_0m"):
-            lo[col].sort(key=_student_row_sort_key)
+            lo[col].sort(key=row_sort_key)
 
     return list(lo_dict.values())
 
@@ -805,49 +786,6 @@ def normalize_profile(enrollment):
     if isinstance(prof, list):
         prof = prof[0] if prof else {}
     return prof or {}
-
-
-def _format_name_last_first(raw: str) -> str:
-    """Display roster-style as ``Lastname Firstname`` (single space, no comma).
-
-    Assumes stored ``full_name`` is ``First ... Last`` or ``Last, First ...``.
-    Single-token names are returned unchanged.
-    """
-    s = (raw or "").strip()
-    if not s:
-        return s
-    if "," in s:
-        left, right = s.split(",", 1)
-        last = left.strip()
-        rest = right.strip()
-        if not last:
-            return s
-        if rest:
-            return f"{last} {rest}".strip()
-        return last
-    parts = s.split()
-    if len(parts) == 1:
-        return parts[0]
-    suffix = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv"}
-    if len(parts) >= 2 and parts[-1].strip().lower() in suffix:
-        last = f"{parts[-2]} {parts[-1]}"
-        first = " ".join(parts[:-2])
-        return f"{last} {first}".strip()
-    last = parts[-1]
-    first = " ".join(parts[:-1])
-    return f"{last} {first}".strip()
-
-
-def _student_display_name(prof: Dict[str, Any]) -> str:
-    """Label for UI; avoids showing raw UUID when full_name is missing or was corrupted."""
-    pid = str(prof.get("id") or "").strip()
-    fn = (prof.get("full_name") or "").strip()
-    if not fn or (pid and fn == pid):
-        return "Unnamed student"
-    sort_name = (prof.get("sort_name") or "").strip()
-    if "," in sort_name:
-        return _format_name_last_first(sort_name)
-    return _format_name_last_first(fn)
 
 
 def _csv_format_hw_score(score) -> str:
@@ -881,7 +819,7 @@ def _gradesheet_csv_data_rows(
     rows: List[List[str]] = []
     for student in students:
         sid = str(student.get("id") or "").strip()
-        name = _csv_formula_safe(student.get("name") or "")
+        name = _csv_formula_safe(student.get("full_name") or "")
         hw_cell = _csv_formula_safe(_csv_format_hw_score(hw_map.get(sid)))
         lo_cells = [
             _csv_formula_safe(letter_map.get((sid, str(lo.get("id") or "").strip()), ""))
@@ -998,103 +936,20 @@ def _gradesheet_letter_map_for_assignment(
 
 
 def _enrolled_import_name_index(profiles: List[Dict[str, Any]]) -> Dict[str, str]:
-    """Map stored names and Last-First display names to enrolled student ids."""
+    """Map each enrolled ``full_name`` to one student id. The first id wins."""
     index: Dict[str, str] = {}
-
-    def add(key: str, sid: str) -> None:
-        raw = (key or "").strip()
-        if not raw or not sid:
-            return
-        lower = raw.lower()
-        if lower not in index:
-            index[lower] = sid
-        nk = _student_name_key(raw)
-        if nk and nk not in index:
-            index[nk] = sid
-
     for p in profiles:
         sid = str(p.get("id") or "").strip()
-        fn = (p.get("full_name") or "").strip()
-        if not sid or not fn:
-            continue
-        add(fn, sid)
-        add(_format_name_last_first(fn), sid)
+        key = name_key(p.get("full_name") or "")
+        if sid and key and key not in index:
+            index[key] = sid
     return index
 
 
 def _lookup_enrolled_import_student_id(
     csv_name: str, name_index: Dict[str, str]
 ) -> Optional[str]:
-    n = (csv_name or "").strip()
-    if not n:
-        return None
-    return name_index.get(n.lower()) or name_index.get(_student_name_key(n))
-
-
-def _generate_sort_name(full_name: str) -> str:
-    """Convert a stored ``'First Last[...]'`` name to ``'Last[...], First'`` form.
-
-    This is the canonical heuristic for auto-generating a ``sort_name`` value
-    from a student's stored ``full_name``.  It faithfully inverts the Canvas
-    CSV import conversion (Canvas exports ``'Last, First'``; import stores
-    ``'First Last'``), so Canvas-imported names regenerate their exact
-    Canvas sort string automatically — including multi-word last names
-    (``'Evelyn Juarez Salgado'`` → ``'Juarez Salgado, Evelyn'``), names with
-    Von/Van prefixes (``'Zachary Von Huben'`` → ``'Von Huben, Zachary'``),
-    suffixes treated as part of the last-name cluster
-    (``'Emilio Benito Velasco Jr'`` → ``'Benito Velasco Jr, Emilio'``), and
-    hyphen-with-space names preserved from import
-    (``'Kaiya Smith- Pauley'`` → ``'Smith- Pauley, Kaiya'``).
-
-    Rule: **the first whitespace token is the first name; everything after it
-    is the last-name cluster.**
-
-    Comma-format strings (already ``'Last, First'``) and single-token names
-    are returned unchanged.
-    """
-    s = (full_name or "").strip()
-    if not s:
-        return s
-    if "," in s:
-        return s  # Already "Last, First" — pass through unchanged
-    parts = s.split()
-    if len(parts) == 1:
-        return parts[0]
-    first = parts[0]
-    last_cluster = " ".join(parts[1:])
-    return f"{last_cluster}, {first}"
-
-
-def _student_sort_key_last_name(display_name: Optional[str]) -> Any:
-    """UCA sort key for a student name string (full_name or display_name).
-
-    Generates a ``'Last, First'`` sort_name via :func:`_generate_sort_name`,
-    then applies the Unicode Collation Algorithm via :data:`_uca_collator`.
-    This exactly matches Canvas roster ordering including hyphenated names,
-    multi-word last names, Von/Van prefixes, and suffix clusters.
-
-    Falls back to a high sentinel for blank names so unknown students sort last.
-    """
-    raw = (display_name or "").strip()
-    if not raw:
-        return _uca_collator.sort_key("\uffff")
-    return _uca_collator.sort_key(_generate_sort_name(raw))
-
-
-def _student_row_sort_key(student: Dict[str, Any]) -> Any:
-    """UCA sort key for a student dict, preferring the stored ``sort_name``.
-
-    When ``sort_name`` is populated in the DB (and present in the dict),
-    it is used directly so any manual correction made via the edit UI takes
-    effect immediately.  Falls back to generating sort_name on the fly from
-    ``full_name`` or ``name`` using :func:`_generate_sort_name` so the
-    function is safe to call on dicts that pre-date the column migration.
-    """
-    sort_name = (student.get("sort_name") or "").strip()
-    if sort_name:
-        return _uca_collator.sort_key(sort_name)
-    label = (student.get("full_name") or student.get("name") or "").strip()
-    return _uca_collator.sort_key(_generate_sort_name(label))
+    return name_index.get(name_key(csv_name))
 
 
 def _batch_get_free_passes(student_ids, class_id):
@@ -1110,104 +965,6 @@ def _batch_get_free_passes(student_ids, class_id):
         return {r['student_id']: r['passes_used'] for r in (resp.data or [])}
     except Exception:
         return {}
-
-
-def _load_students_from_grades(class_id):
-    """Return a list of students (with grades) by scanning grades for this class."""
-    try:
-        grades_result = supabase_admin.table("grades") \
-            .select("student_id, learning_objective_id, top_score, second_score, learning_objectives(id, vendor_code, description, class_id, required_ms)") \
-            .eq("learning_objectives.class_id", class_id) \
-            .execute()
-        grades = grades_result.data or []
-    except Exception as e:
-        logger.error("Error loading grades for class %s: %s", class_id, e)
-        grades = []
-
-    # Collect unique student IDs from grade rows
-    students_by_id = {}
-    for g in grades:
-        lo = g.get('learning_objectives') or {}
-        if lo.get('class_id') != class_id:
-            continue
-        student_id = g.get('student_id')
-        if not student_id:
-            continue
-        if student_id not in students_by_id:
-            students_by_id[student_id] = {'id': student_id, 'name': None, 'raw_grades': []}
-        students_by_id[student_id]['raw_grades'].append(g)
-
-    # Batch-fetch profile names (never write UUID into full_name — that corrupts profiles)
-    if students_by_id:
-        unique_ids = list(students_by_id.keys())
-        try:
-            try:
-                profiles_resp = supabase_admin.table("profiles") \
-                    .select("id, full_name, email, sort_name").in_("id", unique_ids).execute()
-            except Exception:
-                profiles_resp = supabase_admin.table("profiles") \
-                    .select("id, full_name").in_("id", unique_ids).execute()
-            for p in (profiles_resp.data or []):
-                pid = p.get('id')
-                if pid in students_by_id:
-                    raw_fn = (p.get("full_name") or "").strip()
-                    students_by_id[pid]["full_name"] = raw_fn
-                    students_by_id[pid]["email"] = (p.get("email") or "").strip()
-                    students_by_id[pid]["sort_name"] = (p.get("sort_name") or "").strip()
-                    students_by_id[pid]["name"] = _student_display_name(
-                        {
-                            "id": pid,
-                            "full_name": p.get("full_name"),
-                            "sort_name": p.get("sort_name"),
-                        }
-                    )
-        except Exception:
-            pass
-        for row in students_by_id.values():
-            pid = str(row.get('id') or '')
-            nm = (row.get('name') or '').strip()
-            if not nm or nm == pid:
-                row['name'] = 'Unknown student'
-
-    # Seed from canonical class LOs so names resolve even when grade embeds are missing.
-    lo_lookup = {}
-    try:
-        seed = _select_class_pool_learning_objectives(
-            "id, name, vendor_code, required_ms", class_id
-        )
-        for lo in (seed.data or []):
-            lid = str(lo.get("id")) if lo.get("id") else None
-            if lid:
-                lo_lookup[lid] = lo
-    except Exception as e:
-        logger.error("Error seeding LO lookup for class %s: %s", class_id, e)
-
-    pool_lo_ids = set(lo_lookup.keys())
-    for g in grades:
-        lo = g.get("learning_objectives") or {}
-        raw_id = g.get("learning_objective_id")
-        lo_id = str(raw_id) if raw_id is not None else None
-        if not lo_id and lo.get("id"):
-            lo_id = str(lo.get("id"))
-        if lo_id and pool_lo_ids and lo_id not in pool_lo_ids:
-            continue
-        if lo_id and lo_id not in lo_lookup and lo.get("id"):
-            lo_lookup[lo_id] = lo
-
-    # Aggregate per-LO across assignments for each student
-    for student in students_by_id.values():
-        raw = [
-            g for g in student.pop('raw_grades')
-            if (
-                not pool_lo_ids
-                or str(g.get("learning_objective_id") or "") in pool_lo_ids
-            )
-        ]
-        student['learning_objectives'] = _aggregate_lo_grades(raw, lo_lookup)
-
-    out = list(students_by_id.values())
-    out.sort(key=_student_row_sort_key)
-    return out
 
 
 def _aggregate_lo_grades(
@@ -1301,14 +1058,14 @@ def _process_enrollments(class_data):
         prof['learning_objectives'] = _aggregate_lo_grades(
             prof.get('grades', []) or [], lo_lookup
         )
-        prof['name'] = _student_display_name(prof)
+        prof['name'] = display_name(prof.get("full_name"))
         prof['email'] = (prof.get('email') or '').strip()
         prof['muted'] = e.get('muted', False)
         all_students.append(prof)
         if not prof['muted']:
             active_students.append(prof)
-    active_students.sort(key=_student_row_sort_key)
-    all_students.sort(key=_student_row_sort_key)
+    active_students.sort(key=row_sort_key)
+    all_students.sort(key=row_sort_key)
     return active_students, all_students, lo_lookup
 
 
@@ -1534,6 +1291,12 @@ def instructor_dashboard():
 # CLASS MANAGEMENT ROUTES
 # ============================================================================
 
+def _sort_overdue_revisions(revisions):
+    """Order overdue rows by the stored student name. Equal names keep their order."""
+    revisions.sort(key=lambda rev: collator_key(rev.get("student_name") or ""))
+    return revisions
+
+
 @main_bp.route("/class/<class_id>")
 @login_required
 def class_detail(class_id):
@@ -1555,6 +1318,7 @@ def class_detail(class_id):
         if rev['student_id'] in student_name_map:
             rev['student_name'] = student_name_map[rev['student_id']]
             overdue_revisions.append(rev)
+    overdue_revisions = _sort_overdue_revisions(overdue_revisions)
 
     try:
         all_los = Course.get_learning_objectives(class_id)
@@ -1659,14 +1423,16 @@ def add_student(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
     data = request.get_json()
     email = data.get('email', '').strip()
-    name = data.get('name', '').strip()
-    # Optional: instructor-provided sort_name from the Add Student form.
-    # Falls back to auto-generation when absent or blank.
-    sort_name_raw = (data.get('sort_name') or '').strip()
-    sort_name = sort_name_raw if sort_name_raw else _generate_sort_name(name)
+    raw_name = data.get('name', '').strip()
 
-    if not email or not name:
+    if not email or not raw_name:
         return jsonify({"success": False, "error": "Email and name are required"}), 400
+
+    name = require_canvas_name(raw_name)
+    if not name:
+        return jsonify({"success": False, "error": COMMA_REQUIRED}), 400
+    if len(name) > 255:
+        return jsonify({"success": False, "error": "Name must be 255 characters or fewer"}), 400
 
     try:
         # Always create a new student profile with a unique UUID
@@ -1675,20 +1441,10 @@ def add_student(class_id):
         insert_row = {
             "id": student_id,
             "full_name": name,
-            "sort_name": sort_name,
             "role": "student",
             "email": email,
         }
-        try:
-            supabase_admin.table("profiles").insert(insert_row).execute()
-        except Exception as ins_err:
-            insert_row.pop("email", None)
-            logger.warning(
-                "profiles insert with email failed (%s); retrying without email. "
-                "If this persists, run scripts/add_profiles_email.sql on the database.",
-                ins_err,
-            )
-            supabase_admin.table("profiles").insert(insert_row).execute()
+        supabase_admin.table("profiles").insert(insert_row).execute()
 
         # Check if already enrolled
         existing_enrollment = supabase_admin.table("enrollments").select("id").eq("class_id", class_id).eq("student_id", student_id).execute()
@@ -1881,7 +1637,7 @@ _SIMPLE_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 @main_bp.route("/api/class/<class_id>/students/<student_id>/update", methods=["POST"])
 @api_instructor_required
 def api_update_student(class_id, student_id):
-    """Update a student's name, email, and/or sort_name.
+    """Update a student's name and, when an email is sent, that email.
 
     Ownership is verified two ways:
     1. The instructor must own the class (via _instructor_owns_class).
@@ -1889,8 +1645,7 @@ def api_update_student(class_id, student_id):
        preventing an instructor from editing a stranger's profile using a
        student_id they guessed.
 
-    sort_name is written exactly as provided — never regenerated from name —
-    so a manually corrected sort_name is never silently overwritten.
+    A blank email leaves the stored email unchanged.
     """
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
@@ -1898,16 +1653,16 @@ def api_update_student(class_id, student_id):
         return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
 
     data = request.get_json() or {}
-    name = (data.get("name") or "").strip()
+    raw_name = (data.get("name") or "").strip()
     email = (data.get("email") or "").strip()
-    sort_name = (data.get("sort_name") or "").strip()
 
-    if not name:
+    if not raw_name:
         return jsonify({"success": False, "error": "Name is required"}), 400
-    if len(name) > 255:
+    if len(raw_name) > 255:
         return jsonify({"success": False, "error": "Name must be 255 characters or fewer"}), 400
-    if len(sort_name) > 255:
-        return jsonify({"success": False, "error": "Sort name must be 255 characters or fewer"}), 400
+    name = require_canvas_name(raw_name)
+    if not name:
+        return jsonify({"success": False, "error": COMMA_REQUIRED}), 400
     if email:
         if len(email) > 255:
             return jsonify({"success": False, "error": "Email must be 255 characters or fewer"}), 400
@@ -1941,9 +1696,6 @@ def api_update_student(class_id, student_id):
     try:
         update_payload: Dict[str, Any] = {
             "full_name": name,
-            # Use exactly what the instructor typed; fall back to generating from
-            # the new name only when sort_name was left blank (e.g. cleared).
-            "sort_name": sort_name if sort_name else _generate_sort_name(name),
         }
         if email:
             update_payload["email"] = email
@@ -1965,9 +1717,6 @@ def class_students(class_id):
         return redirect(url_for('main.instructor_dashboard'))
 
     students, _, _ = _process_enrollments(class_data)
-
-    if not students:
-        students = _load_students_from_grades(class_id)
 
     return render_template("class_students.html", 
                             class_id=class_id, 
@@ -2139,16 +1888,10 @@ def class_student_detail(class_id, student_id):
         if str(prof.get('id') or '') != str(student_id):
             continue
         prof['learning_objectives'] = _aggregate_lo_grades(prof.get('grades', []), lo_lookup)
-        prof['name'] = _student_display_name(prof)
+        prof['name'] = display_name(prof.get("full_name") or "")
         prof['email'] = (prof.get('email') or '').strip()
         student = prof
         break
-
-    if not student:
-        for s in _load_students_from_grades(class_id):
-            if s.get('id') == student_id:
-                student = s
-                break
 
     if student and not (student.get('email') or '').strip():
         try:
@@ -2499,6 +2242,8 @@ def parse_blank_gradesheet_csv_text(
         return None, "CSV is missing the Student Name,HW header row."
 
     header = _csv_row_cells(rows[header_idx])
+    # Field count before trailing empty cells are removed. The quote check uses this width.
+    header_width = len(header)
     while header and not header[-1]:
         header.pop()
     if (
@@ -2540,10 +2285,15 @@ def parse_blank_gradesheet_csv_text(
         )
 
     students: List[Dict[str, Any]] = []
-    for raw_row in rows[header_idx + 1:]:
+    for offset, raw_row in enumerate(rows[header_idx + 1:]):
+        file_row = header_idx + offset + 2
         cells = _csv_row_cells(raw_row)
         if _csv_row_is_blank(cells):
             continue
+        if len(raw_row) > header_width:
+            return None, (
+                f"Row {file_row}: put the student name in quotes because it contains a comma"
+            )
         name = cells[0] if cells else ""
         if not name:
             continue
@@ -2901,9 +2651,6 @@ def class_reports(class_id):
     students, _, _ = _process_enrollments(class_data)
     learning_objectives = class_data.get('learning_objectives', [])
 
-    if not students:
-        students = _load_students_from_grades(class_id)
-
     # Load assignments with their linked LOs and dates
     assignments = load_assignments_for_class(class_id, desc=False)
 
@@ -3101,13 +2848,13 @@ def student_history(class_id, student_id):
     enrollment_data = None
     try:
         enrollment = supabase_admin.table("enrollments").select(
-            "student_id, profiles(id, full_name, sort_name, email)"
+            "student_id, profiles(id, full_name, email)"
         ).eq("class_id", class_id).eq("student_id", student_id).single().execute()
         enrollment_data = enrollment.data
     except Exception:
         try:
             enrollment = supabase_admin.table("enrollments").select(
-                "student_id, profiles(id, full_name, sort_name)"
+                "student_id, profiles(id, full_name)"
             ).eq("class_id", class_id).eq("student_id", student_id).single().execute()
             enrollment_data = enrollment.data
         except Exception as e:
@@ -3118,7 +2865,7 @@ def student_history(class_id, student_id):
         return redirect(url_for('main.class_reports', class_id=class_id))
 
     profile = normalize_profile({'profiles': enrollment_data.get('profiles')})
-    student_name = _student_display_name(profile) if profile.get('id') else 'Unknown student'
+    student_name = display_name(profile.get("full_name") or "")
     student_email = (profile.get("email") or "").strip()
     profile_id = profile.get('id')
 
@@ -3188,17 +2935,14 @@ def class_speed_grader(class_id):
         prof = normalize_profile(enrollment)
         if not prof.get('id'):
             continue
-        prof['name'] = _student_display_name(prof)
+        prof['name'] = display_name(prof.get("full_name") or "")
         if enrollment.get('muted', False):
             continue
         students.append(prof)
 
-    if not students:
-        students = _load_students_from_grades(class_id)
-
     # Batch-fetch free passes for all students in one query (fixes N+1)
     if students:
-        students.sort(key=_student_row_sort_key)
+        students.sort(key=row_sort_key)
         student_ids = [s['id'] for s in students if s.get('id')]
         passes_map = _batch_get_free_passes(student_ids, class_id)
         for prof in students:
@@ -4181,64 +3925,19 @@ def get_available_students(class_id):
         if candidate_ids:
             prof_resp = (
                 supabase_admin.table("profiles")
-                .select("id, full_name, sort_name")
+                .select("id, full_name")
                 .eq("role", "student")
                 .in_("id", list(candidate_ids))
                 .execute()
             )
             all_students = prof_resp.data or []
 
-        available = sorted(all_students, key=_student_row_sort_key)
+        available = sorted(all_students, key=row_sort_key)
         for s in available:
-            s["name"] = _student_display_name(
-                {
-                    "id": s.get("id"),
-                    "full_name": s.get("full_name"),
-                    "sort_name": s.get("sort_name"),
-                }
-            )
+            s["name"] = display_name(s.get("full_name") or "")
         return jsonify({"success": True, "students": available}), 200
     except Exception as e:
         return _safe_api_error("Could not load available students", 500, log_detail=e)
-
-
-@main_bp.route("/api/class/<class_id>/add_student", methods=["POST"])
-@api_instructor_required
-def api_add_student_to_class(class_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    try:
-        data = request.get_json()
-        student_name = data.get('student_name', '').strip()
-        if not student_name:
-            return jsonify({"success": False, "error": "student_name is required"}), 400
-        if len(student_name) > 255:
-            return jsonify({"success": False, "error": "Student name must be 255 characters or fewer."}), 400
-        student_id = str(uuid4())
-        student_email = (data.get("student_email") or data.get("email") or "").strip()
-        insert_row = {
-            "id": student_id,
-            "full_name": student_name,
-            "sort_name": _generate_sort_name(student_name),
-            "role": "student",
-        }
-        if student_email:
-            insert_row["email"] = student_email
-        try:
-            supabase_admin.table("profiles").insert(insert_row).execute()
-        except Exception as ins_err:
-            insert_row.pop("email", None)
-            logger.warning(
-                "api add_student profiles insert with email failed (%s); retrying without email.",
-                ins_err,
-            )
-            supabase_admin.table("profiles").insert(insert_row).execute()
-        supabase_admin.table("enrollments").insert({
-            "class_id": class_id, "student_id": student_id
-        }).execute()
-        return jsonify({"success": True, "student_id": student_id, "student_name": student_name}), 200
-    except Exception as e:
-        return _safe_api_error("Could not add student", 500, log_detail=e)
 
 
 def _build_student_upload_enrollment_indexes(class_id: str):
@@ -4271,12 +3970,12 @@ def _build_student_upload_enrollment_indexes(class_id: str):
             continue
         profile = {
             "id": sid,
-            "full_name": _normalize_spaces((p.get("full_name") or "").strip()),
+            "full_name": normalize_spaces((p.get("full_name") or "").strip()),
             "email": _student_email_key((p.get("email") or "").strip()),
         }
         if profile["email"]:
             enrolled_by_email[profile["email"]] = profile
-        nk = _student_name_key(profile["full_name"])
+        nk = name_key(profile["full_name"])
         enrolled_by_name.setdefault(nk, []).append(profile)
         if not profile["email"]:
             missing_email_by_name.setdefault(nk, []).append(profile)
@@ -4369,41 +4068,27 @@ def _build_profiles_by_email_for_rows(rows: List[Dict[str, str]], class_id: str)
     return profiles_by_email
 
 
-def _sort_name_last_and_first(sort_name: str) -> Tuple[str, str]:
-    """Split a stored or generated ``Last, First`` sort_name into name keys."""
-    raw = (sort_name or "").strip()
-    if not raw:
+def _comma_name_sides(key: str) -> Tuple[str, str]:
+    if "," not in key:
         return "", ""
-    if "," in raw:
-        last, first = raw.split(",", 1)
-        return _student_name_key(last), _student_name_key(first)
-    return _student_name_key(raw), ""
+    last, first = key.split(",", 1)
+    return name_key(last), name_key(first)
 
 
-def _is_same_instructor_name_candidate(
-    sheet_name: str, stored_full_name: str, stored_sort_name: str
-) -> bool:
+def _is_same_instructor_name_candidate(sheet_name: str, stored_full_name: str) -> bool:
     """True when a gradesheet name should be offered as a same-instructor match."""
-    sheet = _normalize_spaces(sheet_name or "")
-    stored = _normalize_spaces(stored_full_name or "")
+    sheet = normalize_spaces(sheet_name or "")
+    stored = normalize_spaces(stored_full_name or "")
     if not sheet or not stored:
         return False
-    sheet_key = _student_name_key(sheet)
-    stored_key = _student_name_key(stored)
+    sheet_key = name_key(sheet)
+    stored_key = name_key(stored)
     if sheet_key == stored_key:
-        return True
-    if sheet_key == _student_name_key(_format_name_last_first(stored)):
-        return True
-    if _student_name_key(_format_name_last_first(sheet)) == stored_key:
-        return True
-    sheet_sort = _generate_sort_name(sheet)
-    stored_sort = (stored_sort_name or "").strip() or _generate_sort_name(stored)
-    if _student_name_key(sheet_sort) == _student_name_key(stored_sort):
         return True
     if difflib.SequenceMatcher(None, sheet_key, stored_key).ratio() >= 0.90:
         return True
-    sheet_last, sheet_first = _sort_name_last_and_first(sheet_sort)
-    stored_last, stored_first = _sort_name_last_and_first(stored_sort)
+    sheet_last, sheet_first = _comma_name_sides(sheet_key)
+    stored_last, stored_first = _comma_name_sides(stored_key)
     if sheet_last and stored_last and sheet_last == stored_last and sheet_first and stored_first:
         if difflib.SequenceMatcher(None, sheet_first, stored_first).ratio() >= 0.85:
             return True
@@ -4418,16 +4103,16 @@ def _is_same_instructor_name_candidate(
 
 
 def _first_seen_unique_sheet_names(raw_names: List[str]) -> Tuple[List[str], Optional[str]]:
-    """Deduplicate by _student_name_key, preserving first-seen spelling."""
+    """Deduplicate by name_key, preserving first-seen spelling."""
     seen: set = set()
     out: List[str] = []
     for raw in raw_names:
-        nm = _normalize_spaces(str(raw or ""))
+        nm = normalize_spaces(str(raw or ""))
         if not nm:
             continue
         if len(nm) > 255:
             return [], "Name must be 255 characters or fewer"
-        key = _student_name_key(nm)
+        key = name_key(nm)
         if not key or key in seen:
             continue
         seen.add(key)
@@ -4459,7 +4144,7 @@ def _list_same_instructor_other_class_enrollments(class_id: str) -> List[Dict[st
     other_ids = list(class_name_by_id.keys())
     enr = (
         supabase_admin.table("enrollments")
-        .select("student_id, class_id, profiles(id, full_name, sort_name)")
+        .select("student_id, class_id, profiles(id, full_name)")
         .in_("class_id", other_ids)
         .execute()
     )
@@ -4474,7 +4159,6 @@ def _list_same_instructor_other_class_enrollments(class_id: str) -> List[Dict[st
         candidate = {
             "profile_id": pid,
             "full_name": fn,
-            "sort_name": str(prof.get("sort_name") or "").strip(),
             "class_id": cid,
             "class_name": class_name_by_id.get(cid, ""),
         }
@@ -4524,7 +4208,7 @@ def _collect_preview_import_name_matches(
             if pid in seen_cids:
                 continue
             if not _is_same_instructor_name_candidate(
-                nm, other["full_name"], other["sort_name"]
+                nm, other["full_name"]
             ):
                 continue
             seen_cids.add(pid)
@@ -4541,22 +4225,18 @@ def _collect_preview_import_name_matches(
         if cands:
             matches.append({
                 "name": nm,
-                "key": _student_name_key(nm),
+                "key": name_key(nm),
                 "candidates": cands,
             })
     return matches
 
 
 def _import_resolution_alias_keys(name: str) -> List[str]:
-    nm = _normalize_spaces(str(name or ""))
+    nm = normalize_spaces(str(name or ""))
     if not nm:
         return []
-    out: List[str] = []
-    for raw in (nm, _format_name_last_first(nm), _generate_sort_name(nm)):
-        key = _student_name_key(raw)
-        if key and key not in out:
-            out.append(key)
-    return out
+    key = name_key(nm)
+    return [key] if key else []
 
 
 def _failure_import_name_plan(
@@ -4684,7 +4364,6 @@ def _plan_import_name_resolutions(
             if not _is_same_instructor_name_candidate(
                 first_seen,
                 str(other.get("full_name") or ""),
-                str(other.get("sort_name") or ""),
             ):
                 continue
             seen_cids.add(pid)
@@ -4788,10 +4467,10 @@ def api_upload_students_to_class(class_id):
         warnings = list(parse_warnings)
 
         for row in rows:
-            full_name = _normalize_spaces(row.get("full_name") or "")
+            full_name = normalize_spaces(row.get("full_name") or "")
             if not full_name:
                 continue
-            name_key = _student_name_key(full_name)
+            row_name_key = name_key(full_name)
 
             email = _student_email_key(row.get("email") or "")
             if email:
@@ -4805,7 +4484,7 @@ def api_upload_students_to_class(class_id):
                     stats["skipped_existing"] += 1
                     continue
 
-                missing_candidates = missing_email_by_name.get(name_key) or []
+                missing_candidates = missing_email_by_name.get(row_name_key) or []
                 if missing_candidates:
                     target = missing_candidates.pop(0)
                     target_id = target.get("id")
@@ -4835,7 +4514,7 @@ def api_upload_students_to_class(class_id):
                         stats["skipped_existing"] += 1
                     enrolled_by_email[email] = {
                         "id": existing_id,
-                        "full_name": _normalize_spaces(
+                        "full_name": normalize_spaces(
                             (existing_profile.get("full_name") or full_name).strip()
                         ),
                         "email": email,
@@ -4846,7 +4525,6 @@ def api_upload_students_to_class(class_id):
                 insert_profile = {
                     "id": student_id,
                     "full_name": full_name,
-                    "sort_name": _generate_sort_name(full_name),
                     "role": "student",
                     "email": email,
                 }
@@ -4870,7 +4548,6 @@ def api_upload_students_to_class(class_id):
                             supabase_admin.table("profiles").insert({
                                 "id": new_id,
                                 "full_name": full_name,
-                                "sort_name": _generate_sort_name(full_name),
                                 "role": "student",
                             }).execute()
                             supabase_admin.table("enrollments").insert({
@@ -4878,7 +4555,7 @@ def api_upload_students_to_class(class_id):
                                 "student_id": new_id,
                             }).execute()
                             enrolled_set.add(new_id)
-                            enrolled_by_name.setdefault(name_key, []).append(
+                            enrolled_by_name.setdefault(row_name_key, []).append(
                                 {"id": new_id, "full_name": full_name, "email": ""}
                             )
                             stats["created_profiles"] += 1
@@ -4898,7 +4575,7 @@ def api_upload_students_to_class(class_id):
                             stats["skipped_existing"] += 1
                         enrolled_by_email[email] = {
                             "id": existing_id,
-                            "full_name": _normalize_spaces((found.get("full_name") or full_name).strip()),
+                            "full_name": normalize_spaces((found.get("full_name") or full_name).strip()),
                             "email": email,
                         }
                         continue
@@ -4911,14 +4588,14 @@ def api_upload_students_to_class(class_id):
                 enrolled_set.add(student_id)
                 enrolled_profile = {"id": student_id, "full_name": full_name, "email": email}
                 enrolled_by_email[email] = enrolled_profile
-                enrolled_by_name.setdefault(name_key, []).append(enrolled_profile)
+                enrolled_by_name.setdefault(row_name_key, []).append(enrolled_profile)
                 profiles_by_email[email] = enrolled_profile
                 stats["created_profiles"] += 1
                 continue
 
-            seen_count = upload_name_seen_count.get(name_key, 0)
-            upload_name_seen_count[name_key] = seen_count + 1
-            existing_with_name = enrolled_by_name.get(name_key) or []
+            seen_count = upload_name_seen_count.get(row_name_key, 0)
+            upload_name_seen_count[row_name_key] = seen_count + 1
+            existing_with_name = enrolled_by_name.get(row_name_key) or []
             if seen_count < len(existing_with_name):
                 stats["skipped_existing"] += 1
                 continue
@@ -4927,7 +4604,6 @@ def api_upload_students_to_class(class_id):
             supabase_admin.table("profiles").insert({
                 "id": student_id,
                 "full_name": full_name,
-                "sort_name": _generate_sort_name(full_name),
                 "role": "student",
             }).execute()
             supabase_admin.table("enrollments").insert({
@@ -4936,8 +4612,8 @@ def api_upload_students_to_class(class_id):
             }).execute()
             enrolled_set.add(student_id)
             created = {"id": student_id, "full_name": full_name, "email": ""}
-            enrolled_by_name.setdefault(name_key, []).append(created)
-            missing_email_by_name.setdefault(name_key, []).append(created)
+            enrolled_by_name.setdefault(row_name_key, []).append(created)
+            missing_email_by_name.setdefault(row_name_key, []).append(created)
             stats["created_profiles"] += 1
 
         return jsonify({
@@ -4984,10 +4660,10 @@ def api_preview_upload_students(class_id):
         warnings = list(parse_warnings)
 
         for row in rows:
-            full_name = _normalize_spaces(row.get("full_name") or "")
+            full_name = normalize_spaces(row.get("full_name") or "")
             if not full_name:
                 continue
-            name_key = _student_name_key(full_name)
+            row_name_key = name_key(full_name)
             email = _student_email_key(row.get("email") or "")
 
             action = "skip"
@@ -5006,7 +4682,7 @@ def api_preview_upload_students(class_id):
                         status = "Already in class (email match)"
                         stats["will_skip"] += 1
                     else:
-                        missing_candidates = missing_email_by_name.get(name_key) or []
+                        missing_candidates = missing_email_by_name.get(row_name_key) or []
                         if missing_candidates:
                             target = missing_candidates.pop(0)
                             target["email"] = email
@@ -5022,7 +4698,7 @@ def api_preview_upload_students(class_id):
                                 stats["will_enroll_existing"] += 1
                                 enrolled_by_email[email] = {
                                     "id": str(existing_profile.get("id")),
-                                    "full_name": _normalize_spaces(
+                                    "full_name": normalize_spaces(
                                         (existing_profile.get("full_name") or full_name).strip()
                                     ),
                                     "email": email,
@@ -5033,12 +4709,12 @@ def api_preview_upload_students(class_id):
                                 stats["will_create"] += 1
                                 placeholder = {"id": f"new-{len(preview_rows)}", "full_name": full_name, "email": email}
                                 enrolled_by_email[email] = placeholder
-                                enrolled_by_name.setdefault(name_key, []).append(placeholder)
+                                enrolled_by_name.setdefault(row_name_key, []).append(placeholder)
                                 profiles_by_email[email] = placeholder
             else:
-                seen_count = upload_name_seen_count.get(name_key, 0)
-                upload_name_seen_count[name_key] = seen_count + 1
-                existing_with_name = enrolled_by_name.get(name_key) or []
+                seen_count = upload_name_seen_count.get(row_name_key, 0)
+                upload_name_seen_count[row_name_key] = seen_count + 1
+                existing_with_name = enrolled_by_name.get(row_name_key) or []
                 if seen_count < len(existing_with_name):
                     action = "skip"
                     status = "Already in class (name match)"
@@ -5048,8 +4724,8 @@ def api_preview_upload_students(class_id):
                     status = "Will create and enroll (no email)"
                     stats["will_create"] += 1
                     placeholder = {"id": f"new-{len(preview_rows)}", "full_name": full_name, "email": ""}
-                    enrolled_by_name.setdefault(name_key, []).append(placeholder)
-                    missing_email_by_name.setdefault(name_key, []).append(placeholder)
+                    enrolled_by_name.setdefault(row_name_key, []).append(placeholder)
+                    missing_email_by_name.setdefault(row_name_key, []).append(placeholder)
 
             preview_rows.append(
                 {
@@ -5145,7 +4821,7 @@ def api_preview_import_name_matches(class_id):
         matches = _collect_preview_import_name_matches(class_id, unique_names)
     except Exception as e:
         return _safe_api_error("Could not preview name matches", 500, log_detail=e)
-    name_keys = [_student_name_key(n) for n in collected]
+    name_keys = [name_key(n) for n in collected]
     return jsonify({
         "success": True,
         "matches": matches,
@@ -5212,7 +4888,7 @@ def api_import_grades():
         for nm in unique_names:
             hit = _lookup_enrolled_import_student_id(nm, enrolled_index)
             if hit:
-                nk = _student_name_key(nm)
+                nk = name_key(nm)
                 roster_key_to_profile_id[nk] = hit
                 roster_resolved_keys.add(nk)
     except Exception as e:
@@ -5260,7 +4936,6 @@ def api_import_grades():
         new_profile_rows.append({
             "id": new_id,
             "full_name": first_seen,
-            "sort_name": _generate_sort_name(first_seen),
             "role": "student",
         })
 
@@ -5443,7 +5118,7 @@ def api_import_grades():
             )
 
     for full_name, student in student_entries:
-        profile_id = profile_id_by_name.get(_student_name_key(full_name))
+        profile_id = profile_id_by_name.get(name_key(full_name))
         if not profile_id:
             continue
 

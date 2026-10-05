@@ -155,29 +155,10 @@ class Course:
             class_data.setdefault('hw_passes_allowed', 2)
             class_data.setdefault('is_online', False)
 
-            # Enrollments select degrades twice: the `email` column on profiles
-            # and the `muted` column on enrollments were both added by later
-            # migrations, so on older deployments the wide select 400s. We
-            # fall back narrower and synthesize `muted=False` so the rest of
-            # the pipeline does not need to special-case the schema state.
-            try:
-                enrollments_resp = supabase_admin.table("enrollments").select(
-                    "id, class_id, student_id, muted, profiles(id, full_name, sort_name, role, email)"
-                ).eq("class_id", class_id).execute()
-                enrollments = enrollments_resp.data or []
-            except Exception:
-                try:
-                    enrollments_resp = supabase_admin.table("enrollments").select(
-                        "id, class_id, student_id, muted, profiles(id, full_name, sort_name, role)"
-                    ).eq("class_id", class_id).execute()
-                    enrollments = enrollments_resp.data or []
-                except Exception:
-                    enrollments_resp = supabase_admin.table("enrollments").select(
-                        "id, class_id, student_id, profiles(id, full_name, role)"
-                    ).eq("class_id", class_id).execute()
-                    enrollments = enrollments_resp.data or []
-                    for e in enrollments:
-                        e['muted'] = False
+            enrollments_resp = supabase_admin.table("enrollments").select(
+                "id, class_id, student_id, muted, profiles(id, full_name, role, email)"
+            ).eq("class_id", class_id).execute()
+            enrollments = enrollments_resp.data or []
 
             # One in_() instead of one query per enrolled student. The post-
             # fetch filter on `class_lo_ids` guards against grades that belong
@@ -526,7 +507,7 @@ class Student:
         )
         try:
             response = supabase_admin.table("profiles").select(
-                "id, full_name, sort_name, role, "
+                "id, full_name, role, "
                 f"grades({BASE_GRADES_COLS}), "
                 "enrollments(classes(id, name, auto_convert_m))"
             ).eq("id", student_id).single().execute()
@@ -537,7 +518,7 @@ class Student:
                 schema_err,
             )
             response = supabase_admin.table("profiles").select(
-                "id, full_name, sort_name, role, "
+                "id, full_name, role, "
                 f"grades({FALLBACK_GRADES_COLS}), "
                 "enrollments(classes(id, name, auto_convert_m))"
             ).eq("id", student_id).single().execute()

@@ -763,16 +763,11 @@ function displayExtractedData(data) {
     });
   });
 
-  // Sort preview rows using the same UCA-based heuristic as Python's
-  // _student_sort_key_last_name so the upload preview matches the server-side
-  // roster order. Intl.Collator with locale 'en-US' applies Unicode Collation
-  // Algorithm weights that closely mirror pyuca on reconstructed "Last, First"
-  // strings for the common case.
-  const _previewCollator = new Intl.Collator('en-US');
   data.students.sort(function(a, b) {
-    const ka = _generateSortName((a && a.name) || '');
-    const kb = _generateSortName((b && b.name) || '');
-    return _previewCollator.compare(ka, kb);
+    return window.StudentNames.compareNames(
+      (a && a.name) || '',
+      (b && b.name) || ''
+    );
   });
 
   if (Array.isArray(data.learning_objectives)) {
@@ -1001,27 +996,6 @@ function updateExtractedStudentName(idx, value) {
   hideImportNameMatchError();
   setImportNameConfirmCount(0);
   setReviewContinueEnabled(true);
-}
-
-/**
- * Convert a stored "First Last[...]" student name to "Last[...], First" form.
- *
- * Mirrors Python's _generate_sort_name exactly: the first whitespace-separated
- * token is the first name; everything after it becomes the last-name cluster.
- * This faithfully inverts the Canvas CSV import conversion so Canvas-imported
- * names (including multi-word last names, Von/Van prefixes, hyphenated names,
- * and hyphen-with-space names) regenerate their exact Canvas sort string.
- *
- * Comma-format strings (already "Last, First") and single-token names are
- * returned unchanged.
- */
-function _generateSortName(name) {
-  const raw = (name || '').trim();
-  if (!raw) return '\uffff';
-  if (raw.indexOf(',') !== -1) return raw;  // already "Last, First"
-  const parts = raw.split(/\s+/);
-  if (parts.length === 1) return parts[0];
-  return parts.slice(1).join(' ') + ', ' + parts[0];
 }
 
 function updateExtractedHomeworkPct(idx, value) {

@@ -45,7 +45,6 @@
         data-student-id="{{ student.id }}"
         data-student-full-name="{{ student.full_name|e }}"
         data-student-email="{{ (student.email or '')|e }}"
-        data-student-sort-name="{{ (student.sort_name or '')|e }}"
         onclick="if (!event.target.closest('button, [data-copy-email-btn]')) { window.location.href = this.dataset.studentHref; }"
         onkeydown="if ((event.key==='Enter'||event.key===' ') && !event.target.closest('button,[data-copy-email-btn]')) { event.preventDefault(); window.location.href = this.dataset.studentHref; }">
         <div class="flex items-center justify-between">
@@ -112,22 +111,13 @@
     <div class="p-5 space-y-4">
       <div>
         <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
-        <input id="newStudentEmail" type="email" class="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="student@example.com">
+        <input id="newStudentEmail" type="email" required class="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="student@example.com">
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Full name</label>
-        <input id="newStudentName" type="text" oninput="syncAddStudentSortName()"
+        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Name (Last, First)</label>
+        <input id="newStudentName" type="text" required
           class="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="First Last — e.g. Cali Smith">
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Sort name</label>
-        <input id="newStudentSortName" type="text"
-          class="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Last, First — e.g. Smith, Cali">
-        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          Auto-filled from the name above. Edit here if needed — enter as <strong>Last, First</strong> (e.g. <em>Smith, Cali</em>) to ensure correct alphabetical sorting throughout the app.
-        </p>
+          placeholder="Smith, Cali">
       </div>
       <div class="flex items-center justify-end gap-2">
         <button type="button" class="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" onclick="closeAddStudentModal()">Cancel</button>
@@ -155,25 +145,16 @@
     <div class="p-5 space-y-4">
       <input type="hidden" id="editStudentId">
       <div>
-        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Full name</label>
-        <input id="editStudentName" type="text" maxlength="255"
+        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Name (Last, First)</label>
+        <input id="editStudentName" type="text" maxlength="255" required
           class="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="First Last">
+          placeholder="Smith, Cali">
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
-        <input id="editStudentEmail" type="email" maxlength="255"
+        <input id="editStudentEmail" type="email" maxlength="255" required
           class="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
           placeholder="student@example.com">
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Sort name</label>
-        <input id="editStudentSortName" type="text" maxlength="255"
-          class="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Last, First — e.g. Smith, Cali">
-        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          Enter as <strong>Last, First</strong> (e.g. <em>Smith, Cali</em>) to ensure correct alphabetical sorting throughout the app.
-        </p>
       </div>
       <div class="flex items-center justify-end gap-2 pt-1">
         <button type="button" onclick="closeEditStudentModal()" class="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">Cancel</button>
@@ -219,24 +200,10 @@ function handleSearch() {
   _runHandleSearch();
 }
 
-// Auto-fill sort_name from name using the shared ClarityUI helper.
-function syncAddStudentSortName() {
-  const nameVal = (document.getElementById('newStudentName').value || '').trim();
-  const sortEl = document.getElementById('newStudentSortName');
-  if (sortEl && !sortEl.dataset.manuallyEdited) {
-    sortEl.value = (window.ClarityUI && window.ClarityUI.generateSortName)
-      ? window.ClarityUI.generateSortName(nameVal)
-      : nameVal;
-  }
-}
-
 function openAddStudentModal() {
   const m = document.getElementById('addStudentModal');
   m.classList.remove('hidden');
   m.classList.add('flex');
-  // Reset manual-edit flag so sort_name auto-fills fresh each open.
-  const sortEl = document.getElementById('newStudentSortName');
-  if (sortEl) delete sortEl.dataset.manuallyEdited;
 }
 
 function closeAddStudentModal() {
@@ -245,15 +212,12 @@ function closeAddStudentModal() {
   m.classList.remove('flex');
   document.getElementById('newStudentEmail').value = '';
   document.getElementById('newStudentName').value = '';
-  const sortEl = document.getElementById('newStudentSortName');
-  if (sortEl) { sortEl.value = ''; delete sortEl.dataset.manuallyEdited; }
   document.getElementById('addStudentError').classList.add('hidden');
 }
 
 function submitAddStudent() {
   const email = document.getElementById('newStudentEmail').value.trim();
   const name = document.getElementById('newStudentName').value.trim();
-  const sortName = (document.getElementById('newStudentSortName').value || '').trim();
   const errEl = document.getElementById('addStudentError');
 
   if (!email || !name) {
@@ -265,7 +229,7 @@ function submitAddStudent() {
   fetch(`/class/${CLASS_ID}/add_student`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, name, sort_name: sortName })
+    body: JSON.stringify({ email, name })
   })
     .then(r => r.json())
     .then(data => {
@@ -325,12 +289,10 @@ function openEditStudentModal(rowEl) {
   const id       = rowEl.dataset.studentId || '';
   const name     = rowEl.dataset.studentFullName || '';
   const email    = rowEl.dataset.studentEmail || '';
-  const sortName = rowEl.dataset.studentSortName || '';
 
   document.getElementById('editStudentId').value       = id;
   document.getElementById('editStudentName').value     = name;
   document.getElementById('editStudentEmail').value    = email;
-  document.getElementById('editStudentSortName').value = sortName;
   document.getElementById('editStudentError').classList.add('hidden');
 
   const m = document.getElementById('editStudentModal');
@@ -346,7 +308,6 @@ function closeEditStudentModal() {
   document.getElementById('editStudentId').value       = '';
   document.getElementById('editStudentName').value     = '';
   document.getElementById('editStudentEmail').value    = '';
-  document.getElementById('editStudentSortName').value = '';
   document.getElementById('editStudentError').classList.add('hidden');
 }
 
@@ -354,11 +315,10 @@ function submitEditStudent() {
   const id       = document.getElementById('editStudentId').value.trim();
   const name     = document.getElementById('editStudentName').value.trim();
   const email    = document.getElementById('editStudentEmail').value.trim();
-  const sortName = document.getElementById('editStudentSortName').value.trim();
   const errEl    = document.getElementById('editStudentError');
 
-  if (!name) {
-    errEl.textContent = 'Name is required.';
+  if (!name || !email) {
+    errEl.textContent = 'Both email and name are required.';
     errEl.classList.remove('hidden');
     return;
   }
@@ -370,7 +330,7 @@ function submitEditStudent() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ name, email, sort_name: sortName }),
+    body: JSON.stringify({ name, email }),
   })
     .then(r => r.json().then(data => ({ ok: r.ok, data })))
     .then(({ ok, data }) => {
@@ -396,17 +356,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('editStudentModal').addEventListener('click', function(e) {
     if (e.target === this) closeEditStudentModal();
-  });
-
-  // Track whether the instructor has manually edited the sort_name field.
-  // Auto-fill resumes when they clear it back to empty; stays off while
-  // they have something typed in it, so we don't fight their corrections.
-  document.getElementById('newStudentSortName').addEventListener('input', function() {
-    if (this.value.trim() === '') {
-      delete this.dataset.manuallyEdited;
-    } else {
-      this.dataset.manuallyEdited = '1';
-    }
   });
 });
 </script>

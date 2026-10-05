@@ -6,7 +6,8 @@
     <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% block title %}Project Clarity{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="{{ url_for('static', filename='js/ui_helpers.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/student_names.js') }}?v=2"></script>
+    <script src="{{ url_for('static', filename='js/ui_helpers.js') }}?v=2"></script>
     <script>
         tailwind.config = { darkMode: 'class' }
     </script>

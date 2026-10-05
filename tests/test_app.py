@@ -31,11 +31,6 @@ from app.routes import (
     organize_by_learning_objectives,
     normalize_profile,
     DEFAULT_REQUIRED_MS,
-    _student_row_sort_key,
-    _student_sort_key_last_name,
-    _generate_sort_name,
-    _format_name_last_first,
-    _student_display_name,
     _aggregate_lo_grades,
     parse_blank_gradesheet_csv_text,
     parse_students_csv_text,
@@ -54,6 +49,8 @@ from app.routes import (
     MAX_IMPORT_ROWS,
 )
 from app import create_app
+from app.student_names import COMMA_REQUIRED, display_name, row_sort_key
+from tests.test_student_names import CANVAS_ORDER
 
 
 # ==========================================================================
@@ -312,71 +309,43 @@ class TestOrganizeByLearningObjectives(unittest.TestCase):
         self.assertEqual(len(lo_b['students_with_0m']), 1)
 
 
-class TestGenerateSortName(unittest.TestCase):
-    """_generate_sort_name: the heuristic that converts 'First Last[...]' → 'Last[...], First'."""
+class TestStoredCanvasNames(unittest.TestCase):
+    def test_display_keeps_the_stored_string(self):
+        self.assertEqual(display_name("Smith, Cali"), "Smith, Cali")
 
-    def test_simple_two_token(self):
-        self.assertEqual(_generate_sort_name("Cali Smith"), "Smith, Cali")
+    def test_csv_keeps_last_comma_first(self):
+        rows, warnings = parse_students_csv_text(
+            'name\n"Juarez Salgado, Evelyn"\n'
+        )
+        self.assertEqual(warnings, [])
+        self.assertEqual(rows[0]["full_name"], "Juarez Salgado, Evelyn")
 
-    def test_multi_word_last_name(self):
-        """Everything after the first token is the last-name cluster."""
-        self.assertEqual(_generate_sort_name("Evelyn Juarez Salgado"), "Juarez Salgado, Evelyn")
+    def test_csv_without_a_comma_is_a_row_error(self):
+        rows, warnings = parse_students_csv_text("name\nCali Smith\n")
+        self.assertEqual(rows, [])
+        self.assertTrue(any("Last, First" in warning for warning in warnings))
 
-    def test_von_prefix(self):
-        self.assertEqual(_generate_sort_name("Zachary Von Huben"), "Von Huben, Zachary")
+    def test_blank_full_name_sorts_last(self):
+        rows = [
+            {"full_name": "Zenith, Bob"},
+            {"full_name": "Adams, Zoe"},
+            {"full_name": ""},
+        ]
+        ordered = [row["full_name"] for row in sorted(rows, key=row_sort_key)]
+        self.assertEqual(ordered, ["Adams, Zoe", "Zenith, Bob", ""])
 
-    def test_suffix_kept_in_cluster(self):
-        """'Jr' is part of the last-name cluster, not stripped."""
-        self.assertEqual(_generate_sort_name("Emilio Benito Velasco Jr"), "Benito Velasco Jr, Emilio")
-
-    def test_hyphenated_last_name(self):
-        self.assertEqual(_generate_sort_name("Kaiya Smith-Pauley"), "Smith-Pauley, Kaiya")
-
-    def test_hyphen_with_trailing_space_preserved(self):
-        """Space-after-hyphen from Canvas import is preserved exactly."""
-        self.assertEqual(_generate_sort_name("Kaiya Smith- Pauley"), "Smith- Pauley, Kaiya")
-
-    def test_single_token_unchanged(self):
-        self.assertEqual(_generate_sort_name("Madonna"), "Madonna")
-
-    def test_comma_format_passthrough(self):
-        """Already-'Last, First' strings are returned unchanged."""
-        self.assertEqual(_generate_sort_name("Smith, Cali"), "Smith, Cali")
-
-    def test_empty_string(self):
-        self.assertEqual(_generate_sort_name(""), "")
-
-    def test_zetina_ariza(self):
-        self.assertEqual(_generate_sort_name("Andrew Zetina Ariza"), "Zetina Ariza, Andrew")
-
-
-class TestStudentSortKeyLastName(unittest.TestCase):
-    """Students lists sort by family name via UCA (pyuca), matching Canvas ordering."""
-
-    def test_simple_last_name_order(self):
-        """Adams sorts before Zenith."""
-        rows = [{"full_name": "Bob Zenith"}, {"full_name": "Zoe Adams"}]
-        ordered = sorted(rows, key=_student_row_sort_key)
-        self.assertEqual([r["full_name"] for r in ordered], ["Zoe Adams", "Bob Zenith"])
-
-    def test_comma_format_sorts_correctly(self):
-        """'Washington, George' sorts before 'Zenith, Bob'."""
-        names = ["Zenith, Bob", "Washington, George"]
-        ordered = sorted(names, key=_student_sort_key_last_name)
-        self.assertEqual(ordered, ["Washington, George", "Zenith, Bob"])
-
-    def test_organize_buckets_sorted_by_last_name(self):
+    def test_organize_buckets_keep_stored_names(self):
         students = [
             {
                 "id": "1",
-                "full_name": "Bob Zenith",
+                "full_name": "Zenith, Bob",
                 "grades": [
                     {"learning_objective_id": "10", "top_score": "M", "second_score": "M"},
                 ],
             },
             {
                 "id": "2",
-                "full_name": "Zoe Adams",
+                "full_name": "Adams, Zoe",
                 "grades": [
                     {"learning_objective_id": "10", "top_score": "M", "second_score": "M"},
                 ],
@@ -384,182 +353,63 @@ class TestStudentSortKeyLastName(unittest.TestCase):
         ]
         los = [{"id": "10", "name": "LO-A"}]
         result = organize_by_learning_objectives(students, los)
-        names = [s["name"] for s in result[0]["students_with_2m"]]
-        self.assertEqual(names, ["Adams Zoe", "Zenith Bob"])
+        bucket = result[0]["students_with_2m"]
+        self.assertEqual([s["name"] for s in bucket], ["Adams, Zoe", "Zenith, Bob"])
+        self.assertEqual(bucket[0]["full_name"], "Adams, Zoe")
+        self.assertEqual(bucket[1]["full_name"], "Zenith, Bob")
 
-    def test_sort_name_in_dict_takes_precedence(self):
-        """When sort_name is in the dict, _student_row_sort_key uses it directly."""
-        rows = [
-            # sort_name says "Z" cluster — should sort last despite full_name starting with A
-            {"full_name": "Alice Apple", "sort_name": "Zenith, Alice"},
-            {"full_name": "Bob Banana", "sort_name": "Adams, Bob"},
-        ]
-        ordered = sorted(rows, key=_student_row_sort_key)
-        self.assertEqual(ordered[0]["full_name"], "Bob Banana")   # Adams → first
-        self.assertEqual(ordered[1]["full_name"], "Alice Apple")  # Zenith → last
+    def test_gradesheet_download_quotes_the_stored_name(self):
+        students = [{"id": "stu-1", "full_name": "Smith, Cali"}]
+        data_rows = _gradesheet_csv_data_rows(students, [], {}, {})
+        text = _build_gradesheet_csv_text("Quiz 1", "2026-08-20", [], data_rows, False)
+        self.assertIn('"Smith, Cali"', text)
 
+    def test_unquoted_gradesheet_comma_is_a_row_error(self):
+        text = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1\n"
+            "Smith, Cali,,\n"
+        )
+        payload, err = parse_blank_gradesheet_csv_text(text, ["D1"])
+        self.assertIsNone(payload)
+        self.assertIn("put the student name in quotes", err)
 
-class TestCanvasRosterSort(unittest.TestCase):
-    """UCA sort matches Canvas roster ordering exactly for a real 38-student class.
+    def test_padded_trailing_empty_columns_keep_a_quoted_comma_name(self):
+        text = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1,,\n"
+            '"Smith, Cali",,M,,\n'
+        )
+        payload, err = parse_blank_gradesheet_csv_text(text, ["D1"])
+        self.assertIsNone(err)
+        self.assertEqual(payload["students"][0]["name"], "Smith, Cali")
 
-    Canvas exports 'Last, First' strings that we store as 'First Last'.
-    _generate_sort_name recovers the original Canvas string, and pyuca on it
-    reproduces Canvas ordering exactly — verified against a real export.
-
-    Key edge cases confirmed:
-    - Smith- Pauley, Kaiya (space-after-hyphen) sorts BEFORE Smith, Cali/Parker
-    - Von Huben, Zachary (Von prefix) sorts under 'V'
-    - Juarez Salgado, Evelyn (multi-word last) sorts under 'J'
-    - Benito Velasco Jr, Emilio (suffix cluster) sorts under 'B'
-    - Zetina Ariza, Andrew (multi-word last) sorts under 'Z'
-    """
-
-    # Ground-truth Canvas order (38 students, real export)
-    CANVAS_ORDER = [
-        "Abdulkadir, Abdulwahid", "Alesna, Jaiden", "Alonso, Ivan",
-        "Beckham, Jake", "Benito Velasco Jr, Emilio", "Benjamin, Savannah",
-        "Berger, Mckinley", "Boe, Aryanna", "Cisneros, Dylan",
-        "Cotsidas, Caris", "Cotton, Marcus", "Gamero, David",
-        "Guzman, Cesar", "Heredia, Roger", "Hernandez, Celeste",
-        "Howard, Caleb", "Javien, Jennilyn", "Juarez Salgado, Evelyn",
-        "Keegan, Joshua", "Melssen, Zachary", "Mendoza, Ernesto",
-        "Nazimi, Subhan", "Ortega, Armando", "Prych, Joshua",
-        "Redmond, Franki", "Roberts, Rider", "Rodriguez, Maya",
-        "Romero, Reyna", "Smith- Pauley, Kaiya", "Smith, Cali",
-        "Smith, Parker", "Spicka, Kyle", "Taylor, Hunter",
-        "Trejo, Esperanza", "Von Huben, Zachary", "Weidenthaler, Carl",
-        "Xie, Xun", "Zetina Ariza, Andrew",
-    ]
-
-    @staticmethod
-    def _canvas_to_stored(canvas_name: str) -> str:
-        """Convert 'Last, First' Canvas export to stored 'First Last' format."""
-        if "," in canvas_name:
-            parts = canvas_name.split(",", 1)
-            return parts[1].strip() + " " + parts[0].strip()
-        return canvas_name
-
-    def test_38_roster_exact_canvas_order(self):
-        """Sorting stored names by _student_sort_key_last_name gives EXACT Canvas order."""
-        stored_names = [self._canvas_to_stored(n) for n in self.CANVAS_ORDER]
-        # Shuffle to ensure sorting actually works
-        import random
-        shuffled = list(stored_names)
-        random.shuffle(shuffled)
-        sorted_names = sorted(shuffled, key=_student_sort_key_last_name)
-        self.assertEqual(sorted_names, stored_names,
-                         "Sort order does not match Canvas roster. Mismatches:\n" +
-                         "\n".join(f"  pos {i+1}: got {sorted_names[i]!r}, want {stored_names[i]!r}"
-                                   for i in range(len(sorted_names))
-                                   if sorted_names[i] != stored_names[i]))
-
-    def test_smith_cluster_order_matches_canvas(self):
-        """Canvas puts Smith- Pauley (Kaiya) BEFORE Smith, Cali and Smith, Parker."""
-        # Stored as imported from Canvas (space after hyphen preserved)
-        three = [
-            self._canvas_to_stored("Smith, Cali"),       # "Cali Smith"
-            self._canvas_to_stored("Smith, Parker"),      # "Parker Smith"
-            self._canvas_to_stored("Smith- Pauley, Kaiya"),  # "Kaiya Smith- Pauley"
-        ]
-        ordered = sorted(three, key=_student_sort_key_last_name)
-        # Canvas order: Kaiya first, then Cali, then Parker
-        self.assertEqual(ordered[0], "Kaiya Smith- Pauley")
-        self.assertEqual(ordered[1], "Cali Smith")
-        self.assertEqual(ordered[2], "Parker Smith")
-
-    def test_generate_sort_name_38_names_all_correct(self):
-        """_generate_sort_name regenerates all 38 Canvas sort_name strings exactly."""
-        wrong = []
-        for canvas_name in self.CANVAS_ORDER:
-            stored = self._canvas_to_stored(canvas_name)
-            generated = _generate_sort_name(stored)
-            if generated != canvas_name:
-                wrong.append(f"  Canvas={canvas_name!r}, stored={stored!r}, generated={generated!r}")
-        self.assertEqual(wrong, [], "Heuristic mismatch for:\n" + "\n".join(wrong))
-
-    def test_csv_import_preview_uses_uca(self):
-        """parse_students_csv_text applies UCA sort matching Canvas cluster ordering."""
-        # Mix up the three Smiths + one extra to verify stable-ish ordering
-        csv_text = "name\nParker Smith\nKaiya Smith-Pauley\nCali Smith\nZoe Adams\n"
+    def test_email_fixture_parses_in_canvas_order(self):
+        fixture = os.path.join(
+            os.path.dirname(__file__),
+            "fixtures",
+            "students_last_first_with_emails.csv",
+        )
+        with open(fixture, encoding="utf-8") as handle:
+            csv_text = handle.read()
         rows, warnings = parse_students_csv_text(csv_text)
         self.assertEqual(warnings, [])
-        names = [r["full_name"] for r in rows]
-        # Adams first, then Smith cluster. Within Smiths, hyphen-with-no-space
-        # "Smith-Pauley" sorts differently from Canvas's space version, but is
-        # still grouped with Smiths and before Zoe Adams is impossible.
-        self.assertEqual(names[0], "Zoe Adams")
-        # All three Smiths must appear after Adams
-        self.assertIn("Cali Smith", names[1:])
-        self.assertIn("Parker Smith", names[1:])
-        self.assertIn("Kaiya Smith-Pauley", names[1:])
+        self.assertEqual([row["full_name"] for row in rows], list(CANVAS_ORDER))
 
-    def test_student_row_sort_key_uses_stored_sort_name(self):
-        """When sort_name is present it overrides on-the-fly generation."""
-        # Simulate a student whose sort_name was manually corrected
+    def test_overdue_revisions_sort_by_stored_name(self):
+        from app.routes import _sort_overdue_revisions
         rows = [
-            {"full_name": "Emilio Benito Velasco Jr", "sort_name": "Benito Velasco Jr, Emilio"},
-            {"full_name": "Zoe Adams", "sort_name": "Adams, Zoe"},
+            {"student_name": "Zenith, Bob"},
+            {"student_name": "Adams, Zoe"},
         ]
-        ordered = sorted(rows, key=_student_row_sort_key)
-        self.assertEqual(ordered[0]["full_name"], "Zoe Adams")
-        self.assertEqual(ordered[1]["full_name"], "Emilio Benito Velasco Jr")
-
-    def test_regression_non_hyphenated_alphabetical(self):
-        """Regression: plain non-hyphenated names sort alphabetically by last name."""
-        rows = [{"full_name": "Bob Zenith"}, {"full_name": "Zoe Adams"}]
-        result = [r["full_name"] for r in sorted(rows, key=_student_row_sort_key)]
-        self.assertEqual(result, ["Zoe Adams", "Bob Zenith"])
-
-
-class TestFormatNameLastFirst(unittest.TestCase):
-    """Roster display: family name first."""
-
-    def test_first_last_to_last_first(self):
-        self.assertEqual(_format_name_last_first("John Smith"), "Smith John")
-
-    def test_comma_form(self):
-        self.assertEqual(_format_name_last_first("Washington, George"), "Washington George")
-
-    def test_student_display_name_formats(self):
+        ordered = _sort_overdue_revisions(rows)
         self.assertEqual(
-            _student_display_name({"id": "x", "full_name": "John Smith"}),
-            "Smith John",
-        )
-
-    def test_student_display_name_prefers_comma_sort_name(self):
-        cases = [
-            ("Kaiya Smith- Pauley", "Smith- Pauley, Kaiya", "Smith- Pauley Kaiya"),
-            ("Zachary Von Huben", "Von Huben, Zachary", "Von Huben Zachary"),
-            ("Evelyn Juarez Salgado", "Juarez Salgado, Evelyn", "Juarez Salgado Evelyn"),
-            ("Andrew Zetina Ariza", "Zetina Ariza, Andrew", "Zetina Ariza Andrew"),
-            ("Emilio Benito Velasco Jr", "Benito Velasco Jr, Emilio", "Benito Velasco Jr Emilio"),
-            ("Jaiden Alesna", "Alesna, Jaiden", "Alesna Jaiden"),
-        ]
-        for full_name, sort_name, expected in cases:
-            self.assertEqual(
-                _student_display_name({
-                    "id": "x",
-                    "full_name": full_name,
-                    "sort_name": sort_name,
-                }),
-                expected,
-                msg=full_name,
-            )
-
-    def test_student_display_name_empty_sort_name_falls_back(self):
-        self.assertEqual(
-            _student_display_name({
-                "id": "x",
-                "full_name": "John Smith",
-                "sort_name": "",
-            }),
-            "Smith John",
-        )
-
-    def test_no_comma_suffix_stays_with_preceding_token(self):
-        self.assertEqual(
-            _format_name_last_first("Emilio Benito Velasco Jr"),
-            "Velasco Jr Emilio Benito",
+            [row["student_name"] for row in ordered],
+            ["Adams, Zoe", "Zenith, Bob"],
         )
 
 
@@ -1542,8 +1392,8 @@ class TestGradesheetExportPrefill(unittest.TestCase):
 
     def test_data_rows_prefill_hw_and_letters_leave_true_gaps_blank(self):
         students = [
-            {"id": "stu-1", "name": "Doe Jane"},
-            {"id": "stu-2", "name": "Smith Alex"},
+            {"id": "stu-1", "full_name": "Doe, Jane"},
+            {"id": "stu-2", "full_name": "Smith, Alex"},
         ]
         los = [
             {"id": "lo-d1", "vendor_code": "D1"},
@@ -1552,8 +1402,8 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         hw_map = {"stu-1": 85}
         letter_map = {("stu-1", "lo-d1"): "M"}
         rows = _gradesheet_csv_data_rows(students, los, hw_map, letter_map)
-        self.assertEqual(rows[0], ["Doe Jane", "85", "M", ""])
-        self.assertEqual(rows[1], ["Smith Alex", "", "", ""])
+        self.assertEqual(rows[0], ["Doe, Jane", "85", "M", ""])
+        self.assertEqual(rows[1], ["Smith, Alex", "", "", ""])
 
     def test_letter_map_from_assignment_rows(self):
         mapped = _gradesheet_letter_map_from_rows([
@@ -1564,7 +1414,7 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         self.assertNotIn(("stu-1", "lo-d2"), mapped)
 
     def test_blank_template_csv_has_note_and_empty_grade_cells(self):
-        students = [{"id": "stu-1", "name": "Doe Jane"}]
+        students = [{"id": "stu-1", "full_name": "Doe, Jane"}]
         los = [{"id": "lo-d1", "vendor_code": "D1"}]
         hw_map = {"stu-1": 85}
         data_rows = _gradesheet_csv_data_rows(students, los, hw_map, {})
@@ -1576,7 +1426,7 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         self.assertEqual(payload["students"][0]["grades"], {"D1": ""})
 
     def test_filled_export_csv_has_letters_and_no_note(self):
-        students = [{"id": "stu-1", "name": "Doe Jane"}]
+        students = [{"id": "stu-1", "full_name": "Doe, Jane"}]
         los = [{"id": "lo-d1", "vendor_code": "D1"}]
         hw_map = {"stu-1": 85}
         letter_map = {("stu-1", "lo-d1"): "M"}
@@ -1612,7 +1462,7 @@ class TestGradesheetExportPrefill(unittest.TestCase):
                 unittest.mock.patch.object(
                     r,
                     "_process_enrollments",
-                    return_value=([{"id": "stu-1", "name": "Doe Jane"}], [], {}),
+                    return_value=([{"id": "stu-1", "full_name": "Doe, Jane"}], [], {}),
                 ), \
                 unittest.mock.patch.object(
                     r.Course, "get_learning_objectives", return_value=pool
@@ -1652,10 +1502,11 @@ class TestGradesheetExportPrefill(unittest.TestCase):
 class TestImportRosterNameMatch(unittest.TestCase):
     def test_last_first_export_name_hits_stored_first_last(self):
         index = _enrolled_import_name_index([
-            {"id": "stu-1", "full_name": "Jane Doe"},
+            {"id": "stu-1", "full_name": "Doe, Jane"},
         ])
-        self.assertEqual(_lookup_enrolled_import_student_id("Doe Jane", index), "stu-1")
-        self.assertEqual(_lookup_enrolled_import_student_id("Jane Doe", index), "stu-1")
+        self.assertEqual(_lookup_enrolled_import_student_id("Doe, Jane", index), "stu-1")
+        self.assertEqual(_lookup_enrolled_import_student_id("Doe,Jane", index), "stu-1")
+        self.assertIsNone(_lookup_enrolled_import_student_id("Jane Doe", index))
         self.assertIsNone(_lookup_enrolled_import_student_id("Nobody", index))
 
 
@@ -2291,45 +2142,107 @@ class TestMaxLengthValidation(unittest.TestCase):
         self.assertIn("100", rv.get_json()["error"])
         sa.table.assert_not_called()
 
-    # ── api_add_student_to_class ──────────────────────────────────────────
-
-    def test_add_student_name_255_accepted(self):
-        """Exactly 255-char name must pass the length check."""
-        from app import routes as r
+    def _instructor_session(self):
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
             sess["role"] = "instructor"
             sess["csrf_token"] = "test-csrf"
+
+    def test_add_student_without_a_comma_rejects_before_the_database(self):
+        from app import routes as r
+        self._instructor_session()
+        sa = MagicMock()
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
+            rv = self.client.post(
+                "/class/c1/add_student",
+                json={"name": "Cali Smith", "email": "cali@example.edu"},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], COMMA_REQUIRED)
+        sa.table.assert_not_called()
+
+    def test_add_student_stores_the_normalized_canvas_name(self):
+        from app import routes as r
+        self._instructor_session()
         sa = MagicMock()
         q = MagicMock()
+        q.insert.return_value = q
+        q.select.return_value = q
+        q.eq.return_value = q
         q.execute.return_value = MagicMock(data=[])
         sa.table.return_value = q
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
             rv = self.client.post(
-                "/api/class/c1/add_student",
-                json={"student_name": "A" * 255},
+                "/class/c1/add_student",
+                json={"name": "Smith,  Cali", "email": "cali@example.edu"},
                 headers={"X-CSRF-Token": "test-csrf"},
             )
-        self.assertNotEqual(rv.status_code, 400, "255-char name must not be length-rejected")
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        profile_row = q.insert.call_args_list[0][0][0]
+        self.assertEqual(profile_row["full_name"], "Smith, Cali")
+        self.assertEqual(profile_row["email"], "cali@example.edu")
+        self.assertEqual(profile_row["role"], "student")
+        self.assertEqual(set(profile_row), {"id", "full_name", "role", "email"})
 
-    def test_add_student_name_256_rejected(self):
-        """256-char student name must be rejected with 400 before any DB call."""
+    def test_add_student_rejects_a_256_character_comma_name_before_the_database(self):
         from app import routes as r
+        self._instructor_session()
         sa = MagicMock()
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = "inst1"
-            sess["role"] = "instructor"
-            sess["csrf_token"] = "test-csrf"
+        long_name = ("A" * 253) + ", Y"
+        self.assertEqual(len(long_name), 256)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
             rv = self.client.post(
-                "/api/class/c1/add_student",
-                json={"student_name": "A" * 256},
+                "/class/c1/add_student",
+                json={"name": long_name, "email": "cali@example.edu"},
                 headers={"X-CSRF-Token": "test-csrf"},
             )
         self.assertEqual(rv.status_code, 400)
+        self.assertIn("255", rv.get_json()["error"])
         sa.table.assert_not_called()
+
+    def test_api_update_student_without_a_comma_does_not_update_the_profile(self):
+        from app import routes as r
+        self._instructor_session()
+        sa = MagicMock()
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
+            rv = self.client.post(
+                "/api/class/c1/students/stu-1/update",
+                json={"name": "Cali Smith"},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], COMMA_REQUIRED)
+        sa.table.assert_not_called()
+
+    def test_api_update_student_writes_full_name_only(self):
+        from app import routes as r
+        self._instructor_session()
+        sa = MagicMock()
+        q = MagicMock()
+        q.update.return_value = q
+        q.eq.return_value = q
+        q.execute.return_value = MagicMock(data=[])
+        sa.table.return_value = q
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
+            rv = self.client.post(
+                "/api/class/c1/students/stu-1/update",
+                json={"name": "Smith, Cali"},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        payload = q.update.call_args[0][0]
+        self.assertEqual(payload["full_name"], "Smith, Cali")
+        self.assertEqual(set(payload), {"full_name"})
 
     # ── api_update_learning_objective ─────────────────────────────────────
 
@@ -2556,21 +2469,21 @@ class TestPreviewImportNameMatches(unittest.TestCase):
 
     def test_fuzzy_john_jon_flags_emily_emma_and_john_jane_do_not(self):
         self.assertTrue(_is_same_instructor_name_candidate(
-            "Jon Smith", "John Smith", "Smith, John"
+            "Smith, Jon", "Smith, John"
         ))
         self.assertFalse(_is_same_instructor_name_candidate(
-            "Emily Chen", "Emma Chen", "Chen, Emma"
+            "Emily Chen", "Emma Chen"
         ))
         self.assertFalse(_is_same_instructor_name_candidate(
-            "John Smith", "Jane Smith", "Smith, Jane"
+            "John Smith", "Jane Smith"
         ))
 
     def test_last_first_sheet_names_exact_and_typo_flag(self):
         self.assertTrue(_is_same_instructor_name_candidate(
-            "Smith, John", "John Smith", "Smith, John"
+            "Smith, John", "Smith, John"
         ))
         self.assertTrue(_is_same_instructor_name_candidate(
-            "Smith, Jon", "John Smith", "Smith, John"
+            "Smith, Jon", "Smith, John"
         ))
 
     def test_duplicate_input_names_keep_first_seen_spelling(self):
@@ -2593,7 +2506,6 @@ class TestPreviewImportNameMatches(unittest.TestCase):
                 "profiles": {
                     "id": "same-ok",
                     "full_name": "John Smith",
-                    "sort_name": "Smith, John",
                 },
             },
             {
@@ -2602,7 +2514,6 @@ class TestPreviewImportNameMatches(unittest.TestCase):
                 "profiles": {
                     "id": "foreign-only",
                     "full_name": "John Smith",
-                    "sort_name": "Smith, John",
                 },
             },
             {
@@ -2611,7 +2522,6 @@ class TestPreviewImportNameMatches(unittest.TestCase):
                 "profiles": {
                     "id": "dual-claimed",
                     "full_name": "Pat Lee",
-                    "sort_name": "Lee, Pat",
                 },
             },
             {
@@ -2620,7 +2530,6 @@ class TestPreviewImportNameMatches(unittest.TestCase):
                 "profiles": {
                     "id": "dual-claimed",
                     "full_name": "Pat Lee",
-                    "sort_name": "Lee, Pat",
                 },
             },
         ]
@@ -2658,7 +2567,6 @@ class TestPreviewImportNameMatches(unittest.TestCase):
         others = [{
             "profile_id": "p-other",
             "full_name": "John Smith",
-            "sort_name": "Smith, John",
             "class_id": "class-b",
             "class_name": "Algebra 2",
         }]
@@ -2703,7 +2611,6 @@ class TestPreviewImportNameMatches(unittest.TestCase):
         others = [{
             "profile_id": "p1",
             "full_name": "John Smith",
-            "sort_name": "Smith, John",
             "class_id": "class-b",
             "class_name": "Algebra 2",
         }]
@@ -2737,7 +2644,6 @@ class TestPreviewImportNameMatches(unittest.TestCase):
         others = [{
             "profile_id": "p1",
             "full_name": "John Smith",
-            "sort_name": "Smith, John",
             "class_id": "class-b",
             "class_name": "Algebra 2",
         }]
@@ -2772,14 +2678,12 @@ class TestPlanImportNameResolutions(unittest.TestCase):
         {
             "profile_id": "p-john",
             "full_name": "John Smith",
-            "sort_name": "Smith, John",
             "class_id": "class-b",
             "class_name": "Algebra 2",
         },
         {
             "profile_id": "p-ada",
             "full_name": "Ada Lovelace",
-            "sort_name": "Lovelace, Ada",
             "class_id": "class-b",
             "class_name": "Algebra 2",
         },
@@ -2857,7 +2761,6 @@ class TestPlanImportNameResolutions(unittest.TestCase):
                 {
                     "profile_id": "p-john",
                     "full_name": "John Smith",
-                    "sort_name": "Smith, John",
                     "class_id": "class-b",
                     "class_name": "Algebra 2",
                 },
@@ -2872,14 +2775,13 @@ class TestPlanImportNameResolutions(unittest.TestCase):
 
     def test_three_spellings_share_one_outcome(self):
         result = _plan_import_name_resolutions(
-            ["Jon Smith", "jon  smith", "Smith, Jon"],
+            ["Jon Smith", "jon  smith", " Jon   Smith "],
             {},
             self.POOL,
             {"jon smith": {"action": "attach", "profile_id": "p-john"}},
         )
         self.assertTrue(result["ok"])
         self.assertEqual(result["outcomes"]["jon smith"], ("attach", "p-john"))
-        self.assertEqual(result["outcomes"]["smith jon"], ("attach", "p-john"))
         self.assertEqual(len(result["attaches"]), 1)
         self.assertEqual(result["attaches"][0][1], "p-john")
         self.assertEqual(result["attaches"][0][2], "Jon Smith")
@@ -2938,14 +2840,13 @@ class TestPlanImportNameResolutions(unittest.TestCase):
 
     def test_three_spellings_create_share_one_creates_entry(self):
         result = _plan_import_name_resolutions(
-            ["Jon Smith", "jon  smith", "Smith, Jon"],
+            ["Jon Smith", "jon  smith", " Jon   Smith "],
             {},
             [],
             None,
         )
         self.assertTrue(result["ok"])
         self.assertEqual(result["outcomes"]["jon smith"], ("create", None))
-        self.assertEqual(result["outcomes"]["smith jon"], ("create", None))
         self.assertEqual(result["creates"], [("jon smith", "Jon Smith")])
         self.assertEqual(result["attaches"], [])
 
@@ -3037,14 +2938,12 @@ class TestImportGradesNameResolutions(unittest.TestCase):
         {
             "profile_id": "p-john",
             "full_name": "John Smith",
-            "sort_name": "Smith, John",
             "class_id": "class-b",
             "class_name": "Algebra 2",
         },
         {
             "profile_id": "p-ada",
             "full_name": "Ada Lovelace",
-            "sort_name": "Lovelace, Ada",
             "class_id": "class-b",
             "class_name": "Algebra 2",
         },
@@ -3241,7 +3140,7 @@ class TestImportGradesNameResolutions(unittest.TestCase):
             rec,
             [
                 {"name": "Jon Smith", "grades": {"A.1": "A"}},
-                {"name": "Smith, Jon", "grades": {"A.1": "A"}},
+                {"name": " jon   smith ", "grades": {"A.1": "A"}},
             ],
             pool=[],
         )

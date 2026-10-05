@@ -407,9 +407,8 @@
         <input type="email" id="studentEmail" required placeholder="student@university.edu" class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Full Name</label>
-        <input type="text" id="studentName" required placeholder="First Last — e.g. Cali Smith" class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
-        <p class="mt-1.5 text-xs text-slate-500 dark:text-slate-400">For correct sorting, enter as <strong>First Last</strong>. You can fine-tune the sort order afterward via the Manage Students page.</p>
+        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Name (Last, First)</label>
+        <input type="text" id="studentName" required placeholder="Smith, Cali" class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
       </div>
       <div class="flex gap-3 pt-2">
         <button type="button" onclick="document.getElementById('addStudentModal').classList.add('hidden')" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors">
@@ -526,29 +525,8 @@ function copyEmailBtnHtmlDashboard(email) {
     '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg></button>';
 }
 
-function studentSortKeyDashboard(student) {
-  var raw = String((student.full_name || student.name || '')).trim();
-  if (!raw) return ['\uffff', ''];
-  var lowerFull = raw.toLowerCase();
-  if (raw.indexOf(',') !== -1) {
-    var last = raw.split(',', 1)[0].trim().toLowerCase();
-    return [last || '\uffff', lowerFull];
-  }
-  var parts = raw.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return [parts[parts.length - 1].toLowerCase(), lowerFull];
-  }
-  return [parts[0].toLowerCase(), lowerFull];
-}
-
-function compareStudentsDashboard(a, b) {
-  var ka = studentSortKeyDashboard(a);
-  var kb = studentSortKeyDashboard(b);
-  if (ka[0] < kb[0]) return -1;
-  if (ka[0] > kb[0]) return 1;
-  if (ka[1] < kb[1]) return -1;
-  if (ka[1] > kb[1]) return 1;
-  return 0;
+function storedDashboardName(student) {
+  return String((student && student.full_name) || '');
 }
 
 function buildStudentRowHTMLDashboard(s, classId) {
@@ -593,7 +571,7 @@ function insertStudentRowSortedDashboard(container, student) {
     var sid = children[i].getAttribute('data-student-id');
     var other = (window.__dashboardAllStudents || []).find(function (x) { return String(x.id) === String(sid); });
     if (!other) continue;
-    if (compareStudentsDashboard(student, other) < 0) {
+    if (window.StudentNames.compareNames(storedDashboardName(student), storedDashboardName(other)) < 0) {
       insertBefore = children[i];
       break;
     }
@@ -865,7 +843,7 @@ function downloadStudentsCsvTemplate() {
   const inp = document.getElementById('studentsCsvTemplateCount');
   const n = clampCsvTemplateRows(inp && inp.value, 10, 500);
   if (inp) inp.value = String(n);
-  const rows = [['full_name', 'email']];
+  const rows = [['Student Name', 'email']];
   for (let i = 0; i < n; i++) rows.push(['', '']);
   triggerCsvDownload('students_import_template.csv', csvTextFromRows(rows));
 }
