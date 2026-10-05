@@ -15,6 +15,7 @@
 let uploadedPDFData = null;
 let mobilePollInterval = null;
 let classRoster = [];
+let addStudentNotices = Object.create(null);
 
 (function loadClassRoster() {
   var el = document.getElementById('classRosterJson');
@@ -992,7 +993,9 @@ function moveFocus(row, col) {
 
 function updateExtractedStudentName(idx, value) {
   if (!uploadedPDFData || !uploadedPDFData.students || !uploadedPDFData.students[idx]) return;
+  var previousKey = window.StudentNames.nameKey(uploadedPDFData.students[idx].name);
   uploadedPDFData.students[idx].name = value;
+  if (previousKey) delete addStudentNotices[previousKey];
   hideImportNameMatchError();
   setReviewContinueEnabled(true);
   paintNameFlags();
@@ -1096,7 +1099,7 @@ function clearNameMatchBanners() {
 }
 
 function computeNameFlags(students, roster) {
-  var counts = {};
+  var counts = Object.create(null);
   (roster || []).forEach(function (entry) {
     var key = window.StudentNames.nameKey(entry && entry.full_name);
     if (!key) return;
@@ -1117,7 +1120,7 @@ function computeNameFlags(students, roster) {
 }
 
 function uniqueUnmatchedCount(flags) {
-  var seen = {};
+  var seen = Object.create(null);
   var n = 0;
   (flags.unmatched || []).forEach(function (row) {
     if (!row.key || seen[row.key]) return;
@@ -1128,7 +1131,7 @@ function uniqueUnmatchedCount(flags) {
 }
 
 function ignoredNamesFromFlags(flags) {
-  var seen = {};
+  var seen = Object.create(null);
   var names = [];
   (flags.unmatched || []).forEach(function (row) {
     if (!row.key || seen[row.key]) return;
@@ -1184,7 +1187,12 @@ function saveAddedStudent(index, nameInput, emailInput, errorEl, saveBtn) {
   }).then(function (result) {
     saveBtn.disabled = false;
     if (result.ok && result.data && result.data.success) {
-      classRoster.push({ full_name: result.data.full_name });
+      var storedName = result.data.full_name;
+      var sheetKey = window.StudentNames.nameKey(sheetName);
+      classRoster.push({ full_name: storedName });
+      if (result.data.existing && window.StudentNames.nameKey(storedName) !== sheetKey) {
+        addStudentNotices[sheetKey] = storedName;
+      }
       paintNameFlags();
       return;
     }
@@ -1203,6 +1211,13 @@ function buildUnmatchedNameFlag(row) {
   note.className = 'text-sm font-medium text-amber-800 dark:text-amber-300';
   note.textContent = "Not in this class, won't be imported";
   wrap.appendChild(note);
+  var storedName = addStudentNotices[row.key];
+  if (storedName) {
+    var reuseNote = document.createElement('p');
+    reuseNote.className = 'mt-2 text-sm font-medium text-amber-800 dark:text-amber-300';
+    reuseNote.textContent = 'That email belongs to ' + storedName + ', who is now in this class. Correct the name in the sheet row to match.';
+    wrap.appendChild(reuseNote);
+  }
 
   var addBtn = document.createElement('button');
   addBtn.type = 'button';
@@ -1287,6 +1302,13 @@ function paintNameFlags() {
   clearNameMatchBanners();
   var students = (uploadedPDFData && uploadedPDFData.students) || [];
   var flags = computeNameFlags(students, classRoster);
+  var unmatchedKeys = Object.create(null);
+  flags.unmatched.forEach(function (row) {
+    if (row.key) unmatchedKeys[row.key] = true;
+  });
+  Object.keys(addStudentNotices).forEach(function (key) {
+    if (!unmatchedKeys[key]) delete addStudentNotices[key];
+  });
   setImportNameConfirmCount(uniqueUnmatchedCount(flags));
   flags.ambiguous.forEach(function (row) {
     var slot = document.querySelector('.name-match-slot[data-row="' + row.index + '"]');

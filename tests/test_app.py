@@ -1870,7 +1870,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
             src,
         )
-        self.assertIn("pdf_analyzer.js') }}?v=17", src)
+        self.assertIn("pdf_analyzer.js') }}?v=18", src)
 
     def test_pdf_analyzer_posts_ignored_names_without_preview(self):
         path = os.path.join(
@@ -1906,6 +1906,20 @@ class TestUpdateGradeRoster(unittest.TestCase):
         body = src[start:end]
         self.assertNotIn(".required = true", body)
         self.assertNotIn("type = 'email'", body)
+
+    def test_reused_student_notice_is_text_not_html(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
+        )
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        sentence = "who is now in this class. Correct the name in the sheet row to match."
+        at = src.find(sentence)
+        self.assertGreaterEqual(at, 0)
+        self.assertIn("addStudentNotices", src)
+        window = src[max(0, at - 400):at + len(sentence)]
+        self.assertIn("textContent", window)
+        self.assertNotIn("innerHTML", window)
 
 
 class TestImportBlankCellActions(unittest.TestCase):
@@ -3095,10 +3109,8 @@ class TestStudentEmailMatch(unittest.TestCase):
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
-        self.assertIn(
-            "classRoster.push({ full_name: result.data.full_name })",
-            src,
-        )
+        self.assertIn("var storedName = result.data.full_name;", src)
+        self.assertIn("classRoster.push({ full_name: storedName })", src)
 
 if __name__ == '__main__':
     unittest.main()
