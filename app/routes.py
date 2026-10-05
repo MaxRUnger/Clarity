@@ -1528,14 +1528,22 @@ def add_student(class_id):
                 "error": "A student with that email is already in this class",
             }), 409
         if action == "reuse":
+            stored_name = entry.get("full_name") or ""
+            if name_key(name) != name_key(stored_name):
+                return jsonify({
+                    "success": False,
+                    "error": (
+                        f"That email belongs to {stored_name}. "
+                        f"Enter the name as {stored_name} to add them to this class."
+                    ),
+                }), 409
             supabase_admin.table("enrollments").insert({
                 "class_id": class_id,
                 "student_id": entry["profile_id"],
             }).execute()
             return jsonify({
                 "success": True,
-                "full_name": entry.get("full_name") or "",
-                "existing": True,
+                "full_name": stored_name,
             })
         student_id = str(uuid4())
         insert_row = {
@@ -1552,7 +1560,6 @@ def add_student(class_id):
         return jsonify({
             "success": True,
             "full_name": name,
-            "existing": False,
         })
     except Exception as e:
         return _safe_api_error("Could not add student", 500, log_detail=e)

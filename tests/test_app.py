@@ -1870,7 +1870,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
             src,
         )
-        self.assertIn("pdf_analyzer.js') }}?v=18", src)
+        self.assertIn("pdf_analyzer.js') }}?v=19", src)
 
     def test_pdf_analyzer_posts_ignored_names_without_preview(self):
         path = os.path.join(
@@ -1907,19 +1907,17 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertNotIn(".required = true", body)
         self.assertNotIn("type = 'email'", body)
 
-    def test_reused_student_notice_is_text_not_html(self):
+    def test_pdf_analyzer_has_no_add_student_notices(self):
         path = os.path.join(
             os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
-        sentence = "who is now in this class. Correct the name in the sheet row to match."
-        at = src.find(sentence)
-        self.assertGreaterEqual(at, 0)
-        self.assertIn("addStudentNotices", src)
-        window = src[max(0, at - 400):at + len(sentence)]
-        self.assertIn("textContent", window)
-        self.assertNotIn("innerHTML", window)
+        self.assertNotIn("addStudentNotices", src)
+        self.assertNotIn(
+            "who is now in this class. Correct the name in the sheet row to match.",
+            src,
+        )
 
 
 class TestImportBlankCellActions(unittest.TestCase):
@@ -2599,7 +2597,6 @@ class TestMaxLengthValidation(unittest.TestCase):
         self.assertEqual(rv.get_json(), {
             "success": True,
             "full_name": "Smith, Cali",
-            "existing": False,
         })
         profile_row = q.insert.call_args_list[0][0][0]
         self.assertEqual(profile_row["full_name"], "Smith, Cali")
@@ -2965,7 +2962,6 @@ class TestStudentEmailMatch(unittest.TestCase):
         self.assertEqual(rv.get_json(), {
             "success": True,
             "full_name": "Smith, Cali",
-            "existing": False,
         })
         self.assertEqual(profiles.inserts[0]["email"], "cali@example.edu")
         self.assertEqual(profiles.inserts[0]["full_name"], "Smith, Cali")
@@ -2996,7 +2992,7 @@ class TestStudentEmailMatch(unittest.TestCase):
         self.assertEqual(profiles.inserts, [])
         self.assertEqual(enrollments.inserts, [])
 
-    def test_add_reuses_a_profile_from_another_class_of_this_instructor(self):
+    def test_add_rejects_a_reused_email_when_the_name_differs(self):
         client = self._client()
         sa, classes, enrollments, profiles = self._sa(
             [{"id": "c1"}, {"id": "c-other"}],
@@ -3013,17 +3009,16 @@ class TestStudentEmailMatch(unittest.TestCase):
         rv = self._post_add(
             client, sa, {"name": "Smith, Ann", "email": "jane@example.edu"},
         )
-        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.status_code, 409)
         self.assertEqual(rv.get_json(), {
-            "success": True,
-            "full_name": "Doe, Jane",
-            "existing": True,
+            "success": False,
+            "error": (
+                "That email belongs to Doe, Jane. "
+                "Enter the name as Doe, Jane to add them to this class."
+            ),
         })
         self.assertEqual(profiles.inserts, [])
-        self.assertEqual(enrollments.inserts, [{
-            "class_id": "c1",
-            "student_id": "stu-1",
-        }])
+        self.assertEqual(enrollments.inserts, [])
 
     def test_add_same_email_on_another_instructors_student_creates_a_profile(self):
         client = self._client()
@@ -3109,8 +3104,36 @@ class TestStudentEmailMatch(unittest.TestCase):
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
-        self.assertIn("var storedName = result.data.full_name;", src)
-        self.assertIn("classRoster.push({ full_name: storedName })", src)
+        self.assertIn("classRoster.push({ full_name: typed })", src)
+        self.assertNotIn("var storedName = result.data.full_name;", src)
+
+    def test_add_reuses_a_profile_when_the_name_key_matches(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa(
+            [{"id": "c1"}, {"id": "c-other"}],
+            [{
+                "class_id": "c-other",
+                "student_id": "stu-1",
+                "profiles": {
+                    "id": "stu-1",
+                    "full_name": "Doe, Jane",
+                    "email": "jane@example.edu",
+                },
+            }],
+        )
+        rv = self._post_add(
+            client, sa, {"name": "doe,  jane", "email": "jane@example.edu"},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.get_json(), {
+            "success": True,
+            "full_name": "Doe, Jane",
+        })
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [{
+            "class_id": "c1",
+            "student_id": "stu-1",
+        }])
 
 if __name__ == '__main__':
     unittest.main()
