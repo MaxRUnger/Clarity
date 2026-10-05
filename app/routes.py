@@ -935,21 +935,30 @@ def _gradesheet_letter_map_for_assignment(
     return letter_map
 
 
-def _enrolled_import_name_index(profiles: List[Dict[str, Any]]) -> Dict[str, str]:
-    """Map each enrolled ``full_name`` to one student id. The first id wins."""
-    index: Dict[str, str] = {}
+def _enrolled_import_name_index(profiles: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """Map a name key to every enrolled student id in this class.
+
+    "Smith,Cali" and "Smith, Cali" are the same key. "Jane Doe" is not "Doe, Jane".
+    """
+    index: Dict[str, List[str]] = {}
     for p in profiles:
         sid = str(p.get("id") or "").strip()
         key = name_key(p.get("full_name") or "")
-        if sid and key and key not in index:
-            index[key] = sid
+        if not sid or not key:
+            continue
+        ids = index.setdefault(key, [])
+        if sid not in ids:
+            ids.append(sid)
     return index
 
 
 def _lookup_enrolled_import_student_id(
-    csv_name: str, name_index: Dict[str, str]
+    csv_name: str, name_index: Dict[str, List[str]]
 ) -> Optional[str]:
-    return name_index.get(name_key(csv_name))
+    ids = name_index.get(name_key(csv_name)) or []
+    if len(ids) == 1:
+        return ids[0]
+    return None
 
 
 def _batch_get_free_passes(student_ids, class_id):
@@ -4175,7 +4184,7 @@ def _list_same_instructor_other_class_enrollments(class_id: str) -> List[Dict[st
     return [row for row in by_pid.values() if row["profile_id"] not in claimed]
 
 
-def _this_class_enrolled_import_index(class_id: str) -> Dict[str, str]:
+def _this_class_enrolled_import_index(class_id: str) -> Dict[str, List[str]]:
     enr = (
         supabase_admin.table("enrollments")
         .select("student_id, profiles(id, full_name)")
@@ -4886,6 +4895,12 @@ def api_import_grades():
                 enrolled_profiles.append({"id": pid, "full_name": fn})
         enrolled_index = _enrolled_import_name_index(enrolled_profiles)
         for nm in unique_names:
+            ids = enrolled_index.get(name_key(nm)) or []
+            if len(ids) > 1:
+                return jsonify({
+                    "error": "ambiguous_name",
+                    "name": nm,
+                }), 409
             hit = _lookup_enrolled_import_student_id(nm, enrolled_index)
             if hit:
                 nk = name_key(nm)

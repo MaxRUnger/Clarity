@@ -1550,6 +1550,156 @@ class TestImportRosterNameMatch(unittest.TestCase):
         self.assertIsNone(_lookup_enrolled_import_student_id("Jane Doe", index))
         self.assertIsNone(_lookup_enrolled_import_student_id("Nobody", index))
 
+    def test_enrolled_doe_jane_matches_doe_comma_jane_without_a_space(self):
+        index = _enrolled_import_name_index([
+            {"id": "stu-1", "full_name": "Doe, Jane"},
+        ])
+        self.assertEqual(
+            _lookup_enrolled_import_student_id("Doe,Jane", index),
+            "stu-1",
+        )
+
+    def test_enrolled_doe_jane_does_not_match_jane_doe(self):
+        index = _enrolled_import_name_index([
+            {"id": "stu-1", "full_name": "Doe, Jane"},
+        ])
+        self.assertIsNone(_lookup_enrolled_import_student_id("Jane Doe", index))
+
+    def _post_grade_import(self, students, enroll_rows, planner):
+        from app import routes as r
+
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        writes = []
+        grades = MagicMock()
+
+        class _EnrollQuery:
+            def __init__(self):
+                self._class_id = None
+
+            def select(self, *args, **kwargs):
+                return self
+
+            def eq(self, field, val):
+                if field == "class_id":
+                    self._class_id = val
+                return self
+
+            def insert(self, *args, **kwargs):
+                writes.append("enrollments.insert")
+                return self
+
+            def upsert(self, *args, **kwargs):
+                writes.append("enrollments.upsert")
+                return self
+
+            def execute(self):
+                data = [
+                    row for row in enroll_rows
+                    if row.get("class_id") == self._class_id
+                ]
+                return MagicMock(data=data)
+
+        def table(name):
+            if name == "grades":
+                return grades
+            if name == "enrollments":
+                return _EnrollQuery()
+            query = MagicMock()
+            query.insert.side_effect = lambda *a, **k: writes.append(name + ".insert") or query
+            query.upsert.side_effect = lambda *a, **k: writes.append(name + ".upsert") or query
+            query.execute.return_value = MagicMock(data=[])
+            return query
+
+        sa = MagicMock()
+        sa.table.side_effect = table
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
+                unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(
+                    r, "_list_same_instructor_other_class_enrollments", return_value=[]
+                ), \
+                unittest.mock.patch.object(r, "_plan_import_name_resolutions", planner):
+            rv = client.post(
+                "/api/import-grades",
+                json={
+                    "class_id": "class-a",
+                    "assignment_id": "asg-1",
+                    "students": students,
+                    "learning_objectives": ["D1"],
+                },
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        return rv, grades, writes
+
+    def test_same_name_enrolled_only_in_another_class_is_not_a_match(self):
+        captured = {}
+
+        def planner(unique_names, roster, pool, resolutions):
+            captured["roster"] = dict(roster)
+            return {
+                "ok": False,
+                "error_type": "unresolved",
+                "message": "Some names need confirmation",
+                "unresolved_names": list(unique_names),
+            }
+
+        rv, grades, writes = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "M"}}],
+            [
+                {
+                    "student_id": "stu-b",
+                    "class_id": "class-b",
+                    "profiles": {"id": "stu-b", "full_name": "Doe, Jane"},
+                },
+                {
+                    "student_id": "stu-a",
+                    "class_id": "class-a",
+                    "profiles": {"id": "stu-a", "full_name": "Smith, Alex"},
+                },
+            ],
+            planner,
+        )
+        self.assertEqual(rv.status_code, 409)
+        self.assertIn("roster", captured)
+        self.assertNotIn("doe, jane", captured["roster"])
+        grades.insert.assert_not_called()
+        grades.upsert.assert_not_called()
+        self.assertEqual(writes, [])
+
+    def test_two_enrolled_students_with_the_same_name_key_return_409(self):
+        planner = unittest.mock.MagicMock()
+        rv, grades, writes = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "M"}}],
+            [
+                {
+                    "student_id": "stu-1",
+                    "class_id": "class-a",
+                    "profiles": {"id": "stu-1", "full_name": "Doe, Jane"},
+                },
+                {
+                    "student_id": "stu-2",
+                    "class_id": "class-a",
+                    "profiles": {"id": "stu-2", "full_name": "Doe,Jane"},
+                },
+            ],
+            planner,
+        )
+        self.assertEqual(rv.status_code, 409)
+        self.assertEqual(
+            rv.get_json(),
+            {"error": "ambiguous_name", "name": "Doe, Jane"},
+        )
+        planner.assert_not_called()
+        grades.insert.assert_not_called()
+        grades.upsert.assert_not_called()
+        self.assertEqual(writes, [])
+
 
 class TestImportBlankCellActions(unittest.TestCase):
     def test_present_blank_is_clear_candidate_missing_key_is_not(self):
