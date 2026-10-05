@@ -1332,7 +1332,10 @@ def class_detail(class_id):
     assignments = load_assignments_for_class(class_id)
 
     overdue_raw = Grade.get_overdue_revisions(class_id)
-    student_name_map = {s['id']: s.get('name', 'Unknown') for s in students_for_template}
+    student_name_map = {
+        s["id"]: display_name(s.get("full_name") or "")
+        for s in students_for_template
+    }
     overdue_revisions = []
     for rev in overdue_raw:
         if rev['student_id'] in student_name_map:
@@ -1423,7 +1426,7 @@ def class_learning_objectives_summary(class_id):
                     required = row["required_ms"]
             cells.append(f"{m_count}/{required}")
         grid_rows.append({
-            "name": student.get("name") or "Student",
+            "name": display_name(student.get("full_name") or ""),
             "cells": cells,
         })
 
@@ -1726,6 +1729,8 @@ def _clear_grade_cells_for_assignment(
 def delete_student_from_class(class_id, student_id):
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
+    if not _student_enrolled_in_class(class_id, student_id):
+        return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
     try:
         # Remove enrollment for this class only
         supabase_admin.table("enrollments").delete().eq("class_id", class_id).eq("student_id", student_id).execute()
@@ -4003,52 +4008,6 @@ def return_free_pass(class_id):
         return _safe_api_error("Could not return free pass", 500, log_detail=e)
 
 
-@main_bp.route("/api/class/<class_id>/available_students", methods=["GET"])
-@api_instructor_required
-def get_available_students(class_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    try:
-        enrolled_ids = {e['student_id'] for e in
-                        supabase_admin.table("enrollments").select("student_id")
-                        .eq("class_id", class_id).execute().data or []}
-
-        # Only offer students who already have a relationship with this
-        # instructor (enrolled in one of their other classes) — never a
-        # dump of every student profile in the deployment.
-        instructor_classes = Course.get_all_for_instructor(session["user_id"]) or []
-        instructor_class_ids = [c["id"] for c in instructor_classes if c.get("id")]
-
-        candidate_ids: set = set()
-        if instructor_class_ids:
-            enr_resp = (
-                supabase_admin.table("enrollments")
-                .select("student_id")
-                .in_("class_id", instructor_class_ids)
-                .execute()
-            )
-            candidate_ids = {r["student_id"] for r in (enr_resp.data or []) if r.get("student_id")}
-        candidate_ids -= enrolled_ids
-
-        all_students = []
-        if candidate_ids:
-            prof_resp = (
-                supabase_admin.table("profiles")
-                .select("id, full_name")
-                .eq("role", "student")
-                .in_("id", list(candidate_ids))
-                .execute()
-            )
-            all_students = prof_resp.data or []
-
-        available = sorted(all_students, key=row_sort_key)
-        for s in available:
-            s["name"] = display_name(s.get("full_name") or "")
-        return jsonify({"success": True, "students": available}), 200
-    except Exception as e:
-        return _safe_api_error("Could not load available students", 500, log_detail=e)
-
-
 def _student_csv_rejection(errors: List[str]):
     shown = errors[:25]
     summary = "\n".join(shown)
@@ -4224,6 +4183,8 @@ def api_toggle_mute(class_id):
         muted = bool(data.get('muted', False))
         if not student_id:
             return jsonify({"success": False, "error": "student_id is required"}), 400
+        if not _student_enrolled_in_class(class_id, student_id):
+            return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
         supabase_admin.table("enrollments").update({"muted": muted}) \
             .eq("class_id", class_id).eq("student_id", student_id).execute()
         return jsonify({"success": True, "muted": muted}), 200
@@ -4241,6 +4202,8 @@ def api_remove_student_from_class(class_id):
         student_id = data.get('student_id')
         if not student_id:
             return jsonify({"success": False, "error": "student_id is required"}), 400
+        if not _student_enrolled_in_class(class_id, student_id):
+            return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
         supabase_admin.table("enrollments").delete() \
             .eq("class_id", class_id).eq("student_id", student_id).execute()
 

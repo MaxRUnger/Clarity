@@ -3392,5 +3392,105 @@ class TestStudentEmailMatch(unittest.TestCase):
         self.assertEqual(profiles.inserts, [])
         self.assertEqual(enrollments.inserts, [])
 
+    def _post_unenrolled(self, path, json_body=None):
+        from app import routes as r
+        client = self._client()
+        sa = unittest.mock.MagicMock()
+        query = unittest.mock.MagicMock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.delete.return_value = query
+        query.update.return_value = query
+        query.execute.return_value = unittest.mock.MagicMock(data=[])
+        sa.table.return_value = query
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
+            if json_body is None:
+                rv = client.post(path, headers={"X-CSRF-Token": "test-csrf"})
+            else:
+                rv = client.post(
+                    path,
+                    json=json_body,
+                    headers={"X-CSRF-Token": "test-csrf"},
+                )
+        return rv, query
+
+    def test_delete_rejects_a_student_from_another_class(self):
+        rv, query = self._post_unenrolled("/class/c1/students/stu-other/delete")
+        self.assertEqual(rv.status_code, 403)
+        self.assertEqual(rv.get_json()["error"], "Student not enrolled in this class")
+        query.delete.assert_not_called()
+        query.update.assert_not_called()
+
+    def test_remove_rejects_a_student_from_another_class(self):
+        rv, query = self._post_unenrolled(
+            "/api/class/c1/remove_student",
+            {"student_id": "stu-other"},
+        )
+        self.assertEqual(rv.status_code, 403)
+        self.assertEqual(rv.get_json()["error"], "Student not enrolled in this class")
+        query.delete.assert_not_called()
+        query.update.assert_not_called()
+
+    def test_mute_rejects_a_student_from_another_class(self):
+        rv, query = self._post_unenrolled(
+            "/api/class/c1/toggle_mute",
+            {"student_id": "stu-other", "muted": True},
+        )
+        self.assertEqual(rv.status_code, 403)
+        self.assertEqual(rv.get_json()["error"], "Student not enrolled in this class")
+        query.delete.assert_not_called()
+        query.update.assert_not_called()
+
+    def _post_enrolled(self, path, json_body=None):
+        from app import routes as r
+        client = self._client()
+        sa = unittest.mock.MagicMock()
+        query = unittest.mock.MagicMock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.delete.return_value = query
+        query.update.return_value = query
+        query.execute.return_value = unittest.mock.MagicMock(
+            data=[{"student_id": "stu-1"}]
+        )
+        sa.table.return_value = query
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=[]):
+            if json_body is None:
+                rv = client.post(path, headers={"X-CSRF-Token": "test-csrf"})
+            else:
+                rv = client.post(
+                    path,
+                    json=json_body,
+                    headers={"X-CSRF-Token": "test-csrf"},
+                )
+        return rv, query
+
+    def test_delete_removes_an_enrolled_student(self):
+        rv, query = self._post_enrolled("/class/c1/students/stu-1/delete")
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        query.delete.assert_called()
+
+    def test_remove_removes_an_enrolled_student(self):
+        rv, query = self._post_enrolled(
+            "/api/class/c1/remove_student",
+            {"student_id": "stu-1"},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        query.delete.assert_called()
+
+    def test_mute_updates_an_enrolled_student(self):
+        rv, query = self._post_enrolled(
+            "/api/class/c1/toggle_mute",
+            {"student_id": "stu-1", "muted": True},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        query.update.assert_called()
+
 if __name__ == '__main__':
     unittest.main()
