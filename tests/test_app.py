@@ -2569,6 +2569,9 @@ class TestMaxLengthValidation(unittest.TestCase):
         q.insert.return_value = q
         q.select.return_value = q
         q.eq.return_value = q
+        q.order.return_value = q
+        q.range.return_value = q
+        q.in_.return_value = q
         q.execute.return_value = MagicMock(data=[])
         sa.table.return_value = q
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
@@ -2579,7 +2582,11 @@ class TestMaxLengthValidation(unittest.TestCase):
                 headers={"X-CSRF-Token": "test-csrf"},
             )
         self.assertEqual(rv.status_code, 200)
-        self.assertTrue(rv.get_json()["success"])
+        self.assertEqual(rv.get_json(), {
+            "success": True,
+            "full_name": "Smith, Cali",
+            "existing": False,
+        })
         profile_row = q.insert.call_args_list[0][0][0]
         self.assertEqual(profile_row["full_name"], "Smith, Cali")
         self.assertEqual(profile_row["email"], "cali@example.edu")
@@ -2626,6 +2633,10 @@ class TestMaxLengthValidation(unittest.TestCase):
         q = MagicMock()
         q.update.return_value = q
         q.eq.return_value = q
+        q.select.return_value = q
+        q.order.return_value = q
+        q.range.return_value = q
+        q.in_.return_value = q
         q.execute.return_value = MagicMock(data=[])
         sa.table.return_value = q
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
@@ -2633,14 +2644,15 @@ class TestMaxLengthValidation(unittest.TestCase):
                 unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
             rv = self.client.post(
                 "/api/class/c1/students/stu-1/update",
-                json={"name": "Smith, Cali"},
+                json={"name": "Smith, Cali", "email": "Cali@Example.EDU"},
                 headers={"X-CSRF-Token": "test-csrf"},
             )
         self.assertEqual(rv.status_code, 200)
         self.assertTrue(rv.get_json()["success"])
         payload = q.update.call_args[0][0]
         self.assertEqual(payload["full_name"], "Smith, Cali")
-        self.assertEqual(set(payload), {"full_name"})
+        self.assertEqual(payload["email"], "cali@example.edu")
+        self.assertEqual(set(payload), {"full_name", "email"})
 
     # ── api_update_learning_objective ─────────────────────────────────────
 
@@ -2822,6 +2834,271 @@ class TestMaxLengthValidation(unittest.TestCase):
         self.assertEqual(rv.status_code, 400)
         send_mock.assert_not_called()
 
+
+
+class _EmailTable:
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+        self.eq_calls = []
+        self.in_calls = []
+        self.ranges = []
+        self.inserts = []
+        self.updates = []
+        self.selected = False
+        self._page = None
+
+    def select(self, *args, **kwargs):
+        self.selected = True
+        return self
+
+    def eq(self, col, val):
+        self.eq_calls.append((col, val))
+        return self
+
+    def in_(self, col, vals):
+        self.in_calls.append((col, list(vals)))
+        return self
+
+    def order(self, *args, **kwargs):
+        return self
+
+    def range(self, start, end):
+        self.ranges.append((start, end))
+        self._page = self.rows[start:end + 1]
+        return self
+
+    def insert(self, row):
+        self.inserts.append(row)
+        return self
+
+    def update(self, row):
+        self.updates.append(row)
+        return self
+
+    def execute(self):
+        data = self.rows if self._page is None else self._page
+        return unittest.mock.MagicMock(data=data)
+
+
+class TestStudentEmailMatch(unittest.TestCase):
+    def _client(self):
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        return client
+
+    def _post_add(self, client, sa, body):
+        from app import routes as r
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
+            return client.post(
+                "/class/c1/add_student",
+                json=body,
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+
+    def _post_edit(self, client, sa, body, student_id="stu-1"):
+        from app import routes as r
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
+            return client.post(
+                "/api/class/c1/students/" + student_id + "/update",
+                json=body,
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+
+    def _sa(self, class_rows, enroll_rows):
+        classes = _EmailTable(class_rows)
+        enrollments = _EmailTable(enroll_rows)
+        profiles = _EmailTable()
+        sa = unittest.mock.MagicMock()
+        sa.table.side_effect = lambda name: {
+            "classes": classes,
+            "enrollments": enrollments,
+            "profiles": profiles,
+        }[name]
+        return sa, classes, enrollments, profiles
+
+    def test_add_requires_email(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([], [])
+        rv = self._post_add(client, sa, {"name": "Smith, Cali"})
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], "Email and name are required")
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [])
+
+    def test_add_rejects_an_invalid_email(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([], [])
+        rv = self._post_add(client, sa, {"name": "Smith, Cali", "email": "not-an-email"})
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], "Invalid email format")
+        sa.table.assert_not_called()
+
+    def test_add_lowercases_the_email_on_insert(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([{"id": "c1"}], [])
+        rv = self._post_add(
+            client, sa, {"name": "Smith, Cali", "email": "  Cali@Example.EDU "},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.get_json(), {
+            "success": True,
+            "full_name": "Smith, Cali",
+            "existing": False,
+        })
+        self.assertEqual(profiles.inserts[0]["email"], "cali@example.edu")
+        self.assertEqual(profiles.inserts[0]["full_name"], "Smith, Cali")
+        self.assertEqual(enrollments.inserts[0]["class_id"], "c1")
+
+    def test_add_email_already_in_this_class_inserts_nothing(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa(
+            [{"id": "c1"}],
+            [{
+                "class_id": "c1",
+                "student_id": "stu-1",
+                "profiles": {
+                    "id": "stu-1",
+                    "full_name": "Doe, Jane",
+                    "email": "Jane@Example.EDU",
+                },
+            }],
+        )
+        rv = self._post_add(
+            client, sa, {"name": "Smith, Ann", "email": "jane@example.edu"},
+        )
+        self.assertEqual(rv.status_code, 409)
+        self.assertEqual(rv.get_json(), {
+            "success": False,
+            "error": "A student with that email is already in this class",
+        })
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [])
+
+    def test_add_reuses_a_profile_from_another_class_of_this_instructor(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa(
+            [{"id": "c1"}, {"id": "c-other"}],
+            [{
+                "class_id": "c-other",
+                "student_id": "stu-1",
+                "profiles": {
+                    "id": "stu-1",
+                    "full_name": "Doe, Jane",
+                    "email": "jane@example.edu",
+                },
+            }],
+        )
+        rv = self._post_add(
+            client, sa, {"name": "Smith, Ann", "email": "jane@example.edu"},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.get_json(), {
+            "success": True,
+            "full_name": "Doe, Jane",
+            "existing": True,
+        })
+        self.assertEqual(profiles.inserts, [])
+        self.assertEqual(enrollments.inserts, [{
+            "class_id": "c1",
+            "student_id": "stu-1",
+        }])
+
+    def test_add_same_email_on_another_instructors_student_creates_a_profile(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([{"id": "c1"}], [])
+        rv = self._post_add(
+            client, sa, {"name": "Doe, Jane", "email": "jane@example.edu"},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(profiles.inserts[0]["email"], "jane@example.edu")
+        self.assertEqual(profiles.inserts[0]["full_name"], "Doe, Jane")
+        self.assertFalse(profiles.selected)
+        self.assertEqual(classes.eq_calls, [("instructor_id", "inst1")])
+        self.assertEqual(enrollments.in_calls, [("class_id", ["c1"])])
+
+    def test_email_index_reads_past_the_first_thousand_class_rows(self):
+        client = self._client()
+        class_rows = [{"id": "c%04d" % i} for i in range(1001)]
+        sa, classes, enrollments, profiles = self._sa(class_rows, [])
+        rv = self._post_add(
+            client, sa, {"name": "Smith, Cali", "email": "cali@example.edu"},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(classes.ranges, [(0, 999), (1000, 1999)])
+        self.assertEqual(len(enrollments.in_calls[0][1]), 1001)
+
+    def test_edit_rejects_a_blank_email(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([], [])
+        rv = self._post_edit(client, sa, {"name": "Smith, Cali", "email": "  "})
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], "Email is required")
+        sa.table.assert_not_called()
+
+    def test_edit_rejects_an_invalid_email(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([], [])
+        rv = self._post_edit(client, sa, {"name": "Smith, Cali", "email": "not-an-email"})
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], "Invalid email format")
+        sa.table.assert_not_called()
+
+    def test_edit_duplicate_inside_this_instructors_classes_is_409(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa(
+            [{"id": "c1"}],
+            [{
+                "class_id": "c1",
+                "student_id": "stu-other",
+                "profiles": {
+                    "id": "stu-other",
+                    "full_name": "Roe, Richard",
+                    "email": "shared@example.edu",
+                },
+            }],
+        )
+        rv = self._post_edit(
+            client, sa, {"name": "Smith, Cali", "email": "Shared@Example.EDU"},
+        )
+        self.assertEqual(rv.status_code, 409)
+        self.assertEqual(rv.get_json(), {
+            "success": False,
+            "error": "That email already belongs to another student in your classes",
+        })
+        self.assertEqual(profiles.updates, [])
+
+    def test_edit_duplicate_only_on_another_instructors_student_is_allowed(self):
+        client = self._client()
+        sa, classes, enrollments, profiles = self._sa([{"id": "c1"}], [])
+        rv = self._post_edit(
+            client, sa, {"name": "Smith, Cali", "email": "shared@example.edu"},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(profiles.updates, [{
+            "full_name": "Smith, Cali",
+            "email": "shared@example.edu",
+        }])
+        self.assertEqual(classes.eq_calls, [("instructor_id", "inst1")])
+        self.assertFalse(profiles.selected)
+
+    def test_pdf_analyzer_pushes_the_stored_name(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
+        )
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn(
+            "classRoster.push({ full_name: result.data.full_name })",
+            src,
+        )
 
 if __name__ == '__main__':
     unittest.main()

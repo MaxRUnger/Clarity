@@ -7,6 +7,7 @@ import unittest
 
 from app.student_names import (
     display_name,
+    normalize_email,
     name_key,
     raw_name_from_csv_fields,
     require_canvas_name,
@@ -89,6 +90,24 @@ class TestStudentNameHelpers(unittest.TestCase):
         rows = [{"full_name": ""}, {"full_name": "Adams, Zoe"}]
         ordered = [row["full_name"] for row in sorted(rows, key=row_sort_key)]
         self.assertEqual(ordered, ["Adams, Zoe", ""])
+
+    def test_normalize_email_strips_and_lowercases(self):
+        self.assertEqual(normalize_email("  Cali@Example.EDU "), "cali@example.edu")
+        self.assertEqual(normalize_email("a@b.c"), "a@b.c")
+        long_email = ("A" * 243) + "@Example.COM"
+        self.assertEqual(len(long_email), 255)
+        self.assertEqual(normalize_email(long_email), ("a" * 243) + "@example.com")
+
+    def test_normalize_email_rejects_blank_invalid_and_too_long(self):
+        self.assertIsNone(normalize_email(None))
+        self.assertIsNone(normalize_email(""))
+        self.assertIsNone(normalize_email("   "))
+        self.assertIsNone(normalize_email("not-an-email"))
+        self.assertIsNone(normalize_email("a@b"))
+        self.assertIsNone(normalize_email("a@b."))
+        too_long = ("a" * 244) + "@example.com"
+        self.assertEqual(len(too_long), 256)
+        self.assertIsNone(normalize_email(too_long))
 
 
 class TestStudentNameFixtures(unittest.TestCase):

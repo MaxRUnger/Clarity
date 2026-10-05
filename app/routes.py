@@ -61,6 +61,7 @@ from app.student_names import (
     name_key,
     normalize_spaces,
     raw_name_from_csv_fields,
+    normalize_email,
     require_canvas_name,
     row_sort_key,
     collator_key,
@@ -1424,16 +1425,86 @@ def class_learning_objectives_summary(class_id):
         grid_rows=grid_rows,
     )
 
+_EMAIL_INDEX_PAGE = 1000
+
+
+def _fetch_all_rows(query) -> List[Dict[str, Any]]:
+    """Read every row. Each request asks for one inclusive page of 1000."""
+    rows: List[Dict[str, Any]] = []
+    start = 0
+    while True:
+        resp = query.range(start, start + _EMAIL_INDEX_PAGE - 1).execute()
+        batch = list(resp.data or [])
+        rows.extend(batch)
+        if len(batch) < _EMAIL_INDEX_PAGE:
+            return rows
+        start += _EMAIL_INDEX_PAGE
+
+
+def _instructor_student_email_index(owner_id: str) -> Dict[str, Dict[str, Any]]:
+    """Map a lowercased email to the student enrolled in this instructor's classes.
+
+    The first profile seen for an email is kept. Later rows for that same
+    profile add class ids. A different profile with the same email is ignored.
+    """
+    class_rows = _fetch_all_rows(
+        supabase_admin.table("classes").select("id").eq("instructor_id", owner_id).order("id")
+    )
+    class_ids = [str(row.get("id")) for row in class_rows if row.get("id")]
+    index: Dict[str, Dict[str, Any]] = {}
+    if not class_ids:
+        return index
+    enroll_rows = _fetch_all_rows(
+        supabase_admin.table("enrollments")
+        .select("class_id, student_id, profiles(id, full_name, email)")
+        .in_("class_id", class_ids)
+        .order("id")
+    )
+    for row in enroll_rows:
+        prof = row.get("profiles") or {}
+        if isinstance(prof, list):
+            prof = prof[0] if prof else {}
+        email = normalize_email(prof.get("email") or "")
+        if not email:
+            continue
+        profile_id = str(prof.get("id") or row.get("student_id") or "").strip()
+        if not profile_id:
+            continue
+        enrolled_class = str(row.get("class_id") or "").strip()
+        entry = index.get(email)
+        if entry is None:
+            index[email] = {
+                "profile_id": profile_id,
+                "full_name": prof.get("full_name") or "",
+                "class_ids": {enrolled_class} if enrolled_class else set(),
+            }
+            continue
+        if entry["profile_id"] != profile_id or not enrolled_class:
+            continue
+        entry["class_ids"].add(enrolled_class)
+    return index
+
+
+def classify_student_email(index, class_id, email):
+    """Return already_in_class, reuse, or create for one lowercased email."""
+    entry = (index or {}).get(email)
+    if not entry:
+        return "create", None
+    if str(class_id) in (entry.get("class_ids") or ()):
+        return "already_in_class", entry
+    return "reuse", entry
+
+
 @main_bp.route("/class/<class_id>/add_student", methods=["POST"])
 @api_instructor_required
 def add_student(class_id):
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
-    data = request.get_json()
-    email = data.get('email', '').strip()
-    raw_name = data.get('name', '').strip()
+    data = request.get_json() or {}
+    raw_email = data.get("email") or ""
+    raw_name = data.get("name") or ""
 
-    if not email or not raw_name:
+    if not str(raw_email).strip() or not str(raw_name).strip():
         return jsonify({"success": False, "error": "Email and name are required"}), 400
 
     name = require_canvas_name(raw_name)
@@ -1441,10 +1512,31 @@ def add_student(class_id):
         return jsonify({"success": False, "error": COMMA_REQUIRED}), 400
     if len(name) > 255:
         return jsonify({"success": False, "error": "Name must be 255 characters or fewer"}), 400
+    if len(str(raw_email).strip()) > 255:
+        return jsonify({"success": False, "error": "Email must be 255 characters or fewer"}), 400
+    email = normalize_email(str(raw_email))
+    if not email:
+        return jsonify({"success": False, "error": "Invalid email format"}), 400
 
+    owner_id = session.get("user_id")
     try:
-        # Always create a new student profile with a unique UUID
-        # (students don't log in; professors add them, so same-name students are different people)
+        index = _instructor_student_email_index(owner_id)
+        action, entry = classify_student_email(index, class_id, email)
+        if action == "already_in_class":
+            return jsonify({
+                "success": False,
+                "error": "A student with that email is already in this class",
+            }), 409
+        if action == "reuse":
+            supabase_admin.table("enrollments").insert({
+                "class_id": class_id,
+                "student_id": entry["profile_id"],
+            }).execute()
+            return jsonify({
+                "success": True,
+                "full_name": entry.get("full_name") or "",
+                "existing": True,
+            })
         student_id = str(uuid4())
         insert_row = {
             "id": student_id,
@@ -1453,20 +1545,15 @@ def add_student(class_id):
             "email": email,
         }
         supabase_admin.table("profiles").insert(insert_row).execute()
-
-        # Check if already enrolled
-        existing_enrollment = supabase_admin.table("enrollments").select("id").eq("class_id", class_id).eq("student_id", student_id).execute()
-        
-        if existing_enrollment.data:
-            return jsonify({"success": False, "error": "Student is already enrolled in this class"}), 400
-        
-        # Add enrollment
         supabase_admin.table("enrollments").insert({
             "class_id": class_id,
             "student_id": student_id
         }).execute()
-        
-        return jsonify({"success": True})
+        return jsonify({
+            "success": True,
+            "full_name": name,
+            "existing": False,
+        })
     except Exception as e:
         return _safe_api_error("Could not add student", 500, log_detail=e)
 
@@ -1637,11 +1724,6 @@ def delete_student_from_class(class_id, student_id):
         return _safe_api_error("Could not delete student", 500, log_detail=e)
 
 
-# Simple email format validator — not RFC-complete, matches what browsers accept
-# for type="email" and is consistent with existing signup/add-student validation.
-_SIMPLE_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-
-
 @main_bp.route("/api/class/<class_id>/students/<student_id>/update", methods=["POST"])
 @api_instructor_required
 def api_update_student(class_id, student_id):
@@ -1652,8 +1734,8 @@ def api_update_student(class_id, student_id):
     2. The student must be enrolled in that class (via _student_enrolled_in_class),
        preventing an instructor from editing a stranger's profile using a
        student_id they guessed.
-
-    A blank email leaves the stored email unchanged.
+    Email is required, lowercased, and stored. Another profile in this
+    instructor's classes cannot already have that email.
     """
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
@@ -1661,54 +1743,37 @@ def api_update_student(class_id, student_id):
         return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
 
     data = request.get_json() or {}
-    raw_name = (data.get("name") or "").strip()
-    email = (data.get("email") or "").strip()
+    raw_name = data.get("name") or ""
+    raw_email = data.get("email") or ""
 
-    if not raw_name:
+    if not str(raw_name).strip():
         return jsonify({"success": False, "error": "Name is required"}), 400
-    if len(raw_name) > 255:
+    if len(str(raw_name).strip()) > 255:
         return jsonify({"success": False, "error": "Name must be 255 characters or fewer"}), 400
     name = require_canvas_name(raw_name)
     if not name:
         return jsonify({"success": False, "error": COMMA_REQUIRED}), 400
-    if email:
-        if len(email) > 255:
-            return jsonify({"success": False, "error": "Email must be 255 characters or fewer"}), 400
-        if not _SIMPLE_EMAIL_RE.match(email):
-            return jsonify({"success": False, "error": "Invalid email format"}), 400
+    if not str(raw_email).strip():
+        return jsonify({"success": False, "error": "Email is required"}), 400
+    if len(str(raw_email).strip()) > 255:
+        return jsonify({"success": False, "error": "Email must be 255 characters or fewer"}), 400
+    email = normalize_email(str(raw_email))
+    if not email:
+        return jsonify({"success": False, "error": "Invalid email format"}), 400
 
-    # Pre-check email uniqueness with a clear 409 before hitting the DB,
-    # so the instructor gets an actionable message rather than a generic 500.
-    # The DB-level unique index (when added before launch) acts as a backstop
-    # for the theoretical race window; this check handles the UX.
-    if email:
-        try:
-            conflict = (
-                supabase_admin.table("profiles")
-                .select("id")
-                .eq("email", email)
-                .neq("id", student_id)
-                .limit(1)
-                .execute()
-            )
-            if conflict.data:
-                return jsonify({
-                    "success": False,
-                    "error": "That email is already associated with another student account.",
-                }), 409
-        except Exception as e:
-            logger.warning("Email uniqueness pre-check failed for student %s: %s", student_id, e)
-            # Non-fatal: proceed with the update and let the DB constraint
-            # (or duplicate) surface rather than blocking the save entirely.
-
+    owner_id = session.get("user_id")
     try:
-        update_payload: Dict[str, Any] = {
+        index = _instructor_student_email_index(owner_id)
+        entry = index.get(email)
+        if entry and str(entry.get("profile_id")) != str(student_id):
+            return jsonify({
+                "success": False,
+                "error": "That email already belongs to another student in your classes",
+            }), 409
+        supabase_admin.table("profiles").update({
             "full_name": name,
-        }
-        if email:
-            update_payload["email"] = email
-
-        supabase_admin.table("profiles").update(update_payload).eq("id", student_id).execute()
+            "email": email,
+        }).eq("id", student_id).execute()
         return jsonify({"success": True})
     except Exception as e:
         return _safe_api_error("Could not update student", 500, log_detail=e)

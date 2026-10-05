@@ -1184,7 +1184,7 @@ function saveAddedStudent(index, nameInput, emailInput, errorEl, saveBtn) {
   }).then(function (result) {
     saveBtn.disabled = false;
     if (result.ok && result.data && result.data.success) {
-      classRoster.push({ full_name: typed });
+      classRoster.push({ full_name: result.data.full_name });
       paintNameFlags();
       return;
     }
