@@ -6,7 +6,7 @@
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">Dashboard</h1>
-      <p class="text-slate-500 dark:text-slate-400 mt-1">{{ class_name }}</p>
+      <p class="text-slate-500 dark:text-slate-400 mt-1">{{ class_display_title(class_name, class_days, class_section) }}</p>
     </div>
 
   </div>
@@ -61,8 +61,8 @@
             <button type="button" onclick="switchView('assignments')" id="btnAssignments" class="px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">By Assignments</button>
           </div>
           <div class="flex gap-2 flex-wrap">
-            <a href="{{ url_for('main.upload_grades', class_id=class_id) }}" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium">Upload Grades</a>
-            <button type="button" onclick="openUploadStudentsModal()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium">Upload Students</button>
+            <a href="{{ url_for('main.upload_grades', class_id=class_id) }}" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium">Upload Grades</a>
+            <button type="button" onclick="openUploadStudentsModal()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium">Upload Students</button>
             <a href="{{ url_for('main.class_assignments', class_id=class_id) }}" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium">Manage Assignments</a>
           </div>
         </div>
@@ -102,7 +102,7 @@
         </div>
         {% endfor %}
         <div id="studentsViewEmptyState" class="{% if students %}hidden {% endif %}px-6 py-10 text-center text-sm text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-700">
-          No active students. Open <strong class="text-slate-700 dark:text-slate-300">Manage Students</strong> to unmute roster members.
+          No active students. Open <button type="button" onclick="document.getElementById('studentManagementModal').classList.remove('hidden')" class="font-semibold text-slate-700 dark:text-slate-300 underline hover:text-blue-600 dark:hover:text-blue-400">Active Students</button> to add or unmute students.
         </div>
       </div>
 

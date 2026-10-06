@@ -18,6 +18,7 @@ from datetime import date
 from typing import List, Optional, Dict, Any
 
 from app.authentication import supabase_admin
+from app.lo_order import lo_sort_key
 from app.paging import fetch_all_rows
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,9 @@ class Course:
                 .eq("class_id", class_id)
                 .execute()
             )
-            return resp.data or []
+            rows = list(resp.data or [])
+            rows.sort(key=lo_sort_key)
+            return rows
         except Exception as e:
             logger.error(
                 "get_learning_objectives failed for class %s: %s", class_id, e
@@ -107,16 +110,16 @@ class Course:
         narrower settings-column fallback cannot change which LOs are loaded.
         """
         CLASS_COLS_FULL = (
-            "id, name, semester, "
-            "auto_convert_m, min_masteries, num_learning_objectives, "
+            "id, name, semester, days, section_number, "
+            "auto_convert_m, min_masteries, "
             "hw_passes_enabled, hw_passes_allowed, is_online"
         )
         CLASS_COLS_NO_HW_PASSES = (
-            "id, name, semester, "
-            "auto_convert_m, min_masteries, num_learning_objectives, "
+            "id, name, semester, days, section_number, "
+            "auto_convert_m, min_masteries, "
             "is_online"
         )
-        CLASS_COLS_MIN = "id, name, semester"
+        CLASS_COLS_MIN = "id, name, semester, days, section_number"
         try:
             response = None
             for cols in (CLASS_COLS_FULL, CLASS_COLS_NO_HW_PASSES, CLASS_COLS_MIN):
@@ -151,7 +154,6 @@ class Course:
             # Defensive defaults so callers never see KeyError if a column was missing.
             class_data.setdefault('auto_convert_m', False)
             class_data.setdefault('min_masteries', 2)
-            class_data.setdefault('num_learning_objectives', 0)
             class_data.setdefault('hw_passes_enabled', False)
             class_data.setdefault('hw_passes_allowed', 2)
             class_data.setdefault('is_online', False)

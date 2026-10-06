@@ -43,7 +43,7 @@ def create_app(config_class=Config):
     
     # Late import: `app.routes` pulls in models / Supabase clients, so we want
     # config to be applied before that import chain runs.
-    from app.routes import main_bp
+    from app.routes import main_bp, class_display_title
     app.register_blueprint(main_bp)
 
     # Loud warning at boot: several in-memory stores in `app.routes`
@@ -71,6 +71,7 @@ def create_app(config_class=Config):
         return {
             'instructor_mode': session.get('instructor_mode', 'mark'),
             'csrf_token': token,
+            'class_display_title': class_display_title,
         }
 
     @app.before_request

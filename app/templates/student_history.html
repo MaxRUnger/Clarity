@@ -8,7 +8,8 @@
     <div class="student-history-print-header">
       <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 print:text-slate-600 mb-1">Student history report</p>
       <h1 class="text-2xl font-bold text-slate-900 dark:text-white">{{ student_name }}</h1>
-      <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">{{ class_name }}</p>
+      <p class="text-sm text-slate-500 dark:text-slate-400 mt-1 print:hidden">{{ class_display_title(class_name, class_days, class_section) }}</p>
+      <p class="hidden print:block text-sm text-slate-500 mt-1">{{ class_name }}</p>
     </div>
     <div class="flex items-center gap-2 print:hidden">
       <button type="button" onclick="window.print()"
@@ -116,7 +117,7 @@
       <thead>
         <tr>
           <th>Assignment</th>
-          {% for lo in learning_objectives|sort(attribute='vendor_code') %}
+          {% for lo in learning_objectives %}
           <th>{{ lo.vendor_code }}</th>
           {% endfor %}
         </tr>
@@ -125,7 +126,7 @@
         {% for aname in ns.assignments %}
         <tr>
           <td class="assignment-name">{{ aname }}</td>
-          {% for lo in learning_objectives|sort(attribute='vendor_code') %}
+          {% for lo in learning_objectives %}
           {% set cell = namespace(scores=[]) %}
           {% for g in lo.grades %}
             {% if g.assignments and (g.assignments.name|string) == aname %}

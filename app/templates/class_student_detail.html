@@ -1,5 +1,6 @@
 {% extends "app_base.html" %}
-{% from "_components.html" import student_progress_header, student_progress_cards, mastery_badge_styles, student_progress_print_styles %}
+{% from "_components.html" import student_progress_header with context %}
+{% from "_components.html" import student_progress_cards, mastery_badge_styles, student_progress_print_styles %}
 
 {% block content %}
 <div class="space-y-6 student-detail-print">
@@ -9,7 +10,7 @@
         <svg class="w-5 h-5 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
       </a>
       <div class="flex-1 min-w-0">
-        {{ student_progress_header(student, class_name=class_name, show_contact=true) }}
+        {{ student_progress_header(student, class_name=class_name, class_days=class_days, class_section=class_section, show_contact=true) }}
       </div>
     </div>
     <div class="print:hidden flex-shrink-0">

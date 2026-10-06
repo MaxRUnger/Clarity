@@ -1418,6 +1418,34 @@ class TestParseBlankGradesheetCsv(unittest.TestCase):
             "NOTE" in (s.get("name") or "").upper() for s in payload["students"]
         ))
 
+    def test_grades_follow_header_code_not_column_order(self):
+        vendors = ["AO1", "AO2", "AO10", "CO1"]
+        unsorted = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,AO10,AO2,CO1,AO1\n"
+            "Doe Jane,80,R,M,P,X\n"
+        )
+        sorted_headers = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,AO1,AO2,AO10,CO1\n"
+            "Doe Jane,80,X,M,R,P\n"
+        )
+        old, err_old = parse_blank_gradesheet_csv_text(unsorted, vendors)
+        new, err_new = parse_blank_gradesheet_csv_text(sorted_headers, vendors)
+        self.assertIsNone(err_old)
+        self.assertIsNone(err_new)
+        self.assertEqual(old["learning_objectives"], ["AO10", "AO2", "CO1", "AO1"])
+        self.assertEqual(new["learning_objectives"], ["AO1", "AO2", "AO10", "CO1"])
+        self.assertEqual(old["students"][0]["grades"], new["students"][0]["grades"])
+        self.assertEqual(
+            old["students"][0]["grades"],
+            {"AO10": "R", "AO2": "M", "CO1": "P", "AO1": "X"},
+        )
+
 
 class TestGradesheetExportPrefill(unittest.TestCase):
     def test_csv_format_hw_score(self):
@@ -1560,8 +1588,18 @@ class TestImportRosterNameMatch(unittest.TestCase):
         ])
         self.assertIsNone(_lookup_enrolled_import_student_id("Jane Doe", index))
 
-    def _post_grade_import(self, students, enroll_rows, extra=None):
+    def _post_grade_import(
+        self, students, enroll_rows, extra=None, lo_rows=None, learning_objectives=None
+    ):
         from app import routes as r
+        if lo_rows is None:
+            lo_rows = [{
+                "id": "lo-1",
+                "vendor_code": "D1",
+                "description": None,
+            }]
+        if learning_objectives is None:
+            learning_objectives = ["D1"]
 
         app = create_app()
         app.config["TESTING"] = True
@@ -1613,11 +1651,9 @@ class TestImportRosterNameMatch(unittest.TestCase):
             query.insert.side_effect = lambda *a, **k: writes.append(name + ".insert") or query
             query.upsert.side_effect = lambda *a, **k: writes.append(name + ".upsert") or query
             if name == "learning_objectives":
-                query.execute.return_value = MagicMock(data=[{
-                    "id": "lo-1",
-                    "vendor_code": "D1",
-                    "description": None,
-                }])
+                query.select.return_value = query
+                query.eq.return_value = query
+                query.execute.return_value = MagicMock(data=lo_rows)
             elif name == "assignment_objectives":
                 query.execute.return_value = MagicMock(data=[{
                     "learning_objective_id": "lo-1",
@@ -1635,13 +1671,19 @@ class TestImportRosterNameMatch(unittest.TestCase):
             "class_id": "class-a",
             "assignment_id": "asg-1",
             "students": students,
-            "learning_objectives": ["D1"],
+            "learning_objectives": learning_objectives,
         }
         if extra:
             payload.update(extra)
         with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
+                unittest.mock.patch.object(
+                    r.Homework, "resolve_hw_group_storage_key", return_value="quiz-1"
+                ), \
+                unittest.mock.patch.object(
+                    r.Homework, "get_hw_scores_map_for_assignment", return_value={}
+                ), \
                 unittest.mock.patch.object(r, "supabase_admin", sa):
             rv = client.post(
                 "/api/import-grades",
@@ -1796,6 +1838,39 @@ class TestImportRosterNameMatch(unittest.TestCase):
             self.assertEqual(grade_rows, [])
             self.assertNotIn("profiles.insert", writes)
             self.assertNotIn("enrollments.insert", writes)
+
+    def test_same_grades_under_same_codes_ignore_column_order(self):
+        enrolled = [{
+            "student_id": "stu-1",
+            "class_id": "class-a",
+            "profiles": {"id": "stu-1", "full_name": "Doe, Jane"},
+        }]
+        los = [
+            {"id": "lo-ao10", "vendor_code": "AO10", "description": None},
+            {"id": "lo-ao2", "vendor_code": "AO2", "description": None},
+        ]
+
+        def assigned(rows):
+            return sorted(
+                (row["learning_objective_id"], row["top_score"]) for row in rows
+            )
+
+        rv_old, _, _, rows_old = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"AO10": "R", "AO2": "M"}, "homework_pct": "80"}],
+            enrolled,
+            lo_rows=los,
+            learning_objectives=["AO10", "AO2"],
+        )
+        rv_new, _, _, rows_new = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"AO2": "M", "AO10": "R"}, "homework_pct": "80"}],
+            enrolled,
+            lo_rows=los,
+            learning_objectives=["AO2", "AO10"],
+        )
+        self.assertEqual(rv_old.status_code, 200)
+        self.assertEqual(rv_new.status_code, 200)
+        self.assertEqual(assigned(rows_old), [("lo-ao10", "R"), ("lo-ao2", "M")])
+        self.assertEqual(assigned(rows_old), assigned(rows_new))
 
 
 class TestUpdateGradeRoster(unittest.TestCase):
@@ -3816,6 +3891,721 @@ class TestClassObjectiveTotal(unittest.TestCase):
         self.assertEqual(set(lookup), {"keep"})
         grades = self._passing("keep")
         self.assertEqual(class_progress(grades, {}), ([], 0))
+
+
+class TestLoSortKey(unittest.TestCase):
+    def _codes(self, rows):
+        from app.lo_order import lo_sort_key
+        return [row["vendor_code"] for row in sorted(rows, key=lo_sort_key)]
+
+    def test_letter_prefix_then_number(self):
+        rows = [
+            {"id": "4", "vendor_code": "CO1"},
+            {"id": "3", "vendor_code": "AO10"},
+            {"id": "1", "vendor_code": "AO1"},
+            {"id": "2", "vendor_code": "AO2"},
+        ]
+        self.assertEqual(self._codes(rows), ["AO1", "AO2", "AO10", "CO1"])
+
+    def test_mixed_case(self):
+        rows = [
+            {"id": "1", "vendor_code": "ao10"},
+            {"id": "2", "vendor_code": "AO2"},
+            {"id": "3", "vendor_code": "co1"},
+        ]
+        self.assertEqual(self._codes(rows), ["AO2", "ao10", "co1"])
+
+    def test_whitespace_does_not_change_number_order(self):
+        rows = [
+            {"id": "1", "vendor_code": "A10"},
+            {"id": "2", "vendor_code": "A 2"},
+            {"id": "3", "vendor_code": "LO 12"},
+            {"id": "4", "vendor_code": "LO2"},
+        ]
+        self.assertEqual(self._codes(rows), ["A 2", "A10", "LO2", "LO 12"])
+
+    def test_dotted_numbers(self):
+        rows = [
+            {"id": "1", "vendor_code": "Test 1.10"},
+            {"id": "2", "vendor_code": "Test 1.2"},
+        ]
+        self.assertEqual(self._codes(rows), ["Test 1.2", "Test 1.10"])
+
+    def test_label_without_digits_is_alphabetical(self):
+        rows = [
+            {"id": "1", "vendor_code": "Keep"},
+            {"id": "2", "vendor_code": "Alpha"},
+        ]
+        self.assertEqual(self._codes(rows), ["Alpha", "Keep"])
+
+    def test_missing_label_sorts_last(self):
+        from app.lo_order import lo_sort_key
+        rows = [
+            {"id": "1"},
+            {"id": "2", "vendor_code": "AO1"},
+            {"id": "3", "vendor_code": "  ", "name": ""},
+        ]
+        self.assertEqual(
+            [row["id"] for row in sorted(rows, key=lo_sort_key)],
+            ["2", "1", "3"],
+        )
+
+    def test_equal_labels_tie_break_on_id(self):
+        from app.lo_order import lo_sort_key
+        rows = [
+            {"id": "b", "vendor_code": "AO1"},
+            {"id": "a", "vendor_code": "AO1"},
+        ]
+        self.assertEqual(
+            [row["id"] for row in sorted(rows, key=lo_sort_key)],
+            ["a", "b"],
+        )
+
+
+class TestLearningObjectivesProgressColumn(unittest.TestCase):
+    def _pool(self, count):
+        return [
+            {
+                "id": "lo-%s" % index,
+                "name": "LO %s" % index,
+                "vendor_code": "T%s" % index,
+                "required_ms": 2,
+            }
+            for index in range(count)
+        ]
+
+    def _passing(self, lo_id):
+        return [
+            {"learning_objective_id": lo_id, "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": lo_id, "top_score": "M", "counts_for_mastery": True},
+        ]
+
+    def _class_data(self, pool, grades):
+        return {
+            "name": "MW",
+            "learning_objectives": pool,
+            "enrollments": [{
+                "muted": False,
+                "profiles": {
+                    "id": "s1",
+                    "full_name": "Lee, Ana",
+                    "email": "a@b.edu",
+                    "grades": grades,
+                },
+            }],
+        }
+
+    def _render(self, pool, grades):
+        from flask import session
+        from unittest.mock import patch
+        from app.routes import class_learning_objectives_summary
+        app = create_app()
+        with app.test_request_context("/class/c1/learning-objectives"):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            with patch("app.routes._instructor_owns_class", return_value=True), \
+                 patch("app.routes.Course.get_full_class_data", return_value=self._class_data(pool, grades)):
+                return class_learning_objectives_summary("c1")
+
+    def _row_cell_count(self, html, tag):
+        import re
+        match = re.search(r"<%s>(.*?)</%s>" % (tag, tag), html, re.S)
+        row = re.search(r"<tr\b[^>]*>(.*?)</tr>", match.group(1), re.S)
+        return len(re.findall(r"<t[dh]\b", row.group(1)))
+
+    def test_three_of_four_shows_count(self):
+        grades = []
+        for index in range(3):
+            grades.extend(self._passing("lo-%s" % index))
+        html = self._render(self._pool(4), grades)
+        self.assertIn("3/4", html)
+        self.assertNotIn("progress-bar-wrapper", html)
+
+    def test_no_grades_shows_zero_of_n(self):
+        html = self._render(self._pool(4), [])
+        self.assertIn("0/4", html)
+        self.assertNotIn("progress-bar-wrapper", html)
+
+    def test_empty_pool_shows_zero_of_zero(self):
+        html = self._render([], [])
+        self.assertIn("0/0", html)
+        self.assertNotIn("progress-bar-wrapper", html)
+
+    def test_header_rows_and_footer_have_equal_cells(self):
+        grades = []
+        for index in range(3):
+            grades.extend(self._passing("lo-%s" % index))
+        html = self._render(self._pool(4), grades)
+        header = self._row_cell_count(html, "thead")
+        body = self._row_cell_count(html, "tbody")
+        footer = self._row_cell_count(html, "tfoot")
+        self.assertEqual(header, body)
+        self.assertEqual(body, footer)
+        self.assertEqual(header, 6)
+
+
+class TestLoCellStatus(unittest.TestCase):
+    def test_status_bands(self):
+        from app.routes import lo_cell_status
+        self.assertEqual(lo_cell_status(3, 3), "passed")
+        self.assertEqual(lo_cell_status(4, 3), "passed")
+        self.assertEqual(lo_cell_status(2, 3), "close")
+        self.assertEqual(lo_cell_status(1, 2), "close")
+        self.assertEqual(lo_cell_status(0, 1), "behind")
+        self.assertEqual(lo_cell_status(0, 2), "behind")
+        self.assertEqual(lo_cell_status(1, 3), "behind")
+
+    def test_summary_renders_check_and_yellow_fraction(self):
+        from flask import session
+        from unittest.mock import patch
+        from app.routes import class_learning_objectives_summary
+        import re
+        pool = [
+            {"id": "lo-0", "name": "T0", "vendor_code": "T0", "required_ms": 2},
+            {"id": "lo-1", "name": "T1", "vendor_code": "T1", "required_ms": 3},
+        ]
+        grades = [
+            {"learning_objective_id": "lo-0", "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": "lo-0", "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": "lo-1", "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": "lo-1", "top_score": "M", "counts_for_mastery": True},
+        ]
+        class_data = {
+            "name": "MW",
+            "learning_objectives": pool,
+            "enrollments": [{
+                "muted": False,
+                "profiles": {
+                    "id": "s1",
+                    "full_name": "Lee, Ana",
+                    "email": "a@b.edu",
+                    "grades": grades,
+                },
+            }],
+        }
+        app = create_app()
+        with app.test_request_context("/class/c1/learning-objectives"):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            with patch("app.routes._instructor_owns_class", return_value=True), \
+                 patch("app.routes.Course.get_full_class_data", return_value=class_data):
+                html = class_learning_objectives_summary("c1")
+        self.assertIn(">passed</span>", html)
+        self.assertRegex(html, r"text-yellow-700[^>]*>\s*2/3")
+        self.assertIsNotNone(re.search(r"text-green-700[\s\S]*?✓", html))
+        self.assertIn('title="2/2"', html)
+        self.assertIn('title="2/3"', html)
+
+
+class TestClassSectionNumber(unittest.TestCase):
+    def _capture_insert(self):
+        from unittest.mock import MagicMock
+        saved = {}
+
+        def insert(payload):
+            saved["payload"] = payload
+            result = MagicMock()
+            result.data = [{"id": "new-class"}]
+            chain = MagicMock()
+            chain.execute.return_value = result
+            return chain
+
+        return saved, insert
+
+    def _add(self, section, token, days="MW"):
+        from flask import session
+        from unittest.mock import patch
+        from app.routes import add_class
+        saved, insert = self._capture_insert()
+        app = create_app()
+        data = {
+            "name": "Test Upload",
+            "semester": "Fall",
+            "year": "2026",
+            "days": days,
+            "create_class_token": token,
+            "section_number": section,
+        }
+        with app.test_request_context("/add_class", method="POST", data=data):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            session["create_class_token"] = token
+            with patch("app.routes.ensure_profile_exists"), \
+                 patch("app.routes.supabase_admin") as sb:
+                sb.table.return_value.insert.side_effect = insert
+                result = add_class()
+        return result, saved.get("payload")
+
+    def _copy(self, section, token, days="MW"):
+        from flask import session
+        from unittest.mock import MagicMock, patch
+        from app.routes import copy_class
+        saved, insert = self._capture_insert()
+        source = MagicMock()
+        source.data = [{
+            "semester": "Fall 2026",
+            "section_number": "OLD",
+            "num_learning_objectives": 36,
+            "min_masteries": 2,
+            "is_online": False,
+            "auto_convert_m": True,
+        }]
+        classes = MagicMock()
+        classes.select.return_value.eq.return_value.eq.return_value.execute.return_value = source
+        classes.insert.side_effect = insert
+        lo_resp = MagicMock()
+        lo_resp.data = []
+        app = create_app()
+        data = {
+            "name": "Copy of Test",
+            "days": days,
+            "section_number": section,
+            "copy_class_token": token,
+        }
+        with app.test_request_context("/class/c1/copy", method="POST", data=data):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            session["copy_class_token"] = token
+            with patch("app.routes._instructor_owns_class", return_value=True), \
+                 patch("app.routes._select_class_pool_learning_objectives", return_value=lo_resp), \
+                 patch("app.routes.supabase_admin") as sb:
+                sb.table.return_value = classes
+                result = copy_class("c1")
+        return result, saved.get("payload")
+
+    def test_blank_section_stores_null(self):
+        _result, payload = self._add("   ", "section-blank")
+        self.assertIsNone(payload["section_number"])
+        self.assertNotIn("num_learning_objectives", payload)
+
+    def test_section_keeps_typed_case_after_trim(self):
+        _result, payload = self._add(" f26 ", "section-trim")
+        self.assertEqual(payload["section_number"], "f26")
+
+    def test_overlong_section_is_rejected(self):
+        result, payload = self._add("F" * 33, "section-long")
+        self.assertEqual(result[1], 400)
+        self.assertIsNone(payload)
+
+    def test_copy_saves_its_own_section(self):
+        _result, payload = self._copy(" F26 ", "copy-section")
+        self.assertEqual(payload["section_number"], "F26")
+        self.assertNotEqual(payload["section_number"], "OLD")
+        self.assertNotIn("num_learning_objectives", payload)
+
+    def test_copy_blank_section_stores_null(self):
+        _result, payload = self._copy("  ", "copy-blank")
+        self.assertIsNone(payload["section_number"])
+
+    def test_copy_overlong_section_returns_400(self):
+        result, payload = self._copy("S" * 33, "copy-long")
+        self.assertEqual(result[1], 400)
+        self.assertIsNone(payload)
+
+    def test_form_prefills_from_values_and_days_list(self):
+        from app.routes import CLASS_DAYS
+        app = create_app()
+        values = {
+            "name": "Test Upload",
+            "semester": "Fall",
+            "year": "2026",
+            "section_number": "F26",
+            "days": "TTH",
+            "is_online": True,
+            "auto_convert_m": False,
+        }
+        with app.app_context():
+            template = app.jinja_env.get_template("_class_form_fields.html")
+            filled = template.module.class_form_fields(values, CLASS_DAYS)
+            blank = template.module.class_form_fields(days_options=CLASS_DAYS)
+        self.assertIn('value="Fall" selected', filled)
+        self.assertIn('value="TTH" selected', filled)
+        self.assertIn('name="is_online" value="1" checked', filled)
+        self.assertNotIn('name="auto_convert_m" value="1" checked', filled)
+        self.assertIn('name="auto_convert_m" value="1" checked', blank)
+        for day in CLASS_DAYS:
+            self.assertIn('value="%s"' % day, blank)
+        self.assertIn('value="Asynchronous"', blank)
+        self.assertEqual(CLASS_DAYS, ("MW", "TTH", "MWF", "WF", "Asynchronous"))
+
+    def test_asynchronous_is_accepted_on_create_and_copy(self):
+        _created, created = self._add("", "days-async-create", days="Asynchronous")
+        _copied, copied = self._copy("", "days-async-copy", days="Asynchronous")
+        self.assertEqual(created["days"], "Asynchronous")
+        self.assertEqual(copied["days"], "Asynchronous")
+
+    def test_unknown_days_are_rejected(self):
+        created, created_payload = self._add("", "days-th-create", days="TH")
+        copied, copied_payload = self._copy("", "days-th-copy", days="TH")
+        self.assertEqual(created[1], 400)
+        self.assertEqual(copied[1], 400)
+        self.assertIsNone(created_payload)
+        self.assertIsNone(copied_payload)
+
+    def test_blank_days_are_rejected(self):
+        created, created_payload = self._add("", "days-blank-create", days="")
+        copied, copied_payload = self._copy("", "days-blank-copy", days="")
+        self.assertEqual(created[1], 400)
+        self.assertEqual(copied[1], 400)
+        self.assertIsNone(created_payload)
+        self.assertIsNone(copied_payload)
+
+    def test_bad_section_does_not_consume_create_token(self):
+        token = "section-resubmit"
+        rejected, rejected_payload = self._add("F" * 33, token)
+        self.assertEqual(rejected[1], 400)
+        self.assertIn("32 characters", rejected[0])
+        self.assertIsNone(rejected_payload)
+        accepted, accepted_payload = self._add("F26", token)
+        self.assertEqual(accepted.status_code, 302)
+        self.assertEqual(accepted_payload["section_number"], "F26")
+
+
+class TestClassDisplayTitle(unittest.TestCase):
+    def test_name_days_and_section(self):
+        from flask import render_template, session
+        from app.routes import CLASS_DAYS, class_display_title
+        title = class_display_title("Test Upload", "MW", "F26")
+        self.assertEqual(title, "Test Upload | MW | F26")
+        app = create_app()
+        with app.test_request_context("/instructor/dashboard"):
+            session["role"] = "instructor"
+            html = render_template(
+                "instructor_select_class.html",
+                classes=[{
+                    "id": "c1",
+                    "name": "Test Upload",
+                    "days": "MW",
+                    "section_number": "F26",
+                    "semester": "Fall 2026",
+                    "is_online": False,
+                }],
+                create_class_token="t",
+                copy_class_token="c",
+                class_days=CLASS_DAYS,
+            )
+        self.assertIn(title, html)
+        self.assertIn("Fall 2026", html)
+        self.assertIn("In Person", html)
+
+    def test_blank_section_has_no_trailing_separator(self):
+        from app.routes import class_display_title
+        self.assertEqual(class_display_title("Test Upload", "MW", "  "), "Test Upload | MW")
+        self.assertEqual(class_display_title("Test Upload", "MW", None), "Test Upload | MW")
+
+    def test_blank_days_and_section_is_name_only(self):
+        from app.routes import class_display_title
+        self.assertEqual(class_display_title("  Test Upload  ", "", None), "Test Upload")
+
+
+class TestClassUpdate(unittest.TestCase):
+    def _form(self, **overrides):
+        data = {
+            "name": "Renamed",
+            "semester": "Fall",
+            "year": "2026",
+            "days": "TTH",
+            "section_number": "S26",
+            "is_online": "1",
+            "auto_convert_m": "1",
+        }
+        data.update(overrides)
+        return data
+
+    def _update(self, data, owns=True, execute_error=None):
+        from flask import session
+        from unittest.mock import MagicMock, patch
+        from app.routes import update_class
+        saved = {}
+        tables = []
+        execute_calls = {"n": 0}
+
+        def table(name):
+            tables.append(name)
+            chain = MagicMock()
+
+            def update(payload):
+                saved["payload"] = payload
+                return chain
+
+            def execute():
+                execute_calls["n"] += 1
+                if execute_error is not None:
+                    raise execute_error
+                return MagicMock(data=[{"id": "c1"}])
+
+            chain.update.side_effect = update
+            chain.eq.return_value = chain
+            chain.execute.side_effect = execute
+            return chain
+
+        app = create_app()
+        with app.test_request_context("/class/c1/update", method="POST", data=data):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            with patch("app.routes._instructor_owns_class", return_value=owns), \
+                 patch("app.routes.supabase_admin") as sb:
+                sb.table.side_effect = table
+                result = update_class("c1")
+        saved["execute_calls"] = execute_calls["n"]
+        return result, saved.get("payload"), tables, saved["execute_calls"]
+
+    def test_non_owner_is_rejected(self):
+        result, payload, tables, calls = self._update(self._form(), owns=False)
+        self.assertEqual(result[1], 403)
+        self.assertEqual(result[0].get_json()["error"], "Forbidden")
+        self.assertIsNone(payload)
+        self.assertEqual(tables, [])
+        self.assertEqual(calls, 0)
+
+    def test_valid_edit_updates_only_class_details(self):
+        result, payload, tables, calls = self._update(self._form())
+        self.assertEqual(result.status_code, 302)
+        self.assertTrue(result.headers["Location"].endswith("/instructor/dashboard"))
+        self.assertEqual(payload, {
+            "name": "Renamed",
+            "semester": "Fall 2026",
+            "days": "TTH",
+            "section_number": "S26",
+            "is_online": True,
+            "auto_convert_m": True,
+        })
+        self.assertEqual(tables, ["classes"])
+        self.assertEqual(calls, 1)
+
+    def test_blank_section_stores_null(self):
+        _result, payload, tables, _calls = self._update(self._form(section_number="  "))
+        self.assertIsNone(payload["section_number"])
+        self.assertEqual(tables, ["classes"])
+
+    def test_invalid_days_return_400(self):
+        result, payload, tables, calls = self._update(self._form(days="TH"))
+        self.assertEqual(result[1], 400)
+        self.assertIn("Class days", result[0])
+        self.assertIsNone(payload)
+        self.assertEqual(tables, [])
+        self.assertEqual(calls, 0)
+
+    def test_legacy_days_without_a_new_choice_return_400(self):
+        result, payload, tables, calls = self._update(self._form(days=""))
+        self.assertEqual(result[1], 400)
+        self.assertIn("Class days", result[0])
+        self.assertIsNone(payload)
+        self.assertEqual(tables, [])
+        self.assertEqual(calls, 0)
+
+    def test_schema_error_is_not_retried(self):
+        result, payload, tables, calls = self._update(
+            self._form(),
+            execute_error=Exception("section_number column is missing from the schema cache"),
+        )
+        self.assertEqual(result[1], 500)
+        self.assertEqual(result[0], "Failed to update class.")
+        self.assertEqual(tables, ["classes"])
+        self.assertEqual(calls, 1)
+
+    def test_card_title_reflects_the_edit(self):
+        from flask import render_template, session
+        from app.routes import CLASS_DAYS, class_display_title
+        title = class_display_title("Renamed", "TTH", None)
+        self.assertEqual(title, "Renamed | TTH")
+        app = create_app()
+        with app.test_request_context("/instructor/dashboard"):
+            session["role"] = "instructor"
+            html = render_template(
+                "instructor_select_class.html",
+                classes=[{
+                    "id": "c1",
+                    "name": "Renamed",
+                    "days": "TTH",
+                    "section_number": None,
+                    "semester": "Fall 2026",
+                    "is_online": False,
+                    "auto_convert_m": False,
+                }],
+                create_class_token="t",
+                copy_class_token="c",
+                class_days=CLASS_DAYS,
+            )
+        self.assertIn(title, html)
+        self.assertNotIn("Renamed | TTH |", html)
+
+    def test_edit_json_escapes_quote_and_script(self):
+        import json
+        import re
+        from flask import render_template, session
+        from app.routes import CLASS_DAYS
+        name = 'Algebra "A" </script>'
+        classes = [
+            {
+                "id": "c1",
+                "name": name,
+                "days": "TH",
+                "section_number": "F26",
+                "semester": "Fall 2026",
+                "is_online": False,
+                "auto_convert_m": False,
+            },
+            {
+                "id": "c2",
+                "name": "Other",
+                "days": "MW",
+                "section_number": "A1",
+                "semester": "Spring 2026",
+                "is_online": True,
+                "auto_convert_m": True,
+            },
+        ]
+        app = create_app()
+        with app.test_request_context("/instructor/dashboard"):
+            session["role"] = "instructor"
+            html = render_template(
+                "instructor_select_class.html",
+                classes=classes,
+                create_class_token="t",
+                copy_class_token="c",
+                class_days=CLASS_DAYS,
+            )
+        blobs = re.findall(
+            r'<script type="application/json" class="class-edit-data">(.*?)</script>',
+            html,
+            re.S,
+        )
+        self.assertEqual(len(blobs), len(classes))
+        self.assertEqual(html.count('type="application/json"'), len(classes))
+        parsed = [json.loads(blob) for blob in blobs]
+        dangerous_blob = next(
+            blob for blob, item in zip(blobs, parsed) if item["id"] == "c1"
+        )
+        dangerous = json.loads(dangerous_blob)
+        self.assertEqual(dangerous["name"], name)
+        self.assertEqual(dangerous["semester"], "Fall")
+        self.assertEqual(dangerous["year"], "2026")
+        self.assertEqual(dangerous["days"], "TH")
+        self.assertNotIn("</script>", dangerous_blob)
+        self.assertIn("\\u003c/script\\u003e", dangerous_blob)
+        for blob in blobs:
+            self.assertNotIn("</script>", blob)
+
+
+class TestClassHeaderTitle(unittest.TestCase):
+    def _render(self, template, **kwargs):
+        from flask import render_template, session
+        app = create_app()
+        with app.test_request_context("/"):
+            session["role"] = "instructor"
+            return render_template(template, **kwargs)
+
+    def _assert_title(self, html, section):
+        if section:
+            self.assertIn("Test Upload | MW | F26", html)
+        else:
+            self.assertIn("Test Upload | MW", html)
+            self.assertNotIn("Test Upload | MW |", html)
+
+    def _card(self, section):
+        from app.routes import CLASS_DAYS
+        return self._render(
+            "instructor_select_class.html",
+            classes=[{
+                "id": "c1",
+                "name": "Test Upload",
+                "days": "MW",
+                "section_number": section,
+                "semester": "Fall 2026",
+                "is_online": False,
+            }],
+            create_class_token="t",
+            copy_class_token="c",
+            class_days=CLASS_DAYS,
+        )
+
+    def _dashboard(self, section):
+        return self._render(
+            "class_detail.html",
+            class_id="c1",
+            class_name="Test Upload",
+            class_days="MW",
+            class_section=section,
+            students=[],
+            all_students=[],
+            learning_objectives=[],
+            overdue_revisions=[],
+            assignments=[],
+        )
+
+    def test_dashboard_header_matches_card_title(self):
+        for section in ("F26", None):
+            card = self._card(section)
+            dashboard = self._dashboard(section)
+            self._assert_title(card, section)
+            self._assert_title(dashboard, section)
+
+    def test_students_summary_and_detail_headers(self):
+        student = {
+            "id": "s1",
+            "name": "Lee, Ana",
+            "email": "",
+            "learning_objectives": [],
+            "objective_total": 0,
+        }
+        pages = (
+            (
+                "class_students.html",
+                {"class_id": "c1", "students": [student]},
+            ),
+            (
+                "class_learning_objectives_summary.html",
+                {
+                    "class_id": "c1",
+                    "learning_objectives": [],
+                    "grid_rows": [],
+                    "total_students": 0,
+                },
+            ),
+            (
+                "class_student_detail.html",
+                {"class_id": "c1", "student": student},
+            ),
+        )
+        for template, extra in pages:
+            for section in ("F26", None):
+                html = self._render(
+                    template,
+                    class_name="Test Upload",
+                    class_days="MW",
+                    class_section=section,
+                    **extra,
+                )
+                self._assert_title(html, section)
+
+    def test_history_email_and_report_print_keep_raw_name(self):
+        history = self._render(
+            "student_history.html",
+            class_id="c1",
+            student_id="s1",
+            student_name="Lee, Ana",
+            student_email="a@b.edu",
+            learning_objectives=[],
+            class_name="Test Upload",
+            class_days="MW",
+            class_section="F26",
+        )
+        self.assertIn("Test Upload | MW | F26", history)
+        self.assertIn('"class_name": "Test Upload"', history)
+
+        reports = self._render(
+            "class_reports.html",
+            class_id="c1",
+            class_name="Test Upload",
+            class_days="MW",
+            class_section="F26",
+            students=[],
+            learning_objectives=[],
+            assignments=[],
+        )
+        self.assertEqual(reports.count("Test Upload | MW | F26"), 2)
+        self.assertIn('mt-0.5">Test Upload</p>\';', reports)
 
 
 if __name__ == '__main__':

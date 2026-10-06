@@ -1,4 +1,5 @@
 {% extends "auth_base.html" %}
+{% from "_class_form_fields.html" import class_form_fields, section_number_field %}
 
 {% block content %}
 <div class="flex-1 flex flex-col">
@@ -33,13 +34,27 @@
 
       <div id="classList" class="space-y-3 max-h-[500px] overflow-y-auto">
         {% for class in classes %}
+        {% set semester_raw = class.semester or '' %}
+        {% set semester_parts = semester_raw.split(' ', 1) %}
+        {% set term = semester_parts[0] if semester_parts and semester_parts[0] in ['Spring', 'Summer', 'Fall'] else '' %}
+        {% set year = semester_parts[1] if term and semester_parts|length > 1 else '' %}
         <div class="relative">
+          <script type="application/json" class="class-edit-data">{{ {
+            "id": class.id,
+            "name": class.name or "",
+            "semester": term,
+            "year": year,
+            "days": class.days or "",
+            "section_number": class.section_number or "",
+            "is_online": true if class.is_online else false,
+            "auto_convert_m": true if class.auto_convert_m else false
+          }|tojson }}</script>
           <a href="{{ url_for('main.class_detail', class_id=class.id) }}" class="block w-full p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all text-left group">
             <div class="flex items-start justify-between">
               <div class="flex-1">
                 <div class="flex items-center gap-3 mb-2">
                   <svg class="w-5 h-5 text-blue-600 dark:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
-                  <h2 class="font-semibold text-slate-900 dark:text-white">{{ class.name }}</h2>
+                  <h2 class="font-semibold text-slate-900 dark:text-white">{{ class_display_title(class.name, class.days, class.section_number) }}</h2>
                 </div>
                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600 dark:text-slate-400">
                   {% if class.semester %}
@@ -61,6 +76,7 @@
             </div>
           </a>
           <div class="absolute right-6 bottom-3 z-10 flex flex-wrap items-center justify-end gap-2">
+            <button type="button" class="edit-class-btn inline-flex h-6 min-w-[3.25rem] items-center justify-center px-2 text-[10px] font-semibold leading-none text-slate-700 bg-slate-100 dark:bg-slate-700 dark:text-slate-200 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600">Edit</button>
             <button type="button" class="copy-class-btn inline-flex h-6 min-w-[3.25rem] items-center justify-center px-2 text-[10px] font-semibold leading-none text-blue-700 bg-blue-100 dark:bg-blue-900/40 dark:text-blue-200 rounded-md hover:bg-blue-200 dark:hover:bg-blue-900/60" data-class-id="{{ class.id }}" data-class-days="{{ class.days or '' }}">Copy</button>
             <form action="{{ url_for('main.delete_class', class_id=class.id) }}" method="post" class="inline-flex">
               <button type="submit" onclick="event.stopPropagation(); return confirm('⚠️ You are about to permanently delete this class and all related data (students, assignments, grades, objectives). Continue?');" class="inline-flex h-6 min-w-[3.25rem] items-center justify-center px-2 text-[10px] font-semibold leading-none text-red-700 bg-red-100 rounded-md hover:bg-red-200">Delete</button>
@@ -84,18 +100,32 @@
               <label for="copyClassNameInput" class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">New class name</label>
               <input id="copyClassNameInput" name="name" type="text" required placeholder="e.g., Algebra II — Period 2" class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400" />
             </div>
+            {{ section_number_field('', 'copySectionNumberInput') }}
             <div>
               <label for="copyClassDaysSelect" class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Class days</label>
               <select id="copyClassDaysSelect" name="days" class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white">
-                <option value="MW">MW</option>
-                <option value="TTH">TTH</option>
-                <option value="MWF">MWF</option>
-                <option value="WF">WF</option>
+                {% for day in class_days %}
+                <option value="{{ day }}">{{ day }}</option>
+                {% endfor %}
               </select>
             </div>
             <div class="flex gap-3 pt-2">
               <button type="button" id="copyClassModalCancel" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white">Cancel</button>
               <button type="submit" id="copyClassSubmitBtn" class="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Copy class</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div id="editClassModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60" aria-modal="true" role="dialog">
+        <div class="bg-white dark:bg-slate-800 rounded-xl shadow-lg max-w-md w-full p-6 border border-slate-200 dark:border-slate-600 max-h-[90vh] overflow-y-auto">
+          <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Edit class</h2>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Update this class. Grades, objectives, and enrollments stay as they are.</p>
+          <form id="editClassForm" method="post" class="mt-5 space-y-4">
+            {{ class_form_fields(days_options=class_days, edit_mode=True, section_field_id='editSectionNumberInput') }}
+            <div class="flex gap-3 pt-2">
+              <button type="button" id="editClassModalCancel" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white">Cancel</button>
+              <button type="submit" id="editClassSubmitBtn" class="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Save</button>
             </div>
           </form>
         </div>
@@ -109,58 +139,7 @@
 
         <form id="createClassFormElement" action="{{ url_for('main.add_class') }}" method="post" class="space-y-6">
           <input type="hidden" name="create_class_token" value="{{ create_class_token }}" />
-          <div>
-            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Class Name</label>
-            <input name="name" type="text" placeholder="e.g., Algebra II - Period 3" required class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400" />
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Semester</label>
-              <select name="semester" required class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white">
-                <option value="Spring">Spring</option>
-                <option value="Summer">Summer</option>
-                <option value="Fall">Fall</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Year</label>
-              <input name="year" type="text" placeholder="2026" required class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400" />
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Number of Learning Objectives</label>
-              <input name="num_learning_objectives" type="number" min="1" placeholder="e.g., 36" required class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400" />
-              <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Constant for the semester</p>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Class Days</label>
-              <select name="days" class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white">
-                <option value="MW">MW</option>
-                <option value="TTH">TTH</option>
-                <option value="MWF">MWF</option>
-                <option value="WF">WF</option>
-              </select>
-            </div>
-          </div>
-          <div class="p-4 bg-slate-50 dark:bg-slate-700/40 rounded-lg">
-            <label class="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" name="is_online" value="1" class="mt-1 w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-              <div>
-                <span class="font-medium text-slate-900 dark:text-white">Online Class</span>
-                <p class="text-sm text-slate-600 dark:text-slate-400 mt-1">Check this if students attend remotely. Leave unchecked for in-person classes.</p>
-              </div>
-            </label>
-          </div>
-          <div class="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg mark-only">
-            <label class="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" name="auto_convert_m" value="1" checked class="mt-1 w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-              <div>
-                <span class="font-medium text-slate-900 dark:text-white">Auto-convert Ms with low HW scores</span>
-                <p class="text-sm text-slate-600 dark:text-slate-400 mt-1">When enabled, M grades with HW scores below 65% display as "I" in student views and grading screens. These Ms won't count toward mastery.</p>
-              </div>
-            </label>
-          </div>
+          {{ class_form_fields(days_options=class_days) }}
           <div class="flex gap-3 pt-4">
             <button type="button" onclick="document.getElementById('createClassForm').classList.add('hidden'); document.getElementById('classList').classList.remove('hidden'); document.getElementById('selectClassHeader').classList.remove('hidden');" class="px-6 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors font-medium text-slate-900 dark:text-white">Cancel</button>
             <button id="createClassSubmitBtn" type="submit" class="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">Create Class</button>
@@ -222,7 +201,9 @@ function openCopyClassModal(classId, daysFromSource) {
   copyClassForm.action = `/class/${classId}/copy`;
   const nameInput = document.getElementById('copyClassNameInput');
   const daysSelect = document.getElementById('copyClassDaysSelect');
+  const sectionInput = document.getElementById('copySectionNumberInput');
   if (nameInput) nameInput.value = '';
+  if (sectionInput) sectionInput.value = '';
   if (daysSelect && daysFromSource) {
     const opt = [...daysSelect.options].find((o) => o.value === daysFromSource);
     if (opt) daysSelect.value = daysFromSource;
@@ -243,6 +224,63 @@ document.querySelectorAll('.copy-class-btn').forEach((btn) => {
     const days = btn.getAttribute('data-class-days') || '';
     if (classId) openCopyClassModal(classId, days);
   });
+});
+
+const editClassModal = document.getElementById('editClassModal');
+const editClassForm = document.getElementById('editClassForm');
+
+function openEditClassModal(data) {
+  if (!editClassModal || !editClassForm || !data) return;
+  editClassForm.action = '/class/' + data.id + '/update';
+  const nameInput = editClassForm.querySelector('[name="name"]');
+  const sectionInput = editClassForm.querySelector('[name="section_number"]');
+  const yearInput = editClassForm.querySelector('[name="year"]');
+  const semesterSelect = editClassForm.querySelector('[name="semester"]');
+  const daysSelect = editClassForm.querySelector('[name="days"]');
+  const onlineInput = editClassForm.querySelector('[name="is_online"]');
+  const convertInput = editClassForm.querySelector('[name="auto_convert_m"]');
+  if (nameInput) nameInput.value = data.name || '';
+  if (sectionInput) sectionInput.value = data.section_number || '';
+  if (yearInput) yearInput.value = data.year || '';
+  if (semesterSelect) {
+    const semesterMatch = [...semesterSelect.options].some((opt) => opt.value === data.semester);
+    semesterSelect.value = semesterMatch ? data.semester : '';
+  }
+  if (daysSelect) {
+    const daysMatch = [...daysSelect.options].some((opt) => opt.value === data.days);
+    daysSelect.value = daysMatch ? data.days : '';
+  }
+  if (onlineInput) onlineInput.checked = !!data.is_online;
+  if (convertInput) convertInput.checked = !!data.auto_convert_m;
+  editClassModal.classList.remove('hidden');
+  if (nameInput) nameInput.focus();
+}
+
+function closeEditClassModal() {
+  if (editClassModal) editClassModal.classList.add('hidden');
+}
+
+document.querySelectorAll('.edit-class-btn').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const card = btn.closest('.relative');
+    const blob = card ? card.querySelector('.class-edit-data') : null;
+    if (!blob) return;
+    openEditClassModal(JSON.parse(blob.textContent));
+  });
+});
+
+document.getElementById('editClassModalCancel')?.addEventListener('click', closeEditClassModal);
+editClassModal?.addEventListener('click', (e) => {
+  if (e.target === editClassModal) closeEditClassModal();
+});
+editClassForm?.addEventListener('submit', () => {
+  const submitBtn = document.getElementById('editClassSubmitBtn');
+  if (!submitBtn) return;
+  submitBtn.disabled = true;
+  submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+  submitBtn.textContent = 'Saving...';
 });
 
 document.getElementById('copyClassModalCancel')?.addEventListener('click', closeCopyClassModal);

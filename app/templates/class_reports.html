@@ -161,7 +161,7 @@
     <div id="view-all" class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 print:shadow-none print:border-0">
       <div class="grade-sheet-header p-6 border-b border-slate-100 dark:border-slate-700">
         <h2 id="assignmentReportHeading" class="font-semibold text-slate-900 dark:text-white">Assignment Report</h2>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{{ class_name }}</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{{ class_display_title(class_name, class_days, class_section) }}</p>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm" id="all-students-table">
@@ -186,15 +186,7 @@
             {% for student in students %}
             <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors student-row" data-student-name="{{ student.name|lower }}" data-student-id="{{ student.id }}">
               <td class="px-3 py-2 font-medium text-slate-900 dark:text-white">
-                <div class="flex items-center gap-1 flex-nowrap min-w-0">
-                  <span class="truncate min-w-0">{{ student.name }}</span>
-                  <button type="button" onclick="printStudentReport('{{ student.id }}')"
-                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors flex-shrink-0 print:hidden"
-                    title="Print report for {{ student.name }}"
-                    aria-label="Print report for {{ student.name }}">
-                    Print
-                  </button>
-                </div>
+                <span class="truncate min-w-0">{{ student.name }}</span>
               </td>
               <td class="px-2 py-2 text-center">
                 {% if student.email %}
@@ -238,7 +230,7 @@
     <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
       <div class="p-6 border-b border-slate-100 dark:border-slate-700">
         <h2 class="font-semibold text-slate-900 dark:text-white">Student History</h2>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{{ class_name }}</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{{ class_display_title(class_name, class_days, class_section) }}</p>
       </div>
 
       <!-- Search Bar -->
@@ -1049,9 +1041,7 @@ function renderAllAssignmentsView(typeFilter) {
       const studentName = String(student.name || '');
       const lowered = studentName.toLowerCase();
       html += '        <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors student-row group" data-student-name="' + escapeHtml(lowered) + '" data-student-id="' + escapeHtml(studentId) + '">';
-      html += '          <td class="px-3 py-2 font-medium text-slate-900 dark:text-white"><div class="flex items-center gap-1 flex-nowrap min-w-0"><span class="truncate min-w-0">' + escapeHtml(studentName) + '</span>';
-      html += '            <button type="button" onclick="printStudentReport(\'' + escapeHtml(studentId) + '\', \'' + escapeHtml(assignmentId) + '\')" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors flex-shrink-0 print:hidden">Print</button>';
-      html += '          </div></td>';
+      html += '          <td class="px-3 py-2 font-medium text-slate-900 dark:text-white"><span class="truncate min-w-0">' + escapeHtml(studentName) + '</span></td>';
       html += '          <td class="px-2 py-2 text-center print:hidden">';
       if (student.email) {
         html += '            <button type="button" onclick="emailStudentReport(\'' + escapeHtml(studentId) + '\', this, \'' + escapeHtml(assignmentId) + '\')" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors">Email</button>';
@@ -1078,7 +1068,7 @@ function renderAllAssignmentsView(typeFilter) {
   applyStudentFilter();
 }
 
-// --- Individual student report (same data for print + email-to-student) ---
+// --- Individual student report data for email-to-student ---
 function getIndividualReportParts(student, assignmentIdOverride) {
   const rawId = assignmentIdOverride
     ? String(assignmentIdOverride)
@@ -1382,74 +1372,6 @@ function emailSelectedAllAssignments(btnEl) {
       updateEmailSelectedButton();
     }
   });
-}
-
-// --- Print individual student report ---
-function printStudentReport(studentId, assignmentIdOverride) {
-  const student = studentsData.find(s => String(s.id) === String(studentId));
-  if (!student) return;
-
-  const parts = getIndividualReportParts(student, assignmentIdOverride);
-  const { assignmentLabel, className, rows } = parts;
-  const scoreColLabel = 'Learning Objective';
-
-  let tbodyRows = '';
-  rows.forEach(function (r) {
-    tbodyRows += `<tr>
-        <td style="padding:8px 12px;font-size:13px;">${r.title}</td>
-        <td style="padding:8px 12px;text-align:center;font-size:13px;font-family:monospace;font-weight:700;">${r.grade}</td>
-      </tr>`;
-  });
-
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${assignmentLabel} - ${student.name}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: sans-serif; padding: 32px; color: #0f172a; }
-  </style>
-</head>
-<body>
-  <div style="max-width:680px;margin:0 auto;">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:16px;margin-bottom:24px;">
-      <div>
-        <h1 style="font-size:22px;font-weight:700;margin-bottom:4px;">${student.name}</h1>
-        <p style="font-size:14px;color:#64748b;">${className}</p>
-      </div>
-      <div style="text-align:right;">
-        <p style="font-size:14px;font-weight:600;color:#1d4ed8;margin-bottom:2px;">${assignmentLabel}</p>
-        <p style="font-size:12px;color:#94a3b8;">${new Date().toLocaleDateString()}</p>
-      </div>
-    </div>
-    <table style="width:100%;border-collapse:collapse;">
-      <thead>
-        <tr>
-          <th style="text-align:left;padding:8px 12px;font-size:12px;color:#64748b;font-weight:600;">${scoreColLabel}</th>
-          <th style="text-align:center;padding:8px 12px;font-size:12px;color:#64748b;font-weight:600;">Score</th>
-        </tr>
-      </thead>
-      <tbody>${tbodyRows}</tbody>
-    </table>
-  </div>
-</body>
-</html>`;
-
-  // Use a hidden iframe so only the print dialog appears (no popup window)
-  let iframe = document.getElementById('student-print-iframe');
-  if (!iframe) {
-    iframe = document.createElement('iframe');
-    iframe.id = 'student-print-iframe';
-    iframe.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;border:none;visibility:hidden;';
-    document.body.appendChild(iframe);
-  }
-  iframe.style.visibility = 'hidden';
-  iframe.onload = function() {
-    iframe.contentWindow.focus();
-    iframe.contentWindow.print();
-  };
-  iframe.srcdoc = html;
 }
 
 // Auto-select first real assignment on page load (skip __all_* sentinels)

@@ -48,7 +48,7 @@
 </style>
 {% endmacro %}
 
-{% macro student_progress_header(student, class_name=None, show_contact=false) %}
+{% macro student_progress_header(student, class_name=None, show_contact=false, class_days=None, class_section=None) %}
 <div class="student-progress-header">
   <h1 class="sheet-name text-2xl font-semibold text-slate-900 dark:text-white">{{ student.name }}</h1>
   {% if show_contact and student.email %}
@@ -58,7 +58,7 @@
   </div>
   {% endif %}
   {% if show_contact and class_name %}
-  <p class="print:hidden text-slate-600 dark:text-slate-400 text-sm mt-1">{{ class_name }}</p>
+  <p class="print:hidden text-slate-600 dark:text-slate-400 text-sm mt-1">{{ class_display_title(class_name, class_days, class_section) }}</p>
   {% endif %}
 </div>
 {% endmacro %}

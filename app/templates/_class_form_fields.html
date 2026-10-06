@@ -1,0 +1,64 @@
+{% macro section_number_field(value='', field_id='sectionNumberInput') %}
+<div>
+  <label for="{{ field_id }}" class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Section number</label>
+  <input id="{{ field_id }}" name="section_number" type="text" maxlength="32" value="{{ value }}" placeholder="F26" class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400" />
+</div>
+{% endmacro %}
+
+{% macro class_form_fields(values=None, days_options=(), edit_mode=False, section_field_id='sectionNumberInput') %}
+{% set vals = values if values is mapping else {} %}
+{% set creating = vals|length == 0 %}
+<div>
+  <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Class Name</label>
+  <input name="name" type="text" value="{{ vals.name or '' }}" placeholder="e.g., Algebra II - Period 3" required class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400" />
+</div>
+<div class="grid grid-cols-2 gap-4">
+  <div>
+    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Semester</label>
+    <select name="semester" {% if not edit_mode %}required{% endif %} class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white">
+      {% if edit_mode %}
+      <option value="" {% if not vals.semester %}selected{% endif %}></option>
+      {% endif %}
+      {% for term in ['Spring', 'Summer', 'Fall'] %}
+      <option value="{{ term }}" {% if vals.semester == term %}selected{% endif %}>{{ term }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Year</label>
+    <input name="year" type="text" value="{{ vals.year or '' }}" placeholder="2026" required class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400" />
+  </div>
+</div>
+<div class="grid grid-cols-2 gap-4">
+  {{ section_number_field(vals.section_number or '', section_field_id) }}
+  <div>
+    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Class Days</label>
+    <select name="days" class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white">
+      {% if edit_mode %}
+      <option value="" {% if not vals.days or vals.days not in days_options %}selected{% endif %}></option>
+      {% endif %}
+      {% for day in days_options %}
+      <option value="{{ day }}" {% if vals.days == day %}selected{% endif %}>{{ day }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+<div class="p-4 bg-slate-50 dark:bg-slate-700/40 rounded-lg">
+  <label class="flex items-start gap-3 cursor-pointer">
+    <input type="checkbox" name="is_online" value="1" {% if vals.is_online %}checked{% endif %} class="mt-1 w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+    <div>
+      <span class="font-medium text-slate-900 dark:text-white">Online Class</span>
+      <p class="text-sm text-slate-600 dark:text-slate-400 mt-1">Check this if students attend remotely. Leave unchecked for in-person classes.</p>
+    </div>
+  </label>
+</div>
+<div class="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg mark-only">
+  <label class="flex items-start gap-3 cursor-pointer">
+    <input type="checkbox" name="auto_convert_m" value="1" {% if creating or vals.auto_convert_m %}checked{% endif %} class="mt-1 w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+    <div>
+      <span class="font-medium text-slate-900 dark:text-white">Auto-convert Ms with low HW scores</span>
+      <p class="text-sm text-slate-600 dark:text-slate-400 mt-1">When enabled, M grades with HW scores below 65% display as "I" in student views and grading screens. These Ms won't count toward mastery.</p>
+    </div>
+  </label>
+</div>
+{% endmacro %}

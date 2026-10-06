@@ -47,6 +47,7 @@ from flask import (  # type: ignore
 )
 from werkzeug.utils import secure_filename
 from app.authentication import supabase, supabase_admin
+from app.lo_order import lo_sort_key
 from app.paging import fetch_all_rows
 from app.models import (
     Course,
@@ -198,6 +199,72 @@ def _consume_one_time_form_token(namespace: str, token: str) -> bool:
         return True
 
 DEFAULT_REQUIRED_MS = 2
+
+CLASS_DAYS = ("MW", "TTH", "MWF", "WF", "Asynchronous")
+SECTION_NUMBER_MAX = 32
+
+
+def _clean_class_days(raw):
+    """Accept only a listed meeting pattern. Blank is not a listed value."""
+    days = (raw or "").strip()
+    if days not in CLASS_DAYS:
+        return None, "Class days must be one of the listed options."
+    return days, None
+
+
+def class_display_title(name, days, section):
+    """Join the non-empty class name, days, and section with a separator."""
+    parts = []
+    for value in (name, days, section):
+        text = "" if value is None else str(value).strip()
+        if text:
+            parts.append(text)
+    return " | ".join(parts)
+
+
+def _clean_section_number(raw):
+    """Trim a section number. Blank becomes null. Case is kept."""
+    section = (raw or "").strip()
+    if not section:
+        return None, None
+    if len(section) > SECTION_NUMBER_MAX:
+        return None, "Section number must be 32 characters or fewer."
+    return section, None
+
+
+def _clean_class_form(form):
+    """Validate the shared class form. Returns (values, error_message)."""
+    raw_name = form.get("name")
+    name = "" if raw_name is None else str(raw_name).strip()
+    if not name:
+        return None, "Class name is required."
+    if len(name) > 255:
+        return None, "Class name must be 255 characters or fewer."
+    section_number, section_error = _clean_section_number(form.get("section_number"))
+    if section_error:
+        return None, section_error
+    days, days_error = _clean_class_days(form.get("days"))
+    if days_error:
+        return None, days_error
+    semester = form.get("semester", "") or ""
+    year = form.get("year", "") or ""
+    semester_full = f"{semester} {year}".strip() if year else semester
+    if len(semester_full) > 100:
+        return None, "Semester must be 100 characters or fewer."
+    return {
+        "name": name,
+        "semester": semester_full,
+        "days": days,
+        "section_number": section_number,
+        "is_online": form.get("is_online") == "1",
+        "auto_convert_m": form.get("auto_convert_m") == "1",
+    }, None
+
+
+def _reject_missing_section_column(exc):
+    """A missing section_number column must fail. Do not drop it and continue."""
+    if "section_number" in str(exc):
+        raise exc
 
 # Shared caps for all bulk-import entry points (CSV and JSON body alike).
 # Bytes cap matches the pre-existing LO CSV limit; row cap keeps a single
@@ -1048,7 +1115,7 @@ def _aggregate_lo_grades(
 
     results = []
     for lo in lo_grades.values():
-        lo['is_passed'] = lo['m_count'] >= lo['required_ms']
+        lo['is_passed'] = lo_cell_status(lo['m_count'], lo['required_ms']) == "passed"
         lo['top_score'] = lo['grades_list'][0] if lo['grades_list'] else None
         lo['second_score'] = lo['grades_list'][1] if len(lo['grades_list']) > 1 else None
         # Mirror the same indices into grades_meta so templates can render a
@@ -1057,12 +1124,24 @@ def _aggregate_lo_grades(
         lo['top_meta'] = meta[0] if meta else None
         lo['second_meta'] = meta[1] if len(meta) > 1 else None
         results.append(lo)
+    results.sort(key=lo_sort_key)
     return results
 
 
 def class_lo_lookup(pool):
     """Map objective id to objective for one class's pool (objectives without an id are skipped)."""
     return {str(lo["id"]): lo for lo in (pool or []) if lo.get("id")}
+
+
+def lo_cell_status(m_count, required):
+    """passed when m >= r, close when one mastery short, otherwise behind."""
+    m = 0 if m_count is None else m_count
+    r = 0 if required is None else required
+    if m >= r:
+        return "passed"
+    if m >= 1 and (r - m) == 1:
+        return "close"
+    return "behind"
 
 
 def class_progress(raw_grades, lo_lookup):
@@ -1132,7 +1211,12 @@ def load_assignments_for_class(class_id, desc=False):
             .order("created_at", desc=desc)
             .execute()
         )
-        return assignments_result.data or []
+        rows = assignments_result.data or []
+        for assignment in rows:
+            links = assignment.get("assignment_objectives")
+            if isinstance(links, list):
+                links.sort(key=lo_sort_key)
+        return rows
     except Exception as e:
         logger.error("Error loading assignments for class %s: %s", class_id, e)
         return []
@@ -1322,6 +1406,7 @@ def instructor_dashboard():
         classes=db_classes,
         create_class_token=create_class_token,
         copy_class_token=copy_class_token,
+        class_days=CLASS_DAYS,
     )
 
 # ============================================================================
@@ -1375,7 +1460,9 @@ def class_detail(class_id):
 
     return render_template('class_detail.html', 
                             class_id=class_id, 
-                            class_name=class_data.get('name'), 
+                            class_name=class_data.get('name'),
+                            class_days=class_data.get("days"),
+                            class_section=class_data.get("section_number"), 
                             students=students_for_template, 
                             all_students=all_students_for_modal,
                             learning_objectives=summary,
@@ -1422,8 +1509,6 @@ def class_learning_objectives_summary(class_id):
             "passed_count": passed_count,
         })
 
-    summary_rows.sort(key=lambda row: str(row.get("vendor_code") or "").lower())
-
     grid_rows = []
     for student in students_for_template:
         by_lo = {
@@ -1441,16 +1526,26 @@ def class_learning_objectives_summary(class_id):
                 required = matched.get("required_ms")
                 if required is None:
                     required = row["required_ms"]
-            cells.append(f"{m_count}/{required}")
+            cells.append({
+                "text": f"{m_count}/{required}",
+                "status": lo_cell_status(m_count, required),
+            })
+        objective_total = student.get("objective_total")
+        if objective_total is None:
+            objective_total = 0
         grid_rows.append({
             "name": display_name(student.get("full_name") or ""),
             "cells": cells,
+            "learning_objectives": student.get("learning_objectives") or [],
+            "objective_total": objective_total,
         })
 
     return render_template(
         "class_learning_objectives_summary.html",
         class_id=class_id,
         class_name=class_data.get("name"),
+        class_days=class_data.get("days"),
+        class_section=class_data.get("section_number"),
         learning_objectives=summary_rows,
         total_students=total_students,
         grid_rows=grid_rows,
@@ -1824,9 +1919,11 @@ def class_students(class_id):
 
     students, _, _ = _process_enrollments(class_data)
 
-    return render_template("class_students.html", 
-                            class_id=class_id, 
-                            class_name=class_data['name'], 
+    return render_template("class_students.html",
+                            class_id=class_id,
+                            class_name=class_data['name'],
+                            class_days=class_data.get("days"),
+                            class_section=class_data.get("section_number"),
                             students=students)
 
 @main_bp.route("/class/<class_id>/delete", methods=["POST"])
@@ -1862,6 +1959,31 @@ def delete_class(class_id):
         return _safe_api_error("Could not delete class", 500, log_detail=e)
 
 
+@main_bp.route("/class/<class_id>/update", methods=["POST"])
+@api_instructor_required
+def update_class(class_id):
+    """Update class details. A schema error is returned as a failure, not retried."""
+    if not _instructor_owns_class(class_id):
+        return jsonify({"success": False, "error": "Forbidden"}), 403
+    cleaned, form_error = _clean_class_form(request.form)
+    if form_error:
+        return form_error, 400
+    payload = {
+        "name": cleaned["name"],
+        "semester": cleaned["semester"],
+        "days": cleaned["days"],
+        "section_number": cleaned["section_number"],
+        "is_online": cleaned["is_online"],
+        "auto_convert_m": cleaned["auto_convert_m"],
+    }
+    try:
+        supabase_admin.table("classes").update(payload).eq("id", class_id).execute()
+    except Exception as exc:
+        logger.error("Failed to update class %s: %s", class_id, exc)
+        return "Failed to update class.", 500
+    return redirect(url_for("main.instructor_dashboard"))
+
+
 @main_bp.route("/class/<class_id>/copy", methods=["POST"])
 @login_required
 def copy_class(class_id):
@@ -1881,9 +2003,14 @@ def copy_class(class_id):
     session["copy_class_token"] = str(uuid4())
 
     new_name = (request.form.get("name") or "").strip()
-    new_days = (request.form.get("days") or "").strip()
     if not new_name:
         return redirect(url_for("main.instructor_dashboard"))
+    new_days, days_error = _clean_class_days(request.form.get("days"))
+    if days_error:
+        return days_error, 400
+    section_number, section_error = _clean_section_number(request.form.get("section_number"))
+    if section_error:
+        return section_error, 400
 
     user_id = session["user_id"]
 
@@ -1924,7 +2051,7 @@ def copy_class(class_id):
         }
         optional_fields = {
             "days": new_days,
-            "num_learning_objectives": len(lo_specs) if lo_specs else int(source.get("num_learning_objectives") or 0),
+            "section_number": section_number,
             "min_masteries": int(source.get("min_masteries") or 2),
             "is_online": bool(source.get("is_online")),
             "auto_convert_m": bool(source.get("auto_convert_m")),
@@ -1944,6 +2071,7 @@ def copy_class(class_id):
             if ins.data:
                 new_id = ins.data[0].get("id")
         except Exception as col_err:
+            _reject_missing_section_column(col_err)
             if "PGRST204" in str(col_err) or "schema cache" in str(col_err):
                 reduced = {**new_class_data, **optional_fields}
                 for k in ("is_online", "hw_passes_enabled", "hw_passes_allowed", "auto_convert_m"):
@@ -1953,6 +2081,7 @@ def copy_class(class_id):
                     if ins.data:
                         new_id = ins.data[0].get("id")
                 except Exception as err2:
+                    _reject_missing_section_column(err2)
                     if "PGRST204" in str(err2) or "schema cache" in str(err2):
                         ins = _insert_class_row(new_class_data)
                         if ins.data:
@@ -2025,6 +2154,8 @@ def class_student_detail(class_id, student_id):
         "class_student_detail.html",
         class_id=class_id,
         class_name=class_data.get("name"),
+        class_days=class_data.get("days"),
+        class_section=class_data.get("section_number"),
         student=student,
     )
 
@@ -2765,6 +2896,8 @@ def class_reports(class_id):
         "class_reports.html",
         class_id=class_id,
         class_name=class_data["name"],
+        class_days=class_data.get("days"),
+        class_section=class_data.get("section_number"),
         students=students,
         learning_objectives=learning_objectives,
         assignments=assignments,
@@ -3014,6 +3147,8 @@ def student_history(class_id, student_id):
         "student_history.html",
         class_id=class_id,
         class_name=class_data['name'],
+        class_days=class_data.get("days"),
+        class_section=class_data.get("section_number"),
         student_id=student_id,
         student_name=student_name,
         student_email=student_email,
@@ -3319,10 +3454,9 @@ def add_class():
     if (session.get('role') or '').strip().lower() != 'instructor':
         return redirect(url_for('main.login_page'))
 
-    if not request.form.get("name"):
-        return "Class name is required.", 400
-    if len(request.form.get("name", "").strip()) > 255:
-        return "Class name must be 255 characters or fewer.", 400
+    cleaned, form_error = _clean_class_form(request.form)
+    if form_error:
+        return form_error, 400
 
     form_token = (request.form.get("create_class_token") or "").strip()
     session_token = (session.get("create_class_token") or "").strip()
@@ -3343,26 +3477,20 @@ def add_class():
             role=session.get('role', 'instructor')
         )
 
-        semester = request.form.get("semester", "")
-        year = request.form.get("year", "")
-        semester_full = f"{semester} {year}".strip() if year else semester
-        if len(semester_full) > 100:
-            return "Semester must be 100 characters or fewer.", 400
-
         new_class_data = {
-            "name": request.form.get("name"),
-            "semester": semester_full,
+            "name": cleaned["name"],
+            "semester": cleaned["semester"],
             "instructor_id": user_id,
         }
         # Optional columns — only include if the form provides them.
         # Each requires a matching column in the Supabase classes table.
         optional_fields = {
-            "days": request.form.get("days", ""),
-            "num_learning_objectives": int(request.form.get("num_learning_objectives") or 0),
+            "days": cleaned["days"],
+            "section_number": cleaned["section_number"],
             "min_masteries": int(request.form.get("min_masteries") or 2),
-            "is_online": request.form.get("is_online") == "1",
+            "is_online": cleaned["is_online"],
         }
-        if request.form.get("auto_convert_m") == "1":
+        if cleaned["auto_convert_m"]:
             optional_fields["auto_convert_m"] = True
 
         # Try inserting with all fields first; if a column is missing, retry without optional fields
@@ -3370,6 +3498,7 @@ def add_class():
             full_data = {**new_class_data, **optional_fields}
             supabase_admin.table("classes").insert(full_data).execute()
         except Exception as col_err:
+            _reject_missing_section_column(col_err)
             if 'PGRST204' in str(col_err) or 'schema cache' in str(col_err):
                 # If the new online flag column doesn't exist yet, retry without it first
                 if "is_online" in full_data:
@@ -3378,6 +3507,7 @@ def add_class():
                     try:
                         supabase_admin.table("classes").insert(reduced_data).execute()
                     except Exception as reduced_err:
+                        _reject_missing_section_column(reduced_err)
                         if 'PGRST204' in str(reduced_err) or 'schema cache' in str(reduced_err):
                             # Last fallback: insert only core columns
                             supabase_admin.table("classes").insert(new_class_data).execute()
