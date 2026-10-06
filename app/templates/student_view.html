@@ -8,28 +8,28 @@
     <p class="text-slate-500 dark:text-slate-400 mt-1">View your mastery progress</p>
   </div>
 
-  {% if student and student.learning_objectives %}
-  {% set los = student.learning_objectives %}
+  {% if student and student.objective_total is defined %}
+  {% set los = student.learning_objectives or [] %}
   {% set mastered = los|selectattr('is_passed')|list|length %}
-  {% set total = los|length %}
+  {% set total = student.objective_total %}
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
     <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6">
       <div class="flex items-start justify-between">
         <div>
           <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Your Progress</p>
-          <p class="text-2xl font-semibold text-slate-900 dark:text-white">{{ mastered }} / {{ los|length }}</p>
+          <p class="text-2xl font-semibold text-slate-900 dark:text-white">{{ mastered }} / {{ total }}</p>
         </div>
         <div class="p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900 text-blue-600 dark:text-blue-400">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
         </div>
       </div>
-      <div class="mt-4">{{ progress_bar(mastered, los|length, show_label=false) }}</div>
+      <div class="mt-4">{{ progress_bar(mastered, total, show_label=false) }}</div>
     </div>
     <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6">
       <div class="flex items-start justify-between">
         <div>
           <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Homework %</p>
-          {{ homework_percentage_badge(mastered, los|length) }}
+          {{ homework_percentage_badge(mastered, total) }}
         </div>
       </div>
     </div>

@@ -1060,6 +1060,18 @@ def _aggregate_lo_grades(
     return results
 
 
+def class_lo_lookup(pool):
+    """Map objective id to objective for one class's pool (objectives without an id are skipped)."""
+    return {str(lo["id"]): lo for lo in (pool or []) if lo.get("id")}
+
+
+def class_progress(raw_grades, lo_lookup):
+    """Return (aggregated rows, class objective total) for one class's objective lookup."""
+    if not lo_lookup:
+        return [], 0
+    return _aggregate_lo_grades(raw_grades or [], lo_lookup), len(lo_lookup)
+
+
 def _process_enrollments(class_data):
     """Extract students from enrollment data, aggregating grades per LO.
 
@@ -1069,15 +1081,16 @@ def _process_enrollments(class_data):
         - all_students: all students (including muted) with aggregated grades
         - lo_lookup: {str(lo_id): lo_dict}
     """
-    lo_lookup = {str(lo.get('id')): lo for lo in class_data.get('learning_objectives', [])}
+    pool = class_data.get("learning_objectives") or []
+    lo_lookup = class_lo_lookup(pool)
     active_students = []
     all_students = []
-    for e in class_data.get('enrollments', []):
+    for e in class_data.get("enrollments", []):
         prof = normalize_profile(e)
-        if not prof or not prof.get('id'):
+        if not prof or not prof.get("id"):
             continue
-        prof['learning_objectives'] = _aggregate_lo_grades(
-            prof.get('grades', []) or [], lo_lookup
+        prof["learning_objectives"], prof["objective_total"] = class_progress(
+            prof.get("grades"), lo_lookup
         )
         prof['name'] = display_name(prof.get("full_name"))
         prof['email'] = (prof.get('email') or '').strip()
@@ -1267,25 +1280,30 @@ def student_dashboard():
     if data:
         # Get class settings for auto-convert
         enrollments = data.get('enrollments', [])
+        class_id = None
         if enrollments:
-            cls = enrollments[0].get('classes', {})
+            cls = enrollments[0].get('classes', {}) or {}
             if cls:
                 auto_convert_m = cls.get('auto_convert_m', False)
                 class_name = cls.get('name')
+                class_id = cls.get('id')
 
-        # Build lo_lookup from embedded learning_objectives on each grade
         raw_grades = data.get('grades', []) or []
-        lo_lookup = {}
-        for g in raw_grades:
-            lo = g.get('learning_objectives') or {}
-            lo_id = str(lo.get('id')) if lo.get('id') else None
-            if lo_id and lo_id not in lo_lookup:
-                lo_lookup[lo_id] = lo
-
-        # Mastery counting now comes from the persisted counts_for_mastery flag
-        # on each grade row (set at first-entry time in save_grades). No need
-        # to re-fetch HW maps per assignment here.
-        data['learning_objectives'] = _aggregate_lo_grades(raw_grades, lo_lookup)
+        if class_id:
+            try:
+                pool = Course.get_learning_objectives(class_id) or []
+            except Exception as e:
+                logger.error(
+                    "student_dashboard: failed to load LOs for class %s: %s",
+                    class_id, e,
+                )
+                pool = []
+            lo_lookup = class_lo_lookup(pool)
+            data["learning_objectives"], data["objective_total"] = class_progress(
+                raw_grades, lo_lookup
+            )
+        else:
+            data["learning_objectives"] = []
 
     return render_template("student_view.html", student=data, auto_convert_m=auto_convert_m, class_name=class_name)
 
@@ -1968,7 +1986,8 @@ def class_student_detail(class_id, student_id):
     if not class_data:
         return redirect(url_for('main.instructor_dashboard'))
 
-    lo_lookup = {str(lo.get('id')): lo for lo in class_data.get('learning_objectives', [])}
+    pool = class_data.get("learning_objectives") or []
+    lo_lookup = class_lo_lookup(pool)
 
     student = None
     for e in class_data.get('enrollments', []):
@@ -1977,7 +1996,9 @@ def class_student_detail(class_id, student_id):
         prof = normalize_profile(e)
         if str(prof.get('id') or '') != str(student_id):
             continue
-        prof['learning_objectives'] = _aggregate_lo_grades(prof.get('grades', []), lo_lookup)
+        prof["learning_objectives"], prof["objective_total"] = class_progress(
+            prof.get("grades"), lo_lookup
+        )
         prof['name'] = display_name(prof.get("full_name") or "")
         prof['email'] = (prof.get('email') or '').strip()
         student = prof

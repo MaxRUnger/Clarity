@@ -3682,7 +3682,10 @@ class TestStudentProgressCardRules(unittest.TestCase):
             )
             for index in range(count)
         ]
-        student = SimpleNamespace(learning_objectives=objectives)
+        student = SimpleNamespace(
+            learning_objectives=objectives,
+            objective_total=count,
+        )
         app = create_app()
         with app.app_context():
             template = app.jinja_env.get_template("_components.html")
@@ -3691,6 +3694,128 @@ class TestStudentProgressCardRules(unittest.TestCase):
     def test_rule_count_is_one_less_than_objectives(self):
         self.assertEqual(self._card(1).count("lo-row-rule"), 0)
         self.assertEqual(self._card(4).count("lo-row-rule"), 3)
+
+
+class TestClassObjectiveTotal(unittest.TestCase):
+    def _pool(self, count):
+        return [
+            {
+                "id": "lo-%s" % index,
+                "name": "LO %s" % index,
+                "vendor_code": "T%s" % index,
+                "required_ms": 2,
+            }
+            for index in range(count)
+        ]
+
+    def _passing(self, lo_id):
+        return [
+            {"learning_objective_id": lo_id, "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": lo_id, "top_score": "M", "counts_for_mastery": True},
+        ]
+
+    def _class_data(self, pool, grades):
+        return {
+            "learning_objectives": pool,
+            "enrollments": [{
+                "muted": False,
+                "profiles": {
+                    "id": "s1",
+                    "full_name": "Lee, Ana",
+                    "email": "a@b.edu",
+                    "grades": grades,
+                },
+            }],
+        }
+
+    def _render_card(self, student):
+        app = create_app()
+        with app.app_context():
+            template = app.jinja_env.get_template("_components.html")
+            return template.module.student_progress_cards(student)
+
+    def test_no_grades_card_is_zero_of_n(self):
+        from app.routes import _process_enrollments
+        active, _, _ = _process_enrollments(self._class_data(self._pool(4), []))
+        student = active[0]
+        self.assertEqual(student["objective_total"], 4)
+        self.assertEqual(student["learning_objectives"], [])
+        html = self._render_card(student)
+        self.assertIn("0 / 4", html)
+        self.assertEqual(html.count("lo-row"), 0)
+
+    def test_partial_grades_use_class_total(self):
+        from app.routes import _process_enrollments
+        active, _, _ = _process_enrollments(
+            self._class_data(self._pool(3), self._passing("lo-0"))
+        )
+        student = active[0]
+        self.assertEqual(len(student["learning_objectives"]), 1)
+        self.assertEqual(student["objective_total"], 3)
+        passed = sum(1 for row in student["learning_objectives"] if row["is_passed"])
+        self.assertEqual(passed, 1)
+        html = self._render_card(student)
+        self.assertIn("1 / 3", html)
+
+    def test_empty_class_pool_is_zero_of_zero(self):
+        from app.routes import _process_enrollments
+        active, _, _ = _process_enrollments(self._class_data([], []))
+        student = active[0]
+        self.assertEqual(student["objective_total"], 0)
+        self.assertEqual(student["learning_objectives"], [])
+        html = self._render_card(student)
+        self.assertIn("0 / 0", html)
+
+    def test_outside_pool_grade_does_not_raise_passed(self):
+        from app.routes import class_lo_lookup, class_progress
+        rows, total = class_progress(
+            self._passing("lo-0") + self._passing("other"),
+            class_lo_lookup(self._pool(1)),
+        )
+        passed = sum(1 for row in rows if row["is_passed"])
+        self.assertEqual(total, 1)
+        self.assertEqual(passed, 1)
+        self.assertLessEqual(passed, total)
+        self.assertEqual([row["learning_objective_id"] for row in rows], ["lo-0"])
+
+    def test_students_page_shows_zero_of_n(self):
+        from flask import render_template, session
+        app = create_app()
+        student = {
+            "id": "s1",
+            "name": "Lee, Ana",
+            "email": "",
+            "learning_objectives": [],
+            "objective_total": 4,
+        }
+        with app.test_request_context("/class/c1/students"):
+            session["role"] = "instructor"
+            html = render_template(
+                "class_students.html",
+                class_id="c1",
+                class_name="MW",
+                students=[student],
+            )
+        self.assertIn("0 / 4 objectives passed", html)
+
+    def test_enrollment_and_detail_share_total(self):
+        from app.routes import _process_enrollments, class_lo_lookup, class_progress
+        pool = self._pool(2)
+        grades = []
+        active, _, _lookup = _process_enrollments(self._class_data(pool, grades))
+        _rows, total = class_progress(grades, class_lo_lookup(pool))
+        self.assertEqual(active[0]["objective_total"], total)
+        self.assertEqual(total, 2)
+
+    def test_lookup_skips_missing_id_and_empty_progress(self):
+        from app.routes import class_lo_lookup, class_progress
+        lookup = class_lo_lookup([
+            {"id": "keep", "name": "Keep", "vendor_code": "K", "required_ms": 2},
+            {"name": "No id"},
+        ])
+        self.assertEqual(set(lookup), {"keep"})
+        grades = self._passing("keep")
+        self.assertEqual(class_progress(grades, {}), ([], 0))
 
 
 if __name__ == '__main__':

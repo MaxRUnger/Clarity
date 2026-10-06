@@ -59,13 +59,14 @@
               {% endif %}
             </div>
             <div class="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-400 flex-wrap">
-              {% set los = student.learning_objectives %}
+              {% set los = student.learning_objectives or [] %}
               {% set passed = los|selectattr('is_passed')|list|length %}
-              <span>{{ passed }} / {{ los|length }} objectives passed</span>
-              {{ homework_percentage_badge(passed, los|length) }}
+              {% set total = student.objective_total %}
+              <span>{{ passed }} / {{ total }} objectives passed</span>
+              {{ homework_percentage_badge(passed, total) }}
             </div>
             <div class="mt-1.5 max-w-[200px]">
-              {{ progress_bar(passed, los|length) }}
+              {{ progress_bar(passed, total) }}
             </div>
           </div>
           <div class="flex items-center gap-1 ml-2 shrink-0 print:hidden">
