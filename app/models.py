@@ -18,6 +18,7 @@ from datetime import date
 from typing import List, Optional, Dict, Any
 
 from app.authentication import supabase_admin
+from app.paging import fetch_all_rows
 
 logger = logging.getLogger(__name__)
 
@@ -160,9 +161,8 @@ class Course:
             ).eq("class_id", class_id).execute()
             enrollments = enrollments_resp.data or []
 
-            # One in_() instead of one query per enrolled student. The post-
-            # fetch filter on `class_lo_ids` guards against grades that belong
-            # to a sibling class (data leaked from a re-enrollment, etc.).
+            # One in_() instead of one query per enrolled student. Grades are
+            # limited to this class's learning objectives in the query below.
             student_ids = [
                 e['profiles']['id']
                 for e in enrollments
@@ -170,35 +170,44 @@ class Course:
             ]
             grades_by_student = {}
             if student_ids:
-                # Try widest projection first (includes counts_for_mastery, added by
-                # scripts/add_grades_counts_for_mastery.sql). Deployments that have
-                # not yet run the migration fall through to a narrower select; the
-                # default for the missing flag is True (handled in _aggregate_lo_grades).
-                grades_resp = None
-                try:
-                    grades_resp = supabase_admin.table("grades").select(
-                        "student_id, learning_objective_id, top_score, second_score, "
-                        "counts_for_mastery, "
-                        "learning_objectives(id, name, vendor_code, required_ms)"
-                    ).in_("student_id", student_ids).execute()
-                except Exception as schema_err:
-                    logger.debug(
-                        "Wide grades select failed (likely missing counts_for_mastery); falling back: %s",
-                        schema_err,
-                    )
+                # Empty pool: do not load grades. An empty id list must not fall
+                # open and pull other classes' rows for these students.
+                grade_rows: List[Dict[str, Any]] = []
+                if class_lo_ids:
+                    lo_id_list = list(class_lo_ids)
+                    # Widest projection first (includes counts_for_mastery).
+                    # Deployments that have not yet run the migration fall
+                    # through to a narrower select. A missing flag counts as
+                    # True in _aggregate_lo_grades.
                     try:
-                        grades_resp = supabase_admin.table("grades").select(
-                            "student_id, learning_objective_id, top_score, second_score, "
-                            "learning_objectives(id, name, vendor_code, required_ms)"
-                        ).in_("student_id", student_ids).execute()
-                    except Exception as e:
-                        logger.error("Error batch-loading grades: %s", e)
-                if grades_resp is not None:
-                    for g in (grades_resp.data or []):
-                        lo_gid = g.get("learning_objective_id")
-                        if class_lo_ids and str(lo_gid) not in class_lo_ids:
-                            continue
-                        grades_by_student.setdefault(g["student_id"], []).append(g)
+                        grade_rows = fetch_all_rows(
+                            supabase_admin.table("grades").select(
+                                "student_id, learning_objective_id, top_score, second_score, "
+                                "counts_for_mastery, "
+                                "learning_objectives(id, name, vendor_code, required_ms)"
+                            ).in_("student_id", student_ids).in_(
+                                "learning_objective_id", lo_id_list
+                            ).order("id")
+                        )
+                    except Exception as schema_err:
+                        logger.debug(
+                            "Wide grades select failed (likely missing counts_for_mastery); falling back: %s",
+                            schema_err,
+                        )
+                        try:
+                            grade_rows = fetch_all_rows(
+                                supabase_admin.table("grades").select(
+                                    "student_id, learning_objective_id, top_score, second_score, "
+                                    "learning_objectives(id, name, vendor_code, required_ms)"
+                                ).in_("student_id", student_ids).in_(
+                                    "learning_objective_id", lo_id_list
+                                ).order("id")
+                            )
+                        except Exception as e:
+                            logger.error("Error batch-loading grades: %s", e)
+                            grade_rows = []
+                for g in grade_rows:
+                    grades_by_student.setdefault(g["student_id"], []).append(g)
 
             for enrollment in enrollments:
                 profile = enrollment.get('profiles')
@@ -301,23 +310,30 @@ class Grade:
             if not lo_ids:
                 return []
             try:
-                resp = supabase_admin.table("grades").select(
-                    "student_id, top_score, assignment_id, hw_score_at_entry, "
-                    "assignments(id, name, revision_due), "
-                    "learning_objectives(id, name, vendor_code)"
-                ).in_("top_score", ["R", "RQ"]).in_("learning_objective_id", lo_ids).execute()
+                grade_rows = fetch_all_rows(
+                    supabase_admin.table("grades").select(
+                        "student_id, top_score, assignment_id, hw_score_at_entry, "
+                        "assignments(id, name, revision_due), "
+                        "learning_objectives(id, name, vendor_code)"
+                    ).in_("top_score", ["R", "RQ"]).in_(
+                        "learning_objective_id", lo_ids
+                    ).order("id")
+                )
             except Exception as schema_err:
                 logger.debug(
                     "Overdue select failed (likely missing hw_score_at_entry); falling back: %s",
                     schema_err,
                 )
-                resp = supabase_admin.table("grades").select(
-                    "student_id, top_score, assignment_id, "
-                    "assignments(id, name, revision_due), "
-                    "learning_objectives(id, name, vendor_code)"
-                ).in_("top_score", ["R", "RQ"]).in_("learning_objective_id", lo_ids).execute()
+                grade_rows = fetch_all_rows(
+                    supabase_admin.table("grades").select(
+                        "student_id, top_score, assignment_id, "
+                        "assignments(id, name, revision_due), "
+                        "learning_objectives(id, name, vendor_code)"
+                    ).in_("top_score", ["R", "RQ"]).in_(
+                        "learning_objective_id", lo_ids
+                    ).order("id")
+                )
 
-            grade_rows = list(resp.data or [])
             assignment_ids = sorted({
                 g.get('assignment_id') for g in grade_rows if g.get('assignment_id')
             })

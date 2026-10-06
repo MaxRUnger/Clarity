@@ -3492,5 +3492,206 @@ class TestStudentEmailMatch(unittest.TestCase):
         self.assertTrue(rv.get_json()["success"])
         query.update.assert_called()
 
+
+class _PagingResult:
+    def __init__(self, data):
+        self.data = data
+
+
+class _PagingQuery:
+    """One PostgREST builder. execute returns at most 1000 rows.
+
+    range is applied only when order was set. Without order, every execute
+    returns the first 1000 rows, which is the unordered cap.
+    """
+
+    def __init__(self, rows, sink):
+        self._rows = list(rows)
+        self._sink = sink
+        self._eq = []
+        self._in = []
+        self._orders = []
+        self._range = None
+
+    def select(self, *_args, **_kwargs):
+        return self
+
+    def eq(self, column, value):
+        self._eq.append((column, value))
+        return self
+
+    def in_(self, column, values):
+        self._in.append((column, {str(v) for v in values}))
+        return self
+
+    def order(self, column, desc=False, nullsfirst=False):
+        self._orders.append(column)
+        return self
+
+    def limit(self, _n):
+        return self
+
+    def range(self, start, end):
+        self._range = (start, end)
+        return self
+
+    def execute(self):
+        rows = list(self._rows)
+        for column, value in self._eq:
+            rows = [row for row in rows if row.get(column) == value]
+        for column, allowed in self._in:
+            rows = [row for row in rows if str(row.get(column)) in allowed]
+        if not self._orders:
+            sliced = rows[:1000]
+        else:
+            rows = sorted(
+                rows,
+                key=lambda row: tuple((row.get(column) or "") for column in self._orders),
+            )
+            start, end = self._range if self._range is not None else (0, 999)
+            self._sink.append((tuple(self._orders), start, end, len(rows)))
+            sliced = rows[start:end + 1]
+            if len(sliced) > 1000:
+                sliced = sliced[:1000]
+        return _PagingResult(sliced)
+
+
+class _PagingClient:
+    def __init__(self, tables):
+        self.tables = tables
+        self.grade_builds = 0
+        self.grade_pages = []
+
+    def table(self, name):
+        sink = self.grade_pages if name == "grades" else []
+        if name == "grades":
+            self.grade_builds += 1
+        return _PagingQuery(self.tables.get(name, []), sink)
+
+
+class TestFullClassDataGradePaging(unittest.TestCase):
+    def _client(self, with_objectives):
+        students = [f"stu-{i:02d}" for i in range(38)]
+        class_lo = "lo-class"
+        other_lo = "lo-other"
+        grades = []
+        for sid in students:
+            for n in range(40):
+                grades.append({
+                    "id": f"g-{sid}-{n}",
+                    "student_id": sid,
+                    "learning_objective_id": class_lo,
+                    "assignment_id": f"asg-{n:02d}",
+                    "top_score": "M",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                    "learning_objectives": {
+                        "id": class_lo,
+                        "vendor_code": "D1",
+                        "required_ms": 2,
+                    },
+                })
+            grades.append({
+                "id": f"g-{sid}-other",
+                "student_id": sid,
+                "learning_objective_id": other_lo,
+                "assignment_id": "asg-other",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+                "learning_objectives": {
+                    "id": other_lo,
+                    "vendor_code": "D1",
+                    "required_ms": 2,
+                },
+            })
+        tables = {
+            "classes": [{"id": "class-mw", "name": "MW"}],
+            "learning_objectives": (
+                [{"id": class_lo, "name": "D1", "vendor_code": "D1", "description": None, "required_ms": 2, "class_id": "class-mw"}]
+                if with_objectives else []
+            ),
+            "enrollments": [
+                {
+                    "id": f"enr-{sid}",
+                    "class_id": "class-mw",
+                    "student_id": sid,
+                    "muted": False,
+                    "profiles": {"id": sid, "full_name": f"Student, {sid}", "role": "student", "email": f"{sid}@example.edu"},
+                }
+                for sid in students
+            ],
+            "grades": grades,
+        }
+        return _PagingClient(tables), students
+
+    def test_1520_rows_are_complete_and_ignore_the_other_class(self):
+        from app.models import Course
+        from app.routes import _process_enrollments
+        client, students = self._client(True)
+        with unittest.mock.patch("app.models.supabase_admin", client):
+            class_data = Course.get_full_class_data("class-mw")
+        active, _, _ = _process_enrollments(class_data)
+        self.assertEqual(len(active), 38)
+        seen = set()
+        for student in active:
+            rows = []
+            for enrollment in class_data["enrollments"]:
+                prof = enrollment["profiles"]
+                if prof["id"] == student["id"]:
+                    rows = prof["grades"]
+            self.assertEqual(len(rows), 40)
+            for row in rows:
+                self.assertEqual(row["learning_objective_id"], "lo-class")
+                key = (row["student_id"], row["learning_objective_id"], row["assignment_id"])
+                self.assertNotIn(key, seen)
+                seen.add(key)
+            self.assertEqual(len(student["learning_objectives"]), 1)
+            self.assertEqual(student["learning_objectives"][0]["m_count"], 40)
+        self.assertEqual(len(seen), 38 * 40)
+        self.assertEqual(
+            [page[0] for page in client.grade_pages],
+            [("id",)] * len(client.grade_pages),
+        )
+        self.assertIn((("id",), 0, 999, 1520), client.grade_pages)
+        self.assertIn((("id",), 1000, 1999, 1520), client.grade_pages)
+
+    def test_zero_objectives_load_no_grades(self):
+        from app.models import Course
+        client, _students = self._client(False)
+        with unittest.mock.patch("app.models.supabase_admin", client):
+            class_data = Course.get_full_class_data("class-mw")
+        self.assertEqual(client.grade_builds, 0)
+        for enrollment in class_data["enrollments"]:
+            self.assertEqual(enrollment["profiles"]["grades"], [])
+
+
+class TestStudentProgressCardRules(unittest.TestCase):
+    def _card(self, count):
+        from types import SimpleNamespace
+        objectives = [
+            SimpleNamespace(
+                is_passed=False,
+                vendor_code="T%s" % index,
+                name="T%s" % index,
+                grades_list=[],
+                grades_meta=[],
+                m_count=0,
+                required_ms=2,
+                mr_count=0,
+            )
+            for index in range(count)
+        ]
+        student = SimpleNamespace(learning_objectives=objectives)
+        app = create_app()
+        with app.app_context():
+            template = app.jinja_env.get_template("_components.html")
+            return template.module.student_progress_cards(student)
+
+    def test_rule_count_is_one_less_than_objectives(self):
+        self.assertEqual(self._card(1).count("lo-row-rule"), 0)
+        self.assertEqual(self._card(4).count("lo-row-rule"), 3)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -87,6 +87,10 @@
     </div>
     <div class="divide-y divide-slate-100 dark:divide-slate-700">
       {% for lo in los %}
+      {% if not loop.first %}
+      <div class="lo-row-group">
+        <div class="lo-row-rule" aria-hidden="true"></div>
+      {% endif %}
       <div class="lo-row p-6">
         <div class="lo-head flex items-center justify-between gap-4">
           <h3 class="sheet-name font-medium text-slate-900 dark:text-white truncate">{{ lo.vendor_code or lo.name }}</h3>
@@ -107,6 +111,9 @@
           <span class="sheet-label text-xs text-slate-600 dark:text-slate-300">{{ lo.m_count }} / {{ lo.required_ms }} Ms{% if lo.mr_count %}<span class="ml-1">({{ lo.mr_count }} MR)</span>{% endif %}</span>
         </div>
       </div>
+      {% if not loop.first %}
+      </div>
+      {% endif %}
       {% endfor %}
     </div>
   </div>
@@ -115,8 +122,9 @@
 
 {% macro student_progress_print_styles() %}
 <style>
+.lo-row-rule { display: none; }
 @media print {
-  @page { size: letter portrait; margin: 0.5in; }
+  @page { size: letter portrait; margin: 0; }
 
   html, body, main {
     background: #fff !important;
@@ -129,6 +137,7 @@
 
   .roster-print-student,
   .student-detail-print {
+    padding: 0.5in !important;
     background: #fff !important;
     color: #0f172a !important;
     -webkit-print-color-adjust: exact;
@@ -156,14 +165,6 @@
   .student-detail-print .summary-card {
     padding: 0.2rem 0.35rem !important;
   }
-  .roster-print-student .summary-card .mb-3,
-  .student-detail-print .summary-card .mb-3 {
-    margin-bottom: 0.08rem !important;
-  }
-  .roster-print-student .summary-card .mb-2,
-  .student-detail-print .summary-card .mb-2 {
-    margin-bottom: 0 !important;
-  }
   .roster-print-student .summary-card .grid,
   .student-detail-print .summary-card .grid {
     gap: 0.35rem !important;
@@ -175,7 +176,18 @@
     color: #334155 !important;
     font-size: 0.72rem !important;
     line-height: 1.15 !important;
+  }
+  .roster-print-student .summary-card .mb-3,
+  .student-detail-print .summary-card .mb-3 {
+    margin-bottom: 0.28rem !important;
+  }
+  .roster-print-student .summary-card .mb-2,
+  .student-detail-print .summary-card .mb-2 {
     margin-bottom: 0 !important;
+  }
+  .roster-print-student .progress-bar-wrapper span,
+  .student-detail-print .progress-bar-wrapper span {
+    margin-bottom: 0.22rem !important;
   }
   .roster-print-student .sheet-metric,
   .student-detail-print .sheet-metric {
@@ -185,14 +197,32 @@
   }
   .roster-print-student .lo-list-head,
   .student-detail-print .lo-list-head {
-    padding: 0.08rem 0 !important;
+    padding: 0.35rem 0 0.2rem !important;
     border: 0 !important;
   }
   .roster-print-student .lo-list-head .sheet-name,
   .student-detail-print .lo-list-head .sheet-name {
     color: #0f172a !important;
     font-size: 0.75rem !important;
-    line-height: 1.15 !important;
+    line-height: 1.4 !important;
+    padding-top: 0.1rem !important;
+  }
+  .roster-print-student .lo-row-group,
+  .student-detail-print .lo-row-group {
+    border: 0 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .roster-print-student .lo-row-rule,
+  .student-detail-print .lo-row-rule {
+    display: block;
+    height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-top: 1px solid #64748b;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   .roster-print-student .lo-row,
   .student-detail-print .lo-row {
@@ -203,7 +233,8 @@
     padding: 1px 0 !important;
     margin: 0 !important;
     border: 0 !important;
-    border-bottom: 1px solid #64748b !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
     break-inside: avoid;
     page-break-inside: avoid;
     line-height: 1.15 !important;

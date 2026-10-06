@@ -47,6 +47,7 @@ from flask import (  # type: ignore
 )
 from werkzeug.utils import secure_filename
 from app.authentication import supabase, supabase_admin
+from app.paging import fetch_all_rows
 from app.models import (
     Course,
     Grade,
@@ -1437,36 +1438,20 @@ def class_learning_objectives_summary(class_id):
         grid_rows=grid_rows,
     )
 
-_EMAIL_INDEX_PAGE = 1000
-
-
-def _fetch_all_rows(query) -> List[Dict[str, Any]]:
-    """Read every row. Each request asks for one inclusive page of 1000."""
-    rows: List[Dict[str, Any]] = []
-    start = 0
-    while True:
-        resp = query.range(start, start + _EMAIL_INDEX_PAGE - 1).execute()
-        batch = list(resp.data or [])
-        rows.extend(batch)
-        if len(batch) < _EMAIL_INDEX_PAGE:
-            return rows
-        start += _EMAIL_INDEX_PAGE
-
-
 def _instructor_student_email_index(owner_id: str) -> Dict[str, Dict[str, Any]]:
     """Map a lowercased email to the student enrolled in this instructor's classes.
 
     The first profile seen for an email is kept. Later rows for that same
     profile add class ids. A different profile with the same email is ignored.
     """
-    class_rows = _fetch_all_rows(
+    class_rows = fetch_all_rows(
         supabase_admin.table("classes").select("id").eq("instructor_id", owner_id).order("id")
     )
     class_ids = [str(row.get("id")) for row in class_rows if row.get("id")]
     index: Dict[str, Dict[str, Any]] = {}
     if not class_ids:
         return index
-    enroll_rows = _fetch_all_rows(
+    enroll_rows = fetch_all_rows(
         supabase_admin.table("enrollments")
         .select("class_id, student_id, profiles(id, full_name, email)")
         .in_("class_id", class_ids)
@@ -1837,10 +1822,12 @@ def delete_class(class_id):
         if lo_ids:
             supabase_admin.table("assignment_objectives").delete().in_("learning_objective_id", lo_ids).execute()
             try:
-                existing = supabase_admin.table("grades").select(
-                    "student_id, learning_objective_id, assignment_id, top_score, second_score, counts_for_mastery"
-                ).in_("learning_objective_id", lo_ids).execute()
-                _log_grade_deletions(existing.data or [], class_id, session['user_id'])
+                existing = fetch_all_rows(
+                    supabase_admin.table("grades").select(
+                        "student_id, learning_objective_id, assignment_id, top_score, second_score, counts_for_mastery"
+                    ).in_("learning_objective_id", lo_ids).order("id")
+                )
+                _log_grade_deletions(existing, class_id, session['user_id'])
             except Exception as e:
                 logger.warning("Could not audit-log grade deletions for class %s: %s", class_id, e)
             supabase_admin.table("grades").delete().in_("learning_objective_id", lo_ids).execute()
