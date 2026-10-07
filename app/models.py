@@ -100,46 +100,20 @@ class Course:
     def get_full_class_data(class_id):
         """Fetches a class, its learning objectives, and all enrolled students with their grades.
 
-        Settings columns (``auto_convert_m``, ``min_masteries``, ...) are merged into the
-        same initial ``classes`` select so the request makes a single class-row query.
-        If newer optional columns are missing in the DB schema, the call falls back to
-        a narrower projection and applies defaults.
-
         The class LO pool always comes from ``get_learning_objectives``. Nested
-        ``classes → learning_objectives`` embeds are not used for the pool so a
-        narrower settings-column fallback cannot change which LOs are loaded.
+        ``classes → learning_objectives`` embeds are not used for the pool.
         """
-        CLASS_COLS_FULL = (
-            "id, name, semester, days, section_number, "
-            "auto_convert_m, min_masteries, "
-            "hw_passes_enabled, hw_passes_allowed, is_online"
-        )
-        CLASS_COLS_NO_HW_PASSES = (
-            "id, name, semester, days, section_number, "
-            "auto_convert_m, min_masteries, "
-            "is_online"
-        )
-        CLASS_COLS_MIN = "id, name, semester, days, section_number"
         try:
-            response = None
-            for cols in (CLASS_COLS_FULL, CLASS_COLS_NO_HW_PASSES, CLASS_COLS_MIN):
-                try:
-                    response = (
-                        supabase_admin.table("classes")
-                        .select(cols)
-                        .eq("id", class_id)
-                        .execute()
-                    )
-                    break
-                except Exception as schema_err:
-                    logger.debug(
-                        "classes select failed (%s); trying narrower projection: %s",
-                        cols,
-                        schema_err,
-                    )
-                    response = None
-
-            if response is None or not response.data or len(response.data) == 0:
+            response = (
+                supabase_admin.table("classes")
+                .select(
+                    "id, name, semester, days, section_number, "
+                    "auto_convert_m, is_online"
+                )
+                .eq("id", class_id)
+                .execute()
+            )
+            if not response.data:
                 return None
 
             class_data = response.data[0]
@@ -150,13 +124,6 @@ class Course:
                 for lo in pool_los
                 if lo.get("id")
             }
-
-            # Defensive defaults so callers never see KeyError if a column was missing.
-            class_data.setdefault('auto_convert_m', False)
-            class_data.setdefault('min_masteries', 2)
-            class_data.setdefault('hw_passes_enabled', False)
-            class_data.setdefault('hw_passes_allowed', 2)
-            class_data.setdefault('is_online', False)
 
             enrollments_resp = supabase_admin.table("enrollments").select(
                 "id, class_id, student_id, muted, profiles(id, full_name, role, email)"
@@ -177,37 +144,15 @@ class Course:
                 grade_rows: List[Dict[str, Any]] = []
                 if class_lo_ids:
                     lo_id_list = list(class_lo_ids)
-                    # Widest projection first (includes counts_for_mastery).
-                    # Deployments that have not yet run the migration fall
-                    # through to a narrower select. A missing flag counts as
-                    # True in _aggregate_lo_grades.
-                    try:
-                        grade_rows = fetch_all_rows(
-                            supabase_admin.table("grades").select(
-                                "student_id, learning_objective_id, top_score, second_score, "
-                                "counts_for_mastery, "
-                                "learning_objectives(id, name, vendor_code, required_ms)"
-                            ).in_("student_id", student_ids).in_(
-                                "learning_objective_id", lo_id_list
-                            ).order("id")
-                        )
-                    except Exception as schema_err:
-                        logger.debug(
-                            "Wide grades select failed (likely missing counts_for_mastery); falling back: %s",
-                            schema_err,
-                        )
-                        try:
-                            grade_rows = fetch_all_rows(
-                                supabase_admin.table("grades").select(
-                                    "student_id, learning_objective_id, top_score, second_score, "
-                                    "learning_objectives(id, name, vendor_code, required_ms)"
-                                ).in_("student_id", student_ids).in_(
-                                    "learning_objective_id", lo_id_list
-                                ).order("id")
-                            )
-                        except Exception as e:
-                            logger.error("Error batch-loading grades: %s", e)
-                            grade_rows = []
+                    grade_rows = fetch_all_rows(
+                        supabase_admin.table("grades").select(
+                            "student_id, learning_objective_id, top_score, second_score, "
+                            "counts_for_mastery, "
+                            "learning_objectives(id, name, vendor_code, required_ms)"
+                        ).in_("student_id", student_ids).in_(
+                            "learning_objective_id", lo_id_list
+                        ).order("id")
+                    )
                 for g in grade_rows:
                     grades_by_student.setdefault(g["student_id"], []).append(g)
 
@@ -311,30 +256,15 @@ class Grade:
             lo_ids = Course.get_all_lo_ids_for_class(class_id)
             if not lo_ids:
                 return []
-            try:
-                grade_rows = fetch_all_rows(
-                    supabase_admin.table("grades").select(
-                        "student_id, top_score, assignment_id, hw_score_at_entry, "
-                        "assignments(id, name, revision_due), "
-                        "learning_objectives(id, name, vendor_code)"
-                    ).in_("top_score", ["R", "RQ"]).in_(
-                        "learning_objective_id", lo_ids
-                    ).order("id")
-                )
-            except Exception as schema_err:
-                logger.debug(
-                    "Overdue select failed (likely missing hw_score_at_entry); falling back: %s",
-                    schema_err,
-                )
-                grade_rows = fetch_all_rows(
-                    supabase_admin.table("grades").select(
-                        "student_id, top_score, assignment_id, "
-                        "assignments(id, name, revision_due), "
-                        "learning_objectives(id, name, vendor_code)"
-                    ).in_("top_score", ["R", "RQ"]).in_(
-                        "learning_objective_id", lo_ids
-                    ).order("id")
-                )
+            grade_rows = fetch_all_rows(
+                supabase_admin.table("grades").select(
+                    "student_id, top_score, assignment_id, hw_score_at_entry, "
+                    "assignments(id, name, revision_due), "
+                    "learning_objectives(id, name, vendor_code)"
+                ).in_("top_score", ["R", "RQ"]).in_(
+                    "learning_objective_id", lo_ids
+                ).order("id")
+            )
 
             assignment_ids = sorted({
                 g.get('assignment_id') for g in grade_rows if g.get('assignment_id')
@@ -470,39 +400,18 @@ class Student:
 
         Selects only the fields the dashboard template/route actually reads to keep
         payload small (was ``*`` which pulled all profile/grade/class columns).
-
-        Widest projection includes ``counts_for_mastery`` (added by
-        scripts/add_grades_counts_for_mastery.sql); deployments that haven't run
-        the migration fall through to a narrower select. _aggregate_lo_grades
-        treats a missing flag as True (legacy behavior, all M's count).
         """
-        BASE_GRADES_COLS = (
+        grade_cols = (
             "student_id, learning_objective_id, top_score, second_score, "
             "counts_for_mastery, assignment_id, "
             "learning_objectives(id, name, vendor_code, required_ms)"
         )
-        FALLBACK_GRADES_COLS = (
-            "student_id, learning_objective_id, top_score, second_score, assignment_id, "
-            "learning_objectives(id, name, vendor_code, required_ms)"
-        )
-        try:
-            response = supabase_admin.table("profiles").select(
-                "id, full_name, role, "
-                f"grades({BASE_GRADES_COLS}), "
-                "enrollments(classes(id, name, auto_convert_m))"
-            ).eq("id", student_id).single().execute()
-            return response.data
-        except Exception as schema_err:
-            logger.debug(
-                "Wide student dashboard select failed (likely missing counts_for_mastery); falling back: %s",
-                schema_err,
-            )
-            response = supabase_admin.table("profiles").select(
-                "id, full_name, role, "
-                f"grades({FALLBACK_GRADES_COLS}), "
-                "enrollments(classes(id, name, auto_convert_m))"
-            ).eq("id", student_id).single().execute()
-            return response.data
+        response = supabase_admin.table("profiles").select(
+            "id, full_name, role, "
+            f"grades({grade_cols}), "
+            "enrollments(classes(id, name))"
+        ).eq("id", student_id).single().execute()
+        return response.data
 
 class Homework:
     # The two HW thresholds are *intentionally* different. The lower threshold

@@ -25,6 +25,7 @@ import os
 import re
 import secrets
 import requests
+from html import escape as html_escape
 import socket
 import threading
 import time
@@ -1372,16 +1373,13 @@ def signup():
 def student_dashboard():
     data = Student.get_dashboard_data(session['user_id'])
     
-    auto_convert_m = False
     class_name = None
     if data:
-        # Get class settings for auto-convert
         enrollments = data.get('enrollments', [])
         class_id = None
         if enrollments:
             cls = enrollments[0].get('classes', {}) or {}
             if cls:
-                auto_convert_m = cls.get('auto_convert_m', False)
                 class_name = cls.get('name')
                 class_id = cls.get('id')
 
@@ -1402,7 +1400,7 @@ def student_dashboard():
         else:
             data["learning_objectives"] = []
 
-    return render_template("student_view.html", student=data, auto_convert_m=auto_convert_m, class_name=class_name)
+    return render_template("student_view.html", student=data, class_name=class_name)
 
 @main_bp.route("/instructor/dashboard")
 @login_required
@@ -1482,8 +1480,6 @@ def class_detail(class_id):
                             all_los=all_los,
                             assignments=assignments,
                             overdue_revisions=overdue_revisions,
-                            auto_convert_m=class_data.get('auto_convert_m', False),
-                            min_masteries=class_data.get('min_masteries', 2),
                             **lo_ctx)
 
 
@@ -1749,12 +1745,49 @@ def add_student(class_id):
     except Exception as e:
         return _safe_api_error("Could not add student", 500, log_detail=e)
 
+# INSERT and UPDATE audit rows are written by trg_log_grade_change
+# (AFTER INSERT OR UPDATE on grades). That trigger copies
+# NEW.last_modified_by into changed_by. Python writes DELETE only.
+GRADE_LOG_INSERT = "INSERT"
+GRADE_LOG_UPDATE = "UPDATE"
+GRADE_LOG_DELETE = "DELETE"
+GRADE_LOG_OPERATIONS = (GRADE_LOG_INSERT, GRADE_LOG_UPDATE, GRADE_LOG_DELETE)
+_MISSING_GRADE_LOG_TABLE = frozenset({"42P01", "PGRST205"})
+
+
+def _grade_log_pg_code(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    if code:
+        return str(code)
+    if exc.args and isinstance(exc.args[0], dict):
+        return str(exc.args[0].get("code") or "")
+    return ""
+
+
+def _write_grade_change_log(chunk: List[Dict[str, Any]]) -> None:
+    try:
+        supabase_admin.table("grade_change_log").insert(chunk).execute()
+    except Exception as e:
+        if _grade_log_pg_code(e) in _MISSING_GRADE_LOG_TABLE:
+            logger.warning(
+                "grade_change_log insert skipped (table may not exist yet): %s", e
+            )
+            return
+        ops = sorted({str(row.get("operation") or "") for row in chunk})
+        logger.error(
+            "grade_change_log insert failed for operation %s: %s",
+            ",".join(ops),
+            e,
+        )
+
+
 def _log_grade_deletions(rows: List[Dict[str, Any]], class_id: str, changed_by: Optional[str]) -> None:
     """Best-effort audit log for grade rows about to be hard-deleted.
 
     Reads pre-delete values so grade_change_log retains history even though the
-    grades table itself has no soft-delete. Must never raise — a missing/not-yet-
-    migrated audit table or a logging failure should never block the actual delete.
+    grades table itself has no soft-delete. Must never raise. A missing audit
+    table is a warning. Any other insert error is logged and swallowed so the
+    delete still proceeds.
     """
     if not rows:
         return
@@ -1764,7 +1797,7 @@ def _log_grade_deletions(rows: List[Dict[str, Any]], class_id: str, changed_by: 
             "class_id": class_id,
             "learning_objective_id": r.get("learning_objective_id"),
             "assignment_id": r.get("assignment_id"),
-            "operation": "DELETE",
+            "operation": GRADE_LOG_DELETE,
             "old_value": {
                 "top_score": r.get("top_score"),
                 "second_score": r.get("second_score"),
@@ -1779,46 +1812,7 @@ def _log_grade_deletions(rows: List[Dict[str, Any]], class_id: str, changed_by: 
     # call doesn't hit request/payload limits, matching api_import_grades.
     chunk_size = 150
     for i in range(0, len(log_rows), chunk_size):
-        chunk = log_rows[i:i + chunk_size]
-        try:
-            supabase_admin.table("grade_change_log").insert(chunk).execute()
-        except Exception as e:
-            logger.warning("grade_change_log insert skipped (table may not exist yet): %s", e)
-
-
-def _log_grade_upserts(rows: List[Dict[str, Any]], class_id: str, changed_by: Optional[str]) -> None:
-    """Best-effort audit log for grade rows that were just written (inserted or updated).
-
-    Symmetric to _log_grade_deletions. Records operation="UPSERT" so the
-    change log captures every score write, not just clears. Must never raise —
-    a missing/not-yet-migrated audit table or a logging failure should never
-    block an already-completed grade save.
-    """
-    if not rows:
-        return
-    log_rows = [
-        {
-            "student_id": r.get("student_id"),
-            "class_id": class_id,
-            "learning_objective_id": r.get("learning_objective_id"),
-            "assignment_id": r.get("assignment_id"),
-            "operation": "UPSERT",
-            "old_value": None,
-            "new_value": {
-                "top_score": r.get("top_score"),
-                "counts_for_mastery": r.get("counts_for_mastery"),
-            },
-            "changed_by": changed_by,
-        }
-        for r in rows
-    ]
-    chunk_size = 150
-    for i in range(0, len(log_rows), chunk_size):
-        chunk = log_rows[i:i + chunk_size]
-        try:
-            supabase_admin.table("grade_change_log").insert(chunk).execute()
-        except Exception as e:
-            logger.warning("grade_change_log upsert insert skipped (table may not exist yet): %s", e)
+        _write_grade_change_log(log_rows[i:i + chunk_size])
 
 
 def _clear_grade_cells_for_assignment(
@@ -2982,11 +2976,110 @@ def class_reports(class_id):
         students=students,
         learning_objectives=learning_objectives,
         assignments=assignments,
-        auto_convert_m=class_data.get("auto_convert_m", False),
+        instructor_title=instructor_title(_report_sender_name()),
     )
 
 
-def _send_via_resend(to_email: str, subject: str, body_text: str) -> Tuple[bool, str]:
+def instructor_title(full_name) -> str:
+    """Professor <Last>, or Your instructor when the name is missing."""
+    raw = "" if full_name is None else str(full_name)
+    raw = " ".join(raw.split())
+    if not raw:
+        return "Your instructor"
+    if "," in raw:
+        last = raw.split(",", 1)[0].strip()
+    else:
+        last = raw.split(" ")[-1]
+    if not last:
+        return "Your instructor"
+    if last.islower():
+        last = last[:1].upper() + last[1:]
+    return f"Professor {last}"
+
+
+def _report_sender_name() -> str:
+    """Full name of the logged-in instructor, from the profile row then the session."""
+    name = str(session.get("full_name") or "").strip()
+    uid = str(session.get("user_id") or "").strip()
+    if not uid:
+        return name
+    try:
+        resp = (
+            supabase_admin.table("profiles")
+            .select("full_name")
+            .eq("id", uid)
+            .limit(1)
+            .execute()
+        )
+        row = (resp.data or [{}])[0] or {}
+        return str(row.get("full_name") or "").strip() or name
+    except Exception as e:
+        logger.error("Report sender name lookup failed: %s", e)
+        return name
+
+
+def _reports_from_header(sender_name: str, from_email: str) -> str:
+    title = str(sender_name or "")
+    for ch in ('"', "\\", "<", ">", "\r", "\n"):
+        title = title.replace(ch, "")
+    title = " ".join(title.split())
+    if not title:
+        title = "Your instructor"
+    return f'"{title} via Clarity Grader" <{from_email}>'
+
+
+def _report_body_html(body_text: str, subject: str) -> str:
+    """HTML part for a report email. Line breaks are tags, not CSS."""
+    text = str(body_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    safe = html_escape(text, quote=True)
+    blocks: List[List[str]] = []
+    current: List[str] = []
+    for line in safe.split("\n"):
+        if line.strip() == "":
+            if current:
+                blocks.append(current)
+                current = []
+        else:
+            current.append(line)
+    if current:
+        blocks.append(current)
+
+    paragraph_style = (
+        "font-family:Arial, Helvetica, sans-serif;"
+        "font-size:14px;line-height:1.5;margin:0 0 14px 0;color:#222222;"
+    )
+    footer_style = (
+        "font-family:Arial, Helvetica, sans-serif;"
+        "font-size:12px;line-height:1.5;margin:0 0 14px 0;color:#666666;"
+        "border-top:1px solid #dddddd;padding-top:12px;"
+    )
+    paragraphs: List[str] = []
+    last = len(blocks) - 1
+    for index, lines in enumerate(blocks):
+        is_footer = index == last and lines[0].lstrip().startswith("Sent by")
+        style = footer_style if is_footer else paragraph_style
+        paragraphs.append(f'<p style="{style}">{"<br>".join(lines)}</p>')
+
+    title = html_escape(str(subject or ""), quote=True)
+    return (
+        "<!DOCTYPE html>"
+        '<html lang="en">'
+        "<head>"
+        '<meta charset="utf-8">'
+        f"<title>{title}</title>"
+        "</head>"
+        "<body>"
+        '<div style="max-width:600px;">'
+        f"{''.join(paragraphs)}"
+        "</div>"
+        "</body>"
+        "</html>"
+    )
+
+
+def _send_via_resend(
+    to_email: str, subject: str, body_text: str, *, sender_name: str
+) -> Tuple[bool, str]:
     api_key = (os.environ.get("RESEND_API_KEY") or "").strip()
     from_email = (os.environ.get("REPORTS_FROM_EMAIL") or "").strip()
     if not api_key:
@@ -2997,10 +3090,11 @@ def _send_via_resend(to_email: str, subject: str, body_text: str) -> Tuple[bool,
         return False, "Email is not configured."
 
     payload = {
-        "from": from_email,
+        "from": _reports_from_header(sender_name, from_email),
         "to": [to_email],
         "subject": subject,
         "text": body_text,
+        "html": _report_body_html(body_text, subject),
     }
     try:
         resp = requests.post(
@@ -3012,9 +3106,33 @@ def _send_via_resend(to_email: str, subject: str, body_text: str) -> Tuple[bool,
             json=payload,
             timeout=20,
         )
-        if resp.status_code >= 400:
-            logger.error("Email provider rejected request (%s): %s", resp.status_code, resp.text[:400])
+        parsed = None
+        try:
+            parsed = resp.json()
+        except ValueError:
+            parsed = None
+        message_id = ""
+        if isinstance(parsed, dict) and isinstance(parsed.get("id"), str):
+            message_id = parsed.get("id").strip()
+        if resp.status_code >= 400 or not message_id:
+            if resp.status_code >= 400:
+                logger.error(
+                    "Email provider rejected request (%s): %s",
+                    resp.status_code,
+                    resp.text[:400],
+                )
+            else:
+                logger.error(
+                    "Email provider returned status %s without an id",
+                    resp.status_code,
+                )
             return False, "Email provider rejected request."
+        domain = to_email.rsplit("@", 1)[-1] if "@" in to_email else "unknown"
+        logger.info(
+            "Report email accepted id=%s recipient_domain=%s",
+            message_id,
+            domain,
+        )
         return True, ""
     except Exception as e:
         logger.error("Email send failed: %s", e)
@@ -3059,7 +3177,12 @@ def api_send_single_report_email(class_id, student_id):
         logger.error("Error loading enrollment for report email: %s", e)
         return jsonify({"success": False, "error": "Could not load student email"}), 500
 
-    ok, err = _send_via_resend(to_email, subject, body)
+    ok, err = _send_via_resend(
+        to_email,
+        subject,
+        body,
+        sender_name=instructor_title(_report_sender_name()),
+    )
     if not ok:
         return jsonify({"success": False, "error": err}), 502
     return jsonify({"success": True, "to": to_email})
@@ -3113,7 +3236,9 @@ def api_send_bulk_report_emails(class_id):
 
     sent = 0
     skipped = 0
+    failed = 0
     failures: List[str] = []
+    sender_name = instructor_title(_report_sender_name())
     for item in reports:
         if not isinstance(item, dict):
             skipped += 1
@@ -3134,27 +3259,27 @@ def api_send_bulk_report_emails(class_id):
             skipped += 1
             failures.append(f"{student_name}: no saved email")
             continue
-        ok, err = _send_via_resend(to_email, subject, body)
+        ok, err = _send_via_resend(
+            to_email, subject, body, sender_name=sender_name
+        )
         if ok:
             sent += 1
         else:
+            failed += 1
             failures.append(f"{student_name}: {err}")
 
-    if sent == 0 and failures:
-        return jsonify({
-            "success": False,
-            "error": "No emails were sent.",
-            "sent": 0,
-            "skipped": skipped,
-            "failures": failures[:20],
-        }), 502
-
-    return jsonify({
-        "success": True,
+    payload = {
         "sent": sent,
         "skipped": skipped,
+        "failed": failed,
         "failures": failures[:20],
-    })
+    }
+    if sent == 0 and failures:
+        payload["success"] = False
+        payload["error"] = "No emails were sent."
+        return jsonify(payload), 502
+    payload["success"] = True
+    return jsonify(payload)
 
 @main_bp.route("/class/<class_id>/student/<student_id>/history")
 @login_required
@@ -3233,6 +3358,7 @@ def student_history(class_id, student_id):
         student_id=student_id,
         student_name=student_name,
         student_email=student_email,
+        instructor_title=instructor_title(_report_sender_name()),
         learning_objectives=lo_grade_data,
     )
 
@@ -3282,9 +3408,7 @@ def class_speed_grader(class_id):
                            assignments=assignments,
                            students=students,
                            lo_names=lo_names,
-                           hw_passes_allowed=hw_passes_allowed,
-                           auto_convert_m=class_data.get('auto_convert_m', False),
-                           min_masteries=class_data.get('min_masteries', 2))
+                           auto_convert_m=class_data.get('auto_convert_m', False))
 
 @main_bp.route("/class/<class_id>/update_grade", methods=["GET", "POST"], endpoint='upload_grades')
 @login_required
@@ -3666,36 +3790,19 @@ def save_grades(class_id):
         # Batch-fetch existing rows so we can preserve the original
         # counts_for_mastery for any row that already holds an M/MR. A row is
         # only "first-entry" if no row exists yet or the existing row holds a
-        # non-mastery letter (R, RQ, P, X, A). Wide select with a fallback for
-        # deployments that have not yet run scripts/add_grades_counts_for_mastery.sql.
+        # non-mastery letter (R, RQ, P, X, A).
         existing_by_key: Dict[str, Dict[str, Any]] = {}
         if incoming and assignment_id:
             sids = list({it['student_id'] for it in incoming})
             lo_ids = list({it['lo_id'] for it in incoming})
-            try:
-                ex_resp = supabase_admin.table("grades").select(
-                    "student_id, learning_objective_id, top_score, counts_for_mastery"
-                ).in_("student_id", sids).in_("learning_objective_id", lo_ids).eq(
-                    "assignment_id", assignment_id
-                ).execute()
-            except Exception as schema_err:
-                logger.debug(
-                    "Wide save_grades pre-fetch failed (likely missing counts_for_mastery); falling back: %s",
-                    schema_err,
-                )
-                try:
-                    ex_resp = supabase_admin.table("grades").select(
-                        "student_id, learning_objective_id, top_score"
-                    ).in_("student_id", sids).in_("learning_objective_id", lo_ids).eq(
-                        "assignment_id", assignment_id
-                    ).execute()
-                except Exception as e:
-                    logger.error("save_grades existing pre-fetch failed: %s", e)
-                    ex_resp = None
-            if ex_resp is not None:
-                for r in (ex_resp.data or []):
-                    k = f"{r['student_id']}|{r['learning_objective_id']}"
-                    existing_by_key[k] = r
+            ex_resp = supabase_admin.table("grades").select(
+                "student_id, learning_objective_id, top_score, counts_for_mastery"
+            ).in_("student_id", sids).in_("learning_objective_id", lo_ids).eq(
+                "assignment_id", assignment_id
+            ).execute()
+            for r in (ex_resp.data or []):
+                k = f"{r['student_id']}|{r['learning_objective_id']}"
+                existing_by_key[k] = r
 
         # Build batch of grade rows and upsert in one call.
         grade_rows = []
@@ -3743,29 +3850,9 @@ def save_grades(class_id):
             grade_rows.append(row)
 
         if grade_rows:
-            try:
-                supabase_admin.table("grades").upsert(
-                    grade_rows, on_conflict="student_id,learning_objective_id,assignment_id"
-                ).execute()
-            except Exception as schema_err:
-                # Fallback for deployments that have not yet run the migration:
-                # strip columns the database does not have yet and try again so saves don't 400.
-                msg = str(schema_err)
-                if "hw_score_at_entry" in msg or "counts_for_mastery" in msg or "last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
-                    logger.debug(
-                        "save_grades upsert failed on a grades column the database does not have yet; retrying without it"
-                    )
-                    legacy_rows = [
-                        {k: v for k, v in r.items() if k not in ('hw_score_at_entry', 'counts_for_mastery', 'last_modified_by')}
-                        for r in grade_rows
-                    ]
-                    supabase_admin.table("grades").upsert(
-                        legacy_rows, on_conflict="student_id,learning_objective_id,assignment_id"
-                    ).execute()
-                else:
-                    raise
-
-        _log_grade_upserts(grade_rows, class_id, session.get("user_id"))
+            supabase_admin.table("grades").upsert(
+                grade_rows, on_conflict="student_id,learning_objective_id,assignment_id"
+            ).execute()
 
         if to_clear:
             _clear_grade_cells_for_assignment(
@@ -3786,31 +3873,11 @@ def api_assignment_grades(class_id, assignment_id):
     if not _assignment_belongs_to_class(class_id, assignment_id):
         return jsonify({"success": False, "error": "Invalid assignment for class"}), 400
     try:
-        # Widest projection first (includes counts_for_mastery); deployments
-        # that haven't run scripts/add_grades_counts_for_mastery.sql fall back
-        # to the narrower select. Missing flag => default True.
-        # supabase-py requires .select() before filters like .eq(); callers pass
-        # a filter lambda that receives the already-`select()`ed builder.
-        def _select_grade_rows(apply_filters):
-            try:
-                return apply_filters(
-                    supabase_admin.table("grades").select(
-                        "student_id, learning_objective_id, top_score, counts_for_mastery"
-                    )
-                ).execute()
-            except Exception as schema_err:
-                logger.debug(
-                    "Wide assignment grades select failed (likely missing counts_for_mastery); falling back: %s",
-                    schema_err,
-                )
-                return apply_filters(
-                    supabase_admin.table("grades").select(
-                        "student_id, learning_objective_id, top_score"
-                    )
-                ).execute()
-
-        result = _select_grade_rows(
-            lambda q: q.eq("assignment_id", assignment_id)
+        result = (
+            supabase_admin.table("grades")
+            .select("student_id, learning_objective_id, top_score, counts_for_mastery")
+            .eq("assignment_id", assignment_id)
+            .execute()
         )
         grades_map = {}
         counts_for_mastery_map = {}
@@ -3850,8 +3917,12 @@ def api_assignment_grades(class_id, assignment_id):
                 )
                 lo_ids = []
         if lo_ids:
-            unscoped = _select_grade_rows(
-                lambda q: q.is_("assignment_id", None).in_("learning_objective_id", lo_ids)
+            unscoped = (
+                supabase_admin.table("grades")
+                .select("student_id, learning_objective_id, top_score, counts_for_mastery")
+                .is_("assignment_id", None)
+                .in_("learning_objective_id", lo_ids)
+                .execute()
             )
             for g in (unscoped.data or []):
                 key = f"{g['student_id']}|{g['learning_objective_id']}"
@@ -3907,24 +3978,11 @@ def _promote_non_counting_masteries_for_student(class_id: str, student_id: str, 
     lo_ids = Course.get_all_lo_ids_for_class(class_id)
     if not lo_ids:
         return 0
-    try:
-        resp = supabase_admin.table("grades").select(
-            "student_id, learning_objective_id, assignment_id, top_score, counts_for_mastery"
-        ).eq("student_id", student_id).in_("learning_objective_id", lo_ids).in_(
-            "top_score", ["M", "MR"]
-        ).execute()
-    except Exception as e:
-        logger.warning(
-            "promote non-counting masteries select failed (wide): %s", e
-        )
-        try:
-            resp = supabase_admin.table("grades").select(
-                "student_id, learning_objective_id, assignment_id, top_score"
-            ).eq("student_id", student_id).in_("learning_objective_id", lo_ids).in_(
-                "top_score", ["M", "MR"]
-            ).execute()
-        except Exception:
-            return 0
+    resp = supabase_admin.table("grades").select(
+        "student_id, learning_objective_id, assignment_id, top_score, counts_for_mastery"
+    ).eq("student_id", student_id).in_("learning_objective_id", lo_ids).in_(
+        "top_score", ["M", "MR"]
+    ).execute()
 
     rows = []
     for g in resp.data or []:
@@ -3946,20 +4004,9 @@ def _promote_non_counting_masteries_for_student(class_id: str, student_id: str, 
     if not rows:
         return 0
 
-    try:
-        supabase_admin.table("grades").upsert(
-            rows, on_conflict="student_id,learning_objective_id,assignment_id"
-        ).execute()
-    except Exception as e:
-        msg = str(e)
-        if "counts_for_mastery" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
-            logger.warning(
-                "promote non-counting masteries upsert skipped (migration not run): %s",
-                e,
-            )
-            return 0
-        raise
-    _log_grade_upserts(rows, class_id, changed_by)
+    supabase_admin.table("grades").upsert(
+        rows, on_conflict="student_id,learning_objective_id,assignment_id"
+    ).execute()
     return len(rows)
 
 
@@ -4547,32 +4594,12 @@ def api_import_grades():
             # Add updated_at to each row so the timestamp refreshes on overwrite
             for row in chunk:
                 row["updated_at"] = "now()"
-            try:
-                supabase_admin.table("grades").upsert(
-                    chunk, on_conflict="student_id,learning_objective_id,assignment_id"
-                ).execute()
-                logger.info("Upserted %d grades", len(chunk))
-            except Exception as upsert_err:
-                msg = str(upsert_err)
-                if "hw_score_at_entry" in msg or "last_modified_by" in msg or "PGRST204" in msg or "schema cache" in msg.lower():
-                    # Fallback for deployments that haven't run the new-column migration yet.
-                    try:
-                        legacy_chunk = [
-                            {k: v for k, v in r.items() if k not in ('hw_score_at_entry', 'last_modified_by')}
-                            for r in chunk
-                        ]
-                        supabase_admin.table("grades").upsert(
-                            legacy_chunk, on_conflict="student_id,learning_objective_id,assignment_id"
-                        ).execute()
-                        logger.info("Upserted %d grades (legacy, no last_modified_by column)", len(legacy_chunk))
-                        continue
-                    except Exception as retry_err:
-                        upsert_err = retry_err
-                logger.error("Grade upsert error: %s", upsert_err)
+            supabase_admin.table("grades").upsert(
+                chunk, on_conflict="student_id,learning_objective_id,assignment_id"
+            ).execute()
+            logger.info("Upserted %d grades", len(chunk))
     except Exception as e:
-        logger.error("Error processing grades in bulk: %s", e)
-
-    _log_grade_upserts(grade_rows, str(class_id), session.get("user_id"))
+        return _safe_api_error("Could not import grades", 500, log_detail=e)
 
     hw_rows = []
     for sid_key, inc in incoming_hw.items():

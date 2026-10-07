@@ -9,12 +9,6 @@
     return text.split(',').map(normalizeSpaces).join(', ');
   }
 
-  function displayName(fullName) {
-    const raw = fullName == null ? '' : String(fullName);
-    if (!raw.trim()) return 'Unnamed student';
-    return raw;
-  }
-
   const collator = new Intl.Collator('en-US');
 
   function compareNames(a, b) {
@@ -28,14 +22,8 @@
     return collator.compare(left, right);
   }
 
-  const commaRequiredMessage =
-    'Enter the name as Last, First, with a comma. Example: Velasco Jr, Emilio.';
-
   window.StudentNames = {
-    normalizeSpaces,
     nameKey,
-    displayName,
     compareNames,
-    commaRequiredMessage,
   };
 })();

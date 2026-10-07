@@ -694,9 +694,9 @@ class TestProtectedRoutes(unittest.TestCase):
         self.client = self.app.test_client()
 
     def test_dashboard_requires_auth(self):
-        response = self.client.get('/dashboard')
-        # Should redirect to login when session has no user_id
-        self.assertIn(response.status_code, (302, 404))
+        response = self.client.get('/instructor/dashboard')
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("/login"))
 
     def test_class_detail_requires_auth(self):
         response = self.client.get('/class/fake-id')
@@ -1156,7 +1156,13 @@ def _email_body_from_report_rows(class_name, assignment_label, student_name, row
         title = " ".join(str(row.get("title") or "").split())
         lines.append(f"{title}  |  {row.get('grade') or 'Not graded'}")
     lines.append("")
-    lines.append("— Instructor (via Project Clarity)")
+    lines.append("Sent by Your instructor via Clarity Grader")
+    lines.append(f"Class: {class_name}")
+    lines.append(f"You are receiving this because you are enrolled in {class_name}.")
+    lines.append(
+        "This is an automated message. Replies are not monitored. "
+        "Please contact your instructor directly."
+    )
     return "\n".join(lines)
 
 
@@ -1337,7 +1343,9 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         rv, send_mock = self._post_single_email({"subject": subject, "body": body})
         self.assertEqual(rv.status_code, 200)
         self.assertEqual(rv.get_json(), {"success": True, "to": STU_ALEX_EMAIL})
-        send_mock.assert_called_once_with(STU_ALEX_EMAIL, subject, body)
+        send_mock.assert_called_once_with(
+            STU_ALEX_EMAIL, subject, body, sender_name="Your instructor"
+        )
         sent_body = send_mock.call_args[0][2]
         self.assertIn("D1  |  Not graded", sent_body)
         self.assertNotIn("D1  |  M", sent_body)
@@ -1365,10 +1373,14 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         payload = rv.get_json()
         self.assertTrue(payload.get("success"))
         self.assertEqual(payload.get("sent"), 1)
-        send_mock.assert_called_once_with(STU_ALEX_EMAIL, subject, body)
+        send_mock.assert_called_once_with(
+            STU_ALEX_EMAIL, subject, body, sender_name="Your instructor"
+        )
         sent_body = send_mock.call_args[0][2]
         self.assertIn("Not graded", sent_body)
         self.assertNotIn("D1  |  M", sent_body)
+        self.assertEqual(payload.get("failed"), 0)
+        self.assertEqual(payload.get("skipped"), 0)
 
     def test_reports_template_print_email_uses_scoped_cache(self):
         template_path = os.path.join(
@@ -1390,17 +1402,22 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         self.assertIn("/api/class/${classId}/student/${encodeURIComponent(studentId)}/send-report-email", src)
         self.assertIn("/api/class/${classId}/send-report-emails", src)
 
-    def test_report_email_builders_omit_the_student_name(self):
+    def test_report_email_greeting_footer_and_counts(self):
         reports_path = os.path.join(
             os.path.dirname(__file__), "..", "app", "templates", "class_reports.html",
         )
         history_path = os.path.join(
             os.path.dirname(__file__), "..", "app", "templates", "student_history.html",
         )
+        helpers_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "ui_helpers.js",
+        )
         with open(reports_path, encoding="utf-8") as fh:
             reports_src = fh.read()
         with open(history_path, encoding="utf-8") as fh:
             history_src = fh.read()
+        with open(helpers_path, encoding="utf-8") as fh:
+            helpers_src = fh.read()
 
         def extract(src, name):
             marker = "function " + name + "("
@@ -1426,10 +1443,204 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
             extract(history_src, "emailStudentHistoryReport"),
         ]
         for body in builders:
-            self.assertIn("Hello student,", body)
-            self.assertNotIn("parts.student.name", body)
-            self.assertNotIn("p.student_name", body)
-            self.assertNotIn("student.name", body)
+            self.assertIn("studentGreetingName", body)
+            self.assertIn("reportEmailFooter", body)
+        combined = reports_src + history_src + helpers_src
+        self.assertNotIn("instructorLastName", combined)
+        self.assertNotIn("instructorSignoff", combined)
+        self.assertNotIn("toTitleCaseWord", combined)
+        self.assertNotIn("Hello student,", combined)
+        self.assertNotIn("via Project Clarity", combined)
+        self.assertNotIn("Email send complete.", reports_src)
+        self.assertIn("Replies are not monitored", helpers_src)
+        self.assertIn("Sent ", reports_src)
+        self.assertIn("Skipped ", reports_src)
+        self.assertIn("Failed ", reports_src)
+
+
+class TestInstructorTitleAndReportEmail(unittest.TestCase):
+    FROM_EMAIL = "reports@claritygrader.net"
+
+    def test_instructor_title(self):
+        from app import routes as r
+        self.assertEqual(r.instructor_title("Estes, Brody"), "Professor Estes")
+        self.assertEqual(r.instructor_title("Brody Estes"), "Professor Estes")
+        self.assertEqual(r.instructor_title(""), "Your instructor")
+        self.assertEqual(r.instructor_title(None), "Your instructor")
+        self.assertEqual(r.instructor_title("  Estes ,   Brody  "), "Professor Estes")
+        self.assertEqual(r.instructor_title("  Brody    Estes  "), "Professor Estes")
+        self.assertEqual(r.instructor_title("brody estes"), "Professor Estes")
+        self.assertEqual(r.instructor_title("BRODY ESTES"), "Professor ESTES")
+
+    def test_from_header_is_always_quoted(self):
+        from app import routes as r
+        self.assertEqual(
+            r._reports_from_header("Professor Estes", self.FROM_EMAIL),
+            '"Professor Estes via Clarity Grader" <reports@claritygrader.net>',
+        )
+        self.assertEqual(
+            r._reports_from_header("Your instructor", self.FROM_EMAIL),
+            '"Your instructor via Clarity Grader" <reports@claritygrader.net>',
+        )
+        self.assertEqual(
+            r._reports_from_header("", self.FROM_EMAIL),
+            '"Your instructor via Clarity Grader" <reports@claritygrader.net>',
+        )
+        self.assertEqual(
+            r._reports_from_header("Professor St. Estes", self.FROM_EMAIL),
+            '"Professor St. Estes via Clarity Grader" <reports@claritygrader.net>',
+        )
+        self.assertEqual(
+            r._reports_from_header("Professor Estes, Jr.", self.FROM_EMAIL),
+            '"Professor Estes, Jr. via Clarity Grader" <reports@claritygrader.net>',
+        )
+
+    def _send(self, post_mock, *, sender_name="Professor Estes", body="Hello Jane,"):
+        from app import routes as r
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "RESEND_API_KEY": "test-key",
+                "REPORTS_FROM_EMAIL": self.FROM_EMAIL,
+            },
+        ), unittest.mock.patch.object(r.requests, "post", post_mock):
+            return r._send_via_resend(
+                "student@example.edu",
+                "Your progress report",
+                body,
+                sender_name=sender_name,
+            )
+
+    def _response(self, status, payload, text=""):
+        resp = MagicMock()
+        resp.status_code = status
+        resp.json.return_value = payload
+        resp.text = text
+        return resp
+
+    def test_send_success_requires_id_and_omits_reply_to(self):
+        post = MagicMock(return_value=self._response(200, {"id": "re_123"}))
+        with self.assertLogs("app.routes", level="INFO") as logs:
+            ok, err = self._send(post)
+        self.assertTrue(ok)
+        self.assertEqual(err, "")
+        sent = post.call_args.kwargs["json"]
+        self.assertIn("html", sent)
+        self.assertIn("text", sent)
+        self.assertEqual(sent["text"], "Hello Jane,")
+        self.assertIn("Hello Jane,", sent["html"])
+        self.assertNotIn("white-space", sent["html"])
+        self.assertNotIn("pre-wrap", sent["html"])
+        self.assertNotIn("reply_to", sent)
+        self.assertEqual(
+            sent["from"],
+            '"Professor Estes via Clarity Grader" <reports@claritygrader.net>',
+        )
+        logged = "\n".join(logs.output)
+        self.assertIn("re_123", logged)
+        self.assertIn("example.edu", logged)
+        self.assertNotIn("student@", logged)
+
+    def test_send_success_without_id_fails(self):
+        post = MagicMock(return_value=self._response(200, {}))
+        ok, err = self._send(post)
+        self.assertFalse(ok)
+        self.assertEqual(err, "Email provider rejected request.")
+
+    def test_send_422_fails(self):
+        post = MagicMock(return_value=self._response(422, {"message": "bad"}, text="bad"))
+        ok, err = self._send(post)
+        self.assertFalse(ok)
+        self.assertEqual(err, "Email provider rejected request.")
+
+    def test_send_timeout_fails(self):
+        from app import routes as r
+        post = MagicMock(side_effect=r.requests.Timeout())
+        ok, err = self._send(post)
+        self.assertFalse(ok)
+        self.assertEqual(err, "Email send failed.")
+
+    def test_send_missing_key_does_not_post(self):
+        from app import routes as r
+        post = MagicMock()
+        with unittest.mock.patch.dict(os.environ, {"REPORTS_FROM_EMAIL": self.FROM_EMAIL}):
+            os.environ.pop("RESEND_API_KEY", None)
+            with unittest.mock.patch.object(r.requests, "post", post):
+                ok, err = r._send_via_resend(
+                    "student@example.edu",
+                    "Subject",
+                    "Hello Jane,",
+                    sender_name="Professor Estes",
+                )
+        self.assertFalse(ok)
+        self.assertEqual(err, "Email is not configured.")
+        post.assert_not_called()
+
+    def test_send_missing_from_address_does_not_post(self):
+        from app import routes as r
+        post = MagicMock()
+        with unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "test-key"}):
+            os.environ.pop("REPORTS_FROM_EMAIL", None)
+            with unittest.mock.patch.object(r.requests, "post", post):
+                ok, err = r._send_via_resend(
+                    "student@example.edu",
+                    "Subject",
+                    "Hello Jane,",
+                    sender_name="Professor Estes",
+                )
+        self.assertFalse(ok)
+        self.assertEqual(err, "Email is not configured.")
+        post.assert_not_called()
+
+    def test_html_escapes_student_name(self):
+        body = "Hello <Jane> & Co,"
+        post = MagicMock(return_value=self._response(200, {"id": "re_456"}))
+        with self.assertLogs("app.routes", level="INFO"):
+            ok, err = self._send(post, body=body)
+        self.assertTrue(ok)
+        self.assertEqual(err, "")
+        sent = post.call_args.kwargs["json"]
+        self.assertEqual(sent["text"], body)
+        self.assertIn("Hello &lt;Jane&gt; &amp; Co,", sent["html"])
+        self.assertNotIn("<Jane>", sent["html"])
+
+    def test_report_body_html_paragraphs_breaks_and_footer(self):
+        from app import routes as r
+        body = (
+            "Hello <Jane> & Co,\n"
+            "Class: Algebra\n"
+            "\n"
+            "D1  |  M\n"
+            "D2  |  R\n"
+            "\n"
+            "Sent by Professor Estes via Clarity Grader\n"
+            "Class: Algebra\n"
+            "You are receiving this because you are enrolled in Algebra.\n"
+            "This is an automated message. Replies are not monitored. "
+            "Please contact your instructor directly."
+        )
+        html = r._report_body_html(body, "Progress <report> & more")
+        paragraphs = html.split("<p ")[1:]
+        self.assertEqual(len(paragraphs), 3)
+        self.assertIn("Hello &lt;Jane&gt; &amp; Co,<br>Class: Algebra", paragraphs[0])
+        self.assertIn("D1  |  M<br>D2  |  R", paragraphs[1])
+        self.assertIn("font-size:14px", paragraphs[0])
+        self.assertIn("color:#222222", paragraphs[0])
+        self.assertNotIn("color:#666666", paragraphs[0])
+        self.assertNotIn("color:#666666", paragraphs[1])
+        self.assertIn("font-size:12px", paragraphs[2])
+        self.assertIn("color:#666666", paragraphs[2])
+        self.assertIn("border-top:1px solid #dddddd", paragraphs[2])
+        self.assertIn("padding-top:12px", paragraphs[2])
+        self.assertIn("Sent by Professor Estes via Clarity Grader<br>", paragraphs[2])
+        self.assertNotIn("white-space", html)
+        self.assertNotIn("pre-wrap", html)
+        self.assertNotIn("<Jane>", html)
+        self.assertIn("<!DOCTYPE html>", html)
+        self.assertIn('<html lang="en">', html)
+        self.assertIn('<meta charset="utf-8">', html)
+        self.assertIn("<title>Progress &lt;report&gt; &amp; more</title>", html)
+        self.assertIn('style="max-width:600px;"', html)
 
 
 class TestParseBlankGradesheetCsv(unittest.TestCase):
@@ -2152,6 +2363,17 @@ class TestImportRosterNameMatch(unittest.TestCase):
             "profiles": {"id": "stu-1", "full_name": "Doe, Jane"},
         }]
 
+    def test_import_does_not_insert_grade_change_log(self):
+        rv, _, writes, grade_rows = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "M"}}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 80},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(grade_rows)
+        self.assertEqual(grade_rows[0]["last_modified_by"], "inst1")
+        self.assertNotIn("grade_change_log.insert", writes)
+
     def test_first_import_sets_current_and_previous_equal(self):
         rv, _, writes, grade_rows = self._post_grade_import(
             [{
@@ -2648,17 +2870,8 @@ class TestImportGradesRateLimit(unittest.TestCase):
         self.assertNotEqual(rv.status_code, 429)
 
 
-class TestGradeChangeLogUpserts(unittest.TestCase):
-    """Grade UPSERT operations must write an audit row to grade_change_log.
-
-    Before fix: _log_grade_upserts did not exist — grade_change_log only ever
-    received DELETE rows from _log_grade_deletions. Every score written via
-    save_grades or api_import_grades was invisible in the
-    audit log.
-    After fix: save_grades calls _log_grade_upserts after a successful upsert,
-    producing operation="UPSERT" rows that mirror the rows written to the grades
-    table.
-    """
+class TestGradeChangeLog(unittest.TestCase):
+    """Python writes DELETE audit rows. INSERT and UPDATE belong to the trigger."""
 
     def setUp(self):
         from app import create_app
@@ -2666,16 +2879,11 @@ class TestGradeChangeLogUpserts(unittest.TestCase):
         self.app.config["TESTING"] = True
         self.client = self.app.test_client()
 
-    def _make_sa_mock(self):
-        """Return (sa, grade_rows_captured, log_rows_captured).
-
-        Uses table-name dispatch via side_effect so grades.upsert() and
-        grade_change_log.insert() are tracked independently.
-        """
+    def _make_sa_mock(self, existing_grades=None):
         grade_rows = []
         log_rows = []
         exec_m = MagicMock()
-        exec_m.data = []
+        exec_m.data = list(existing_grades or [])
 
         def make_q():
             q = MagicMock()
@@ -2704,70 +2912,184 @@ class TestGradeChangeLogUpserts(unittest.TestCase):
         )
         return sa, grade_rows, log_rows
 
-    def test_save_grades_writes_upsert_log_row(self):
-        """save_grades must insert an operation=UPSERT entry per grade written."""
-        from app import routes as r
-        sa, grade_rows, log_rows = self._make_sa_mock()
-
+    def _login(self):
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
             sess["csrf_token"] = "test-csrf"
 
-        with unittest.mock.patch.object(r, "supabase_admin", sa), \
-                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
-                unittest.mock.patch.object(r, "_class_auto_convert_m_enabled", return_value=False), \
-                unittest.mock.patch.object(r, "_enrolled_student_ids_for_class", return_value={"stu-1"}), \
-                unittest.mock.patch.object(r.Course, "get_assignment_lo_ids", return_value=["lo-x"]), \
-                unittest.mock.patch.object(
-                    r.Homework, "get_hw_scores_map_for_assignment", return_value={"stu-1": 80}
-                ):
-            rv = self.client.post(
-                "/api/class/class-1/save-grades",
-                json={"assignment_id": "asg-1", "grades": {"stu-1|lo-x": "M"}},
-                headers={"X-CSRF-Token": "test-csrf"},
-            )
+    def _save_patches(self, r, sa, hw_map):
+        return (
+            unittest.mock.patch.object(r, "supabase_admin", sa),
+            unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True),
+            unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True),
+            unittest.mock.patch.object(r, "_class_auto_convert_m_enabled", return_value=False),
+            unittest.mock.patch.object(r, "_enrolled_student_ids_for_class", return_value={"stu-1"}),
+            unittest.mock.patch.object(r.Course, "get_assignment_lo_ids", return_value=["lo-x"]),
+            unittest.mock.patch.object(
+                r.Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
+            ),
+        )
 
-        self.assertEqual(rv.status_code, 200, rv.get_json())
-        self.assertEqual(len(grade_rows), 1, "sanity: one grade row must be upserted")
-        self.assertEqual(len(log_rows), 1, "exactly one audit row must be written to grade_change_log")
-        entry = log_rows[0]
-        self.assertEqual(entry["operation"], "UPSERT")
-        self.assertEqual(entry["student_id"], "stu-1")
-        self.assertEqual(entry["learning_objective_id"], "lo-x")
-        self.assertEqual(entry["assignment_id"], "asg-1")
-        self.assertEqual(entry["changed_by"], "inst1")
-        self.assertIsNone(entry["old_value"])
-        self.assertEqual(entry["new_value"]["top_score"], "M")
-
-    def test_save_grades_empty_payload_produces_no_log(self):
-        """An empty grades dict must produce no upsert and no audit log row
-        — _log_grade_upserts must short-circuit on empty rows."""
+    def test_save_grades_empty_payload_writes_no_audit_row(self):
         from app import routes as r
         sa, grade_rows, log_rows = self._make_sa_mock()
-
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = "inst1"
-            sess["csrf_token"] = "test-csrf"
-
-        with unittest.mock.patch.object(r, "supabase_admin", sa), \
-                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
-                unittest.mock.patch.object(r, "_class_auto_convert_m_enabled", return_value=False), \
-                unittest.mock.patch.object(r, "_enrolled_student_ids_for_class", return_value={"stu-1"}), \
-                unittest.mock.patch.object(r.Course, "get_assignment_lo_ids", return_value=["lo-x"]), \
-                unittest.mock.patch.object(
-                    r.Homework, "get_hw_scores_map_for_assignment", return_value={}
-                ):
+        self._login()
+        patches = self._save_patches(r, sa, {})
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
             rv = self.client.post(
                 "/api/class/class-1/save-grades",
                 json={"assignment_id": "asg-1", "grades": {}},
                 headers={"X-CSRF-Token": "test-csrf"},
             )
-
         self.assertEqual(rv.status_code, 200)
         self.assertEqual(grade_rows, [])
-        self.assertEqual(log_rows, [], "no grade written → no audit row must appear")
+        self.assertEqual(log_rows, [])
+
+    def test_save_grades_does_not_insert_grade_change_log(self):
+        from app import routes as r
+        sa, grade_rows, log_rows = self._make_sa_mock()
+        self._login()
+        patches = self._save_patches(r, sa, {"stu-1": 80})
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+            rv = self.client.post(
+                "/api/class/class-1/save-grades",
+                json={"assignment_id": "asg-1", "grades": {"stu-1|lo-x": "M"}},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertEqual(len(grade_rows), 1)
+        self.assertEqual(grade_rows[0]["last_modified_by"], "inst1")
+        self.assertEqual(log_rows, [])
+
+    def test_save_grades_upsert_failure_returns_500_after_one_attempt(self):
+        from app import routes as r
+        upsert_calls = []
+        grades_q = MagicMock()
+        grades_q.select.return_value = grades_q
+        grades_q.eq.return_value = grades_q
+        grades_q.in_.return_value = grades_q
+        grades_q.execute.return_value = MagicMock(data=[])
+
+        def upsert(rows, **kwargs):
+            upsert_calls.append(rows)
+            failed = MagicMock()
+            failed.execute.side_effect = RuntimeError("grades upsert failed")
+            return failed
+
+        grades_q.upsert.side_effect = upsert
+        sa = MagicMock()
+        sa.table.return_value = grades_q
+        self._login()
+        patches = self._save_patches(r, sa, {"stu-1": 80})
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+            rv = self.client.post(
+                "/api/class/class-1/save-grades",
+                json={"assignment_id": "asg-1", "grades": {"stu-1|lo-x": "M"}},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 500)
+        self.assertEqual(rv.get_json()["error"], "Could not save grades")
+        self.assertEqual(len(upsert_calls), 1)
+
+    def test_promoter_does_not_insert_grade_change_log(self):
+        from app import routes as r
+        sa, grade_rows, log_rows = self._make_sa_mock(existing_grades=[{
+            "student_id": "stu-1",
+            "learning_objective_id": "lo-x",
+            "assignment_id": "asg-1",
+            "top_score": "M",
+            "counts_for_mastery": False,
+        }])
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=["lo-x"]):
+            n = r._promote_non_counting_masteries_for_student("class-1", "stu-1", changed_by="inst1")
+        self.assertEqual(n, 1)
+        self.assertEqual(grade_rows[0]["last_modified_by"], "inst1")
+        self.assertEqual(log_rows, [])
+
+    def test_allowed_operations_and_python_writer(self):
+        from app import routes as r
+        self.assertEqual(
+            r.GRADE_LOG_OPERATIONS,
+            (r.GRADE_LOG_INSERT, r.GRADE_LOG_UPDATE, r.GRADE_LOG_DELETE),
+        )
+        self.assertEqual(r.GRADE_LOG_OPERATIONS, ("INSERT", "UPDATE", "DELETE"))
+        sa, _grade_rows, log_rows = self._make_sa_mock()
+        with unittest.mock.patch.object(r, "supabase_admin", sa):
+            r._log_grade_deletions(
+                [{
+                    "student_id": "stu-1",
+                    "learning_objective_id": "lo-x",
+                    "assignment_id": "asg-1",
+                    "top_score": "R",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                }],
+                "class-1",
+                "inst1",
+            )
+        ops = {row["operation"] for row in log_rows}
+        self.assertEqual(ops, {r.GRADE_LOG_DELETE})
+        self.assertTrue(ops <= set(r.GRADE_LOG_OPERATIONS))
+
+    def test_constraint_violation_logs_error_with_operation(self):
+        from app import routes as r
+
+        class CheckViolation(Exception):
+            def __init__(self):
+                super().__init__("grade_change_log_operation_check")
+                self.code = "23514"
+
+        q = MagicMock()
+        q.insert.return_value = q
+        q.execute.side_effect = CheckViolation()
+        sa = MagicMock()
+        sa.table.return_value = q
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r.logger, "error") as err, \
+                unittest.mock.patch.object(r.logger, "warning") as warn:
+            r._log_grade_deletions(
+                [{
+                    "student_id": "stu-1",
+                    "learning_objective_id": "lo-x",
+                    "top_score": "R",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                }],
+                "class-1",
+                "inst1",
+            )
+        warn.assert_not_called()
+        self.assertIn(r.GRADE_LOG_DELETE, err.call_args[0])
+
+    def test_missing_table_logs_warning_only(self):
+        from app import routes as r
+
+        class MissingTable(Exception):
+            def __init__(self):
+                super().__init__({"code": "42P01", "message": "grade_change_log does not exist"})
+
+        q = MagicMock()
+        q.insert.return_value = q
+        q.execute.side_effect = MissingTable()
+        sa = MagicMock()
+        sa.table.return_value = q
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r.logger, "error") as err, \
+                unittest.mock.patch.object(r.logger, "warning") as warn:
+            r._log_grade_deletions(
+                [{
+                    "student_id": "stu-1",
+                    "learning_objective_id": "lo-x",
+                    "top_score": "R",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                }],
+                "class-1",
+                "inst1",
+            )
+        err.assert_not_called()
+        warn.assert_called()
 
 
 class TestMaxLengthValidation(unittest.TestCase):
@@ -3949,6 +4271,67 @@ class TestFullClassDataGradePaging(unittest.TestCase):
             self.assertEqual(enrollment["profiles"]["grades"], [])
 
 
+class TestFullClassSelect(unittest.TestCase):
+    def test_one_classes_select_omits_hw_pass_columns(self):
+        from app.models import Course
+
+        selects = []
+
+        class _Result:
+            def __init__(self, data):
+                self.data = data
+
+        class _Query:
+            def __init__(self, name):
+                self.name = name
+
+            def select(self, cols, *args, **kwargs):
+                selects.append((self.name, cols))
+                return self
+
+            def eq(self, *args, **kwargs):
+                return self
+
+            def in_(self, *args, **kwargs):
+                return self
+
+            def order(self, *args, **kwargs):
+                return self
+
+            def range(self, *args, **kwargs):
+                return self
+
+            def execute(self):
+                if self.name == "classes":
+                    return _Result([{
+                        "id": "c1",
+                        "name": "MW",
+                        "semester": "Fall 2026",
+                        "days": "MW",
+                        "section_number": "F26",
+                        "auto_convert_m": False,
+                        "is_online": False,
+                    }])
+                return _Result([])
+
+        class _Client:
+            def table(self, name):
+                return _Query(name)
+
+        with unittest.mock.patch("app.models.supabase_admin", _Client()):
+            class_data = Course.get_full_class_data("c1")
+
+        class_selects = [cols for name, cols in selects if name == "classes"]
+        self.assertEqual(len(class_selects), 1)
+        self.assertNotIn("hw_passes_enabled", class_selects[0])
+        self.assertNotIn("hw_passes_allowed", class_selects[0])
+        self.assertEqual(
+            class_selects[0],
+            "id, name, semester, days, section_number, auto_convert_m, is_online",
+        )
+        self.assertEqual(class_data["name"], "MW")
+
+
 class TestStudentProgressCardRules(unittest.TestCase):
     def _card(self, count):
         from types import SimpleNamespace
@@ -4794,6 +5177,7 @@ class TestClassHeaderTitle(unittest.TestCase):
             student_id="s1",
             student_name="Lee, Ana",
             student_email="a@b.edu",
+            instructor_title="Professor Estes",
             learning_objectives=[],
             class_name="Test Upload",
             class_days="MW",
@@ -4811,6 +5195,7 @@ class TestClassHeaderTitle(unittest.TestCase):
             students=[],
             learning_objectives=[],
             assignments=[],
+            instructor_title="Professor Estes",
         )
         self.assertEqual(reports.count("Test Upload | MW | F26"), 2)
         self.assertIn('mt-0.5">Test Upload</p>\';', reports)
@@ -4857,6 +5242,7 @@ class TestClassHeaderTitle(unittest.TestCase):
             ],
             learning_objectives=[{"id": "lo1", "vendor_code": "D1"}],
             assignments=[],
+            instructor_title="Professor Estes",
         )
         parser = _Rows()
         parser.feed(html)
@@ -5043,6 +5429,15 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         self.assertNotIn("profiles", deleted_tables)
         self.assertTrue(any(e["table"] == "grade_change_log" and e["op"] == "insert" for e in log))
         self.assertFalse(any(e["table"] == "grade_change_log" and e["op"] == "delete" for e in log))
+        from app import routes as r
+        audit_rows = [
+            row
+            for entry in log
+            if entry.get("table") == "grade_change_log" and entry.get("op") == "insert"
+            for row in (entry.get("rows") or [])
+        ]
+        self.assertTrue(audit_rows)
+        self.assertTrue(all(row["operation"] == r.GRADE_LOG_DELETE for row in audit_rows))
         for entry in log:
             for _op, _column, value in entry["filters"]:
                 values = value if isinstance(value, list) else [value]

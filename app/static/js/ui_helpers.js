@@ -103,12 +103,33 @@
     };
   }
 
+  function studentGreetingName(fullName) {
+    const raw = String(fullName == null ? "" : fullName);
+    const comma = raw.indexOf(",");
+    if (comma < 0) return "student";
+    const given = raw.slice(comma + 1).trim();
+    return given || "student";
+  }
+
+  function reportEmailFooter(title, className) {
+    const who = title == null ? "" : String(title);
+    const klass = className == null ? "" : String(className);
+    return [
+      "Sent by " + who + " via Clarity Grader",
+      "Class: " + klass,
+      "You are receiving this because you are enrolled in " + klass + ".",
+      "This is an automated message. Replies are not monitored. Please contact your instructor directly.",
+    ].join("\n");
+  }
+
   window.ClarityUI = {
     escapeHtml,
     apiRequest,
     applyInstructorModeVisibility,
     startMobileCsvPoll,
     debounce,
+    studentGreetingName,
+    reportEmailFooter,
   };
 })();
 

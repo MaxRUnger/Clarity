@@ -59,12 +59,8 @@
                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600 dark:text-slate-400">
                   {% if class.semester %}
                   <span>{{ class.semester }}</span>
+                  <span class="text-slate-400 dark:text-slate-500" aria-hidden="true">•</span>
                   {% endif %}
-                  {% if class.number %}
-                  {% if class.semester %}<span class="text-slate-400 dark:text-slate-500" aria-hidden="true">•</span>{% endif %}
-                  <span>{{ class.number }}</span>
-                  {% endif %}
-                  {% if class.semester or class.number %}<span class="text-slate-400 dark:text-slate-500" aria-hidden="true">•</span>{% endif %}
                   {% if class.is_online %}
                   <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">Online</span>
                   {% else %}

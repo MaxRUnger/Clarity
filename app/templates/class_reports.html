@@ -507,7 +507,7 @@ td[data-lo-id] .mastery-badge {
 <script id="assignmentsJson" type="application/json">{{ assignments | tojson }}</script>
 <script id="losJson" type="application/json">{{ learning_objectives | tojson }}</script>
 <script id="classIdJson" type="application/json">{{ class_id | tojson }}</script>
-<script id="instructorFullNameJson" type="application/json">{{ (session.get('full_name') or '') | tojson }}</script>
+<script id="instructorTitleJson" type="application/json">{{ instructor_title | tojson }}</script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 
@@ -519,27 +519,7 @@ const classId = JSON.parse(document.getElementById('classIdJson').textContent);
 const learningObjectiveCodeById = Object.fromEntries(
   learningObjectivesData.map((lo) => [String(lo.id), String(lo.vendor_code || '')])
 );
-// Read instructor name from a JSON-typed <script> block (same pattern as the
-// other server-injected values above) so the editor's JS language service
-// does not mis-parse a bare template substitution as JS destructuring.
-const instructorFullName = JSON.parse(document.getElementById('instructorFullNameJson').textContent) || '';
-function toTitleCaseWord(word) {
-  const w = String(word || '').trim();
-  if (!w) return '';
-  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-}
-function instructorLastName(fullName) {
-  const raw = String(fullName || '').trim();
-  if (!raw) return '';
-  if (raw.indexOf(',') >= 0) {
-    return toTitleCaseWord(raw.split(',')[0].trim());
-  }
-  const parts = raw.split(/\s+/).filter(Boolean);
-  return parts.length ? toTitleCaseWord(parts[parts.length - 1]) : '';
-}
-const instructorSignoff = instructorLastName(instructorFullName)
-  ? ('Professor ' + instructorLastName(instructorFullName))
-  : 'Your instructor';
+const instructorTitle = JSON.parse(document.getElementById('instructorTitleJson').textContent) || '';
 const chevronSvg = '<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>';
 const assignmentReportEl = document.getElementById('assignmentReport');
 const studentHistoryPanelEl = document.getElementById('studentHistoryPanel');
@@ -1181,7 +1161,7 @@ function getIndividualReportParts(student, assignmentIdOverride) {
 function buildEmailPayloadForStudent(student, assignmentIdOverride) {
   const parts = getIndividualReportParts(student, assignmentIdOverride);
   const lines = [
-    'Hello student,',
+    'Hello ' + window.ClarityUI.studentGreetingName(parts.student.name) + ',',
     '',
     'Class: ' + (parts.className || ''),
     'Assignment: ' + parts.assignmentLabel,
@@ -1195,7 +1175,7 @@ function buildEmailPayloadForStudent(student, assignmentIdOverride) {
     lines.push(t + '  |  ' + String(r.grade || 'Not graded'));
   });
   lines.push('');
-  lines.push('— ' + instructorSignoff + ' (via Project Clarity)');
+  lines.push(window.ClarityUI.reportEmailFooter(instructorTitle, parts.className || ''));
   let body = lines.join('\n');
   if (body.length > 2000) {
     body = body.slice(0, 1970) + '\n\n[Message trimmed. Ask your instructor for the full printed report if needed.]';
@@ -1207,7 +1187,7 @@ function buildEmailPayloadForStudent(student, assignmentIdOverride) {
 function buildAllAssignmentsEmailPayloadForStudent(student) {
   const className = document.querySelector('#view-all p.text-sm')?.textContent.trim() || '';
   const lines = [
-    'Hello student,',
+    'Hello ' + window.ClarityUI.studentGreetingName(student.name) + ',',
     '',
     'Class: ' + (className || ''),
     'Date: ' + new Date().toLocaleDateString(),
@@ -1240,7 +1220,7 @@ function buildAllAssignmentsEmailPayloadForStudent(student) {
     lines.push('');
   });
 
-  lines.push('— ' + instructorSignoff + ' (via Project Clarity)');
+  lines.push(window.ClarityUI.reportEmailFooter(instructorTitle, className || ''));
   let body = lines.join('\n');
   if (body.length > 2000) {
     body = body.slice(0, 1970) + '\n\n[Message trimmed. Ask your instructor for the full printed report if needed.]';
@@ -1301,6 +1281,16 @@ function emailStudentReport(studentId, btnEl, assignmentIdOverride) {
   });
 }
 
+function bulkEmailResultText(data) {
+  const sent = Number(data && data.sent || 0);
+  const skipped = Number(data && data.skipped || 0);
+  const failed = Number(data && data.failed || 0);
+  const reasons = Array.isArray(data && data.failures) ? data.failures.slice(0, 5) : [];
+  let text = 'Sent ' + sent + '. Skipped ' + skipped + '. Failed ' + failed + '.';
+  if (reasons.length) text += '\n\n' + reasons.join('\n');
+  return text;
+}
+
 function emailAllVisibleReports(btnEl) {
   const visibleRows = [...document.querySelectorAll('#assignmentReport .student-row:not(.hidden)')];
   const visibleIds = [...new Set(visibleRows.map((row) => String(row.getAttribute('data-student-id') || '')).filter(Boolean))];
@@ -1354,13 +1344,10 @@ function emailAllVisibleReports(btnEl) {
   }).then((result) => {
     const data = result.data || {};
     if (!result.ok || !data.success) {
-      const failures = Array.isArray(data.failures) && data.failures.length
-        ? '\n\n' + data.failures.slice(0, 5).join('\n')
-        : '';
-      alert('Could not send email reports: ' + (data.error || result.errorMessage || 'Unknown error') + failures);
+      alert('Could not send email reports: ' + (data.error || result.errorMessage || 'Unknown error') + '\n\n' + bulkEmailResultText(data));
       return;
     }
-    alert('Email send complete.');
+    alert(bulkEmailResultText(data));
   }).finally(() => {
     if (btnEl) {
       btnEl.disabled = false;
@@ -1423,13 +1410,10 @@ function emailSelectedAllAssignments(btnEl) {
   }).then((result) => {
     const data = result.data || {};
     if (!result.ok || !data.success) {
-      const failures = Array.isArray(data.failures) && data.failures.length
-        ? '\n\n' + data.failures.slice(0, 5).join('\n')
-        : '';
-      alert('Could not send selected reports: ' + (data.error || result.errorMessage || 'Unknown error') + failures);
+      alert('Could not send selected reports: ' + (data.error || result.errorMessage || 'Unknown error') + '\n\n' + bulkEmailResultText(data));
       return;
     }
-    alert('Email send complete.');
+    alert(bulkEmailResultText(data));
   }).finally(() => {
     if (btnEl) {
       btnEl.disabled = false;

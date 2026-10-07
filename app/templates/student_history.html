@@ -160,6 +160,7 @@
   'email': student_email or '',
   'student_name': student_name,
   'class_name': class_name,
+  'instructor_title': instructor_title,
   'objectives': learning_objectives
 } | tojson }}</script>
 <script>
@@ -179,7 +180,7 @@ function emailStudentHistoryReport(btnEl) {
     return;
   }
   var lines = [
-    'Hello student,',
+    'Hello ' + window.ClarityUI.studentGreetingName(p.student_name) + ',',
     '',
     'Here is your student history report (same information as the printable page).',
     '',
@@ -202,7 +203,7 @@ function emailStudentHistoryReport(btnEl) {
     }
     lines.push('');
   });
-  lines.push('— Your instructor (via Project Clarity)');
+  lines.push(window.ClarityUI.reportEmailFooter(p.instructor_title, p.class_name || ''));
   var body = lines.join('\n');
   if (body.length > 2000) {
     body = body.slice(0, 1970) + '\n\n[Message trimmed. Use Print full report for the complete view.]';
