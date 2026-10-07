@@ -589,32 +589,19 @@ def annotate_learning_objective_rows_for_preview(
     return out
 
 
-def _is_lo_name_not_null_error(err: Exception) -> bool:
-    msg = str(err or "").lower()
-    return (
-        'learning_objectives' in msg
-        and 'null value in column "name"' in msg
-        and 'not-null constraint' in msg
-    )
-
-
-def _insert_learning_objectives_compat(payload: Any):
-    """Insert LOs, retrying with legacy name when old DB schema still requires it."""
-    try:
-        return supabase_admin.table("learning_objectives").insert(payload).execute()
-    except Exception as e:
-        if not _is_lo_name_not_null_error(e):
-            raise
-        rows = payload if isinstance(payload, list) else [payload]
-        legacy_rows: List[Dict[str, Any]] = []
-        for row in rows:
-            r = dict(row or {})
-            vc = (r.get("vendor_code") or "").strip()
-            if not r.get("name"):
-                r["name"] = vc
-            legacy_rows.append(r)
-        legacy_payload = legacy_rows if isinstance(payload, list) else legacy_rows[0]
-        return supabase_admin.table("learning_objectives").insert(legacy_payload).execute()
+def _insert_learning_objectives(payload: Any):
+    """Insert LO rows. name is the given name, or the vendor code when none is given."""
+    rows = payload if isinstance(payload, list) else [payload]
+    named = []
+    for row in rows:
+        item = dict(row or {})
+        name = str(item.get("name") or "").strip()
+        if not name:
+            name = str(item.get("vendor_code") or "").strip()
+        item["name"] = name
+        named.append(item)
+    body = named if isinstance(payload, list) else named[0]
+    return supabase_admin.table("learning_objectives").insert(body).execute()
 
 
 def import_learning_objectives_rows(class_id: str, rows: List[Dict[str, Any]]) -> Tuple[int, int, List[str]]:
@@ -663,7 +650,7 @@ def import_learning_objectives_rows(class_id: str, rows: List[Dict[str, Any]]) -
         if not piece:
             continue
         try:
-            _insert_learning_objectives_compat(piece)
+            _insert_learning_objectives(piece)
             inserted += len(piece)
         except Exception as e:
             err_id = str(uuid4())
@@ -2159,7 +2146,7 @@ def copy_class(class_id):
             lo_rows = [{**spec, "class_id": new_id} for spec in lo_specs]
             chunk = 100
             for i in range(0, len(lo_rows), chunk):
-                _insert_learning_objectives_compat(lo_rows[i : i + chunk])
+                _insert_learning_objectives(lo_rows[i : i + chunk])
 
         return redirect(url_for("main.instructor_dashboard"))
     except Exception as e:
@@ -3624,7 +3611,7 @@ def create_lo_handler(class_id):
                 req_ms = DEFAULT_REQUIRED_MS
             req_ms = max(1, min(5, req_ms))
             try:
-                _insert_learning_objectives_compat({
+                _insert_learning_objectives({
                     "class_id": class_id,
                     "vendor_code": lo_code,
                     "description": lo_description or None,
@@ -4457,13 +4444,13 @@ def api_import_grades():
 
     # Create missing LOs from extracted list
     for lo_name in extracted_los:
-        if not lo_name:
+        if not lo_name or not str(lo_name).strip():
             continue
         key = lo_name.strip().lower()
         if key in lo_map:
             continue
         try:
-            res = _insert_learning_objectives_compat({
+            res = _insert_learning_objectives({
                 "class_id": class_id,
                 "vendor_code": lo_name,
                 "description": None

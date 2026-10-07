@@ -2176,6 +2176,16 @@ class TestImportRosterNameMatch(unittest.TestCase):
             )
         return rv, grades, writes, grade_rows
 
+    def test_whitespace_only_objective_is_not_inserted(self):
+        rv, _grades, writes, _grade_rows = self._post_grade_import(
+            [],
+            [],
+            learning_objectives=["   ", ""],
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        self.assertNotIn("learning_objectives.insert", writes)
+
     def test_same_name_enrolled_only_in_another_class_is_not_a_match(self):
         rv, grades, writes, grade_rows = self._post_grade_import(
             [{"name": "Doe, Jane", "grades": {"D1": "M"}}],
@@ -4330,6 +4340,75 @@ class TestFullClassSelect(unittest.TestCase):
             "id, name, semester, days, section_number, auto_convert_m, is_online",
         )
         self.assertEqual(class_data["name"], "MW")
+
+
+class TestInsertLearningObjectives(unittest.TestCase):
+    def _insert(self, payload, execute_error=None):
+        from app import routes as r
+        inserted = []
+
+        class _Query:
+            def insert(self, body):
+                inserted.append(body)
+                return self
+
+            def execute(self):
+                if execute_error is not None:
+                    raise execute_error
+                return type("R", (), {"data": [{"id": "lo-1"}]})()
+
+        class _Client:
+            def table(self, name):
+                return _Query()
+
+        with unittest.mock.patch.object(r, "supabase_admin", _Client()):
+            result = r._insert_learning_objectives(payload)
+        return inserted, result
+
+    def test_missing_name_uses_vendor_code_on_the_only_insert(self):
+        inserted, result = self._insert({
+            "class_id": "c1",
+            "vendor_code": "D1",
+            "description": None,
+        })
+        self.assertEqual(len(inserted), 1)
+        self.assertEqual(inserted[0]["name"], "D1")
+        self.assertEqual(inserted[0]["vendor_code"], "D1")
+        self.assertEqual(result.data[0]["id"], "lo-1")
+
+    def test_given_name_is_kept(self):
+        inserted, _result = self._insert({
+            "class_id": "c1",
+            "vendor_code": "D1",
+            "name": "Lab 1",
+        })
+        self.assertEqual(len(inserted), 1)
+        self.assertEqual(inserted[0]["name"], "Lab 1")
+        self.assertEqual(inserted[0]["vendor_code"], "D1")
+
+    def test_failed_insert_is_not_retried(self):
+        from app import routes as r
+        inserted = []
+
+        class _Query:
+            def insert(self, body):
+                inserted.append(body)
+                return self
+
+            def execute(self):
+                raise RuntimeError("db down")
+
+        class _Client:
+            def table(self, name):
+                return _Query()
+
+        with unittest.mock.patch.object(r, "supabase_admin", _Client()):
+            with self.assertRaises(RuntimeError):
+                r._insert_learning_objectives({
+                    "class_id": "c1",
+                    "vendor_code": "D1",
+                })
+        self.assertEqual(len(inserted), 1)
 
 
 class TestStudentProgressCardRules(unittest.TestCase):
