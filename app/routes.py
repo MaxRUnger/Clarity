@@ -894,8 +894,11 @@ def _gradesheet_csv_data_rows(
     learning_objectives: List[Dict[str, Any]],
     hw_map: Dict[str, Any],
     letter_map: Dict[Tuple[str, str], str],
+    include_hw_prev: bool = False,
+    prev_map: Optional[Dict[str, Any]] = None,
 ) -> List[List[str]]:
     rows: List[List[str]] = []
+    prev_scores = prev_map or {}
     for student in students:
         sid = str(student.get("id") or "").strip()
         name = _csv_formula_safe(student.get("full_name") or "")
@@ -904,7 +907,11 @@ def _gradesheet_csv_data_rows(
             _csv_formula_safe(letter_map.get((sid, str(lo.get("id") or "").strip()), ""))
             for lo in learning_objectives
         ]
-        rows.append([name, hw_cell] + lo_cells)
+        if include_hw_prev:
+            prev_cell = _csv_formula_safe(_csv_format_hw_score(prev_scores.get(sid)))
+            rows.append([name, prev_cell, hw_cell] + lo_cells)
+        else:
+            rows.append([name, hw_cell] + lo_cells)
     return rows
 
 
@@ -920,6 +927,7 @@ def _build_gradesheet_csv_text(
     vendor_codes: List[str],
     data_rows: List[List[str]],
     include_clear_warning: bool,
+    include_hw_prev: bool = False,
 ) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
@@ -928,7 +936,12 @@ def _build_gradesheet_csv_text(
     if include_clear_warning:
         writer.writerow(["NOTE", _BLANK_GRADESHEET_NOTE])
     writer.writerow([])
-    writer.writerow(["Student Name", "HW"] + vendor_codes)
+    header = ["Student Name"]
+    if include_hw_prev:
+        header.append(Homework.HW_PREV_HEADER)
+    header.append("HW")
+    header.extend(vendor_codes)
+    writer.writerow(header)
     for data_row in data_rows:
         writer.writerow(data_row)
     return "\ufeff" + output.getvalue()
@@ -1613,6 +1626,69 @@ def decide_student_enrollment(index, class_id, email, typed_name):
     return "reuse", stored_name, profile_id
 
 
+def validate_student_name_and_email(raw_name, raw_email):
+    """Return (canvas name, normalized email, error). One error string for add and edit."""
+    if not str(raw_email).strip() or not str(raw_name).strip():
+        return None, None, "Email and name are required"
+    name = require_canvas_name(raw_name)
+    if not name:
+        return None, None, COMMA_REQUIRED
+    if len(name) > 255:
+        return None, None, "Name must be 255 characters or fewer"
+    if len(str(raw_email).strip()) > 255:
+        return None, None, "Email must be 255 characters or fewer"
+    email = normalize_email(str(raw_email))
+    if not email:
+        return None, None, "Invalid email format"
+    return name, email, None
+
+
+def _filter_query(query, filters):
+    for op, column, value in filters:
+        if op == "eq":
+            query = query.eq(column, value)
+        else:
+            query = query.in_(column, value)
+    return query
+
+
+def class_student_removal_filters(class_id, student_id):
+    """Shared filters for the count and the delete, in delete order."""
+    lo_ids = list(Course.get_all_lo_ids_for_class(class_id) or [])
+    filters = []
+    if lo_ids:
+        filters.append((
+            "grades",
+            (
+                ("eq", "student_id", student_id),
+                ("in", "learning_objective_id", lo_ids),
+            ),
+        ))
+    filters.append((
+        "homework_scores",
+        (("eq", "class_id", class_id), ("eq", "student_id", student_id)),
+    ))
+    filters.append((
+        "free_passes",
+        (("eq", "class_id", class_id), ("eq", "student_id", student_id)),
+    ))
+    filters.append((
+        "enrollments",
+        (("eq", "class_id", class_id), ("eq", "student_id", student_id)),
+    ))
+    return filters
+
+
+def class_student_removal_counts(class_id, student_id):
+    filters = class_student_removal_filters(class_id, student_id)
+    counts = {"grades": 0, "homework_scores": 0, "free_passes": 0, "enrollments": 0}
+    for table, scope in filters:
+        query = supabase_admin.table(table).select("id", count="exact", head=True)
+        resp = _filter_query(query, scope).execute()
+        counts[table] = resp.count or 0
+    return counts
+
+
 @main_bp.route("/class/<class_id>/add_student", methods=["POST"])
 @api_instructor_required
 def add_student(class_id):
@@ -1622,19 +1698,9 @@ def add_student(class_id):
     raw_email = data.get("email") or ""
     raw_name = data.get("name") or ""
 
-    if not str(raw_email).strip() or not str(raw_name).strip():
-        return jsonify({"success": False, "error": "Email and name are required"}), 400
-
-    name = require_canvas_name(raw_name)
-    if not name:
-        return jsonify({"success": False, "error": COMMA_REQUIRED}), 400
-    if len(name) > 255:
-        return jsonify({"success": False, "error": "Name must be 255 characters or fewer"}), 400
-    if len(str(raw_email).strip()) > 255:
-        return jsonify({"success": False, "error": "Email must be 255 characters or fewer"}), 400
-    email = normalize_email(str(raw_email))
-    if not email:
-        return jsonify({"success": False, "error": "Invalid email format"}), 400
+    name, email, name_error = validate_student_name_and_email(raw_name, raw_email)
+    if name_error:
+        return jsonify({"success": False, "error": name_error}), 400
 
     owner_id = session.get("user_id")
     try:
@@ -1828,28 +1894,40 @@ def delete_student_from_class(class_id, student_id):
     if not _student_enrolled_in_class(class_id, student_id):
         return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
     try:
-        # Remove enrollment for this class only
-        supabase_admin.table("enrollments").delete().eq("class_id", class_id).eq("student_id", student_id).execute()
-
-        # Remove grades scoped to this class
-        lo_ids = Course.get_all_lo_ids_for_class(class_id)
-        if lo_ids:
-            try:
-                existing = supabase_admin.table("grades").select(
-                    "student_id, learning_objective_id, assignment_id, top_score, second_score, counts_for_mastery"
-                ).eq("student_id", student_id).in_("learning_objective_id", lo_ids).execute()
-                _log_grade_deletions(existing.data or [], class_id, session['user_id'])
-            except Exception as e:
-                logger.warning("Could not audit-log grade deletions for student %s: %s", student_id, e)
-            supabase_admin.table("grades").delete().eq("student_id", student_id).in_("learning_objective_id", lo_ids).execute()
-
-        # Remove homework scores for this class
-        supabase_admin.table("homework_scores").delete().eq("student_id", student_id).eq("class_id", class_id).execute()
-
+        filters = class_student_removal_filters(class_id, student_id)
+        grade_scope = next((scope for table, scope in filters if table == "grades"), None)
+        if grade_scope:
+            audit = (
+                supabase_admin.table("grades")
+                .select(
+                    "student_id, learning_objective_id, assignment_id, top_score, "
+                    "second_score, counts_for_mastery"
+                )
+                .order("id")
+            )
+            existing = fetch_all_rows(_filter_query(audit, grade_scope))
+            _log_grade_deletions(existing, class_id, session["user_id"])
+        for table, scope in filters:
+            _filter_query(supabase_admin.table(table).delete(), scope).execute()
         return jsonify({"success": True})
     except Exception as e:
         logger.error("Error deleting student %s from class %s: %s", student_id, class_id, e)
         return _safe_api_error("Could not delete student", 500, log_detail=e)
+
+
+@main_bp.route("/api/class/<class_id>/students/<student_id>/removal-counts", methods=["GET"])
+@api_instructor_required
+def api_student_removal_counts(class_id, student_id):
+    if not _instructor_owns_class(class_id):
+        return jsonify({"success": False, "error": "Forbidden"}), 403
+    if not _student_enrolled_in_class(class_id, student_id):
+        return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
+    counts = class_student_removal_counts(class_id, student_id)
+    return jsonify({
+        "success": True,
+        "grade_rows": counts["grades"],
+        "homework_scores": counts["homework_scores"],
+    })
 
 
 @main_bp.route("/api/class/<class_id>/students/<student_id>/update", methods=["POST"])
@@ -1874,20 +1952,9 @@ def api_update_student(class_id, student_id):
     raw_name = data.get("name") or ""
     raw_email = data.get("email") or ""
 
-    if not str(raw_name).strip():
-        return jsonify({"success": False, "error": "Name is required"}), 400
-    if len(str(raw_name).strip()) > 255:
-        return jsonify({"success": False, "error": "Name must be 255 characters or fewer"}), 400
-    name = require_canvas_name(raw_name)
-    if not name:
-        return jsonify({"success": False, "error": COMMA_REQUIRED}), 400
-    if not str(raw_email).strip():
-        return jsonify({"success": False, "error": "Email is required"}), 400
-    if len(str(raw_email).strip()) > 255:
-        return jsonify({"success": False, "error": "Email must be 255 characters or fewer"}), 400
-    email = normalize_email(str(raw_email))
-    if not email:
-        return jsonify({"success": False, "error": "Invalid email format"}), 400
+    name, email, name_error = validate_student_name_and_email(raw_name, raw_email)
+    if name_error:
+        return jsonify({"success": False, "error": name_error}), 400
 
     owner_id = session.get("user_id")
     try:
@@ -2413,11 +2480,12 @@ def export_assignment_csv(class_id, assignment_id):
     letter_map = _gradesheet_letter_map_for_assignment(
         assignment_id, students, learning_objectives
     )
+    prev_map = Homework.get_hw_prev_scores_map_for_assignment(class_id, assignment_id)
     data_rows = _gradesheet_csv_data_rows(
-        students, learning_objectives, hw_map, letter_map
+        students, learning_objectives, hw_map, letter_map, True, prev_map
     )
     csv_text = _build_gradesheet_csv_text(
-        assignment_name, date_value, vendor_codes, data_rows, False
+        assignment_name, date_value, vendor_codes, data_rows, False, True
     )
     safe_stem = secure_filename(str(assignment_name)) or "assignment"
     filename = f"{safe_stem}_gradesheet.csv"
@@ -2441,6 +2509,11 @@ def _csv_row_cells(row) -> List[str]:
 
 def _csv_row_is_blank(cells: List[str]) -> bool:
     return all(not c for c in cells)
+
+
+_GRADESHEET_HEADER_ERROR = (
+    "The header row must start with Student Name,HW followed by learning-objective codes."
+)
 
 
 def parse_blank_gradesheet_csv_text(
@@ -2491,11 +2564,16 @@ def parse_blank_gradesheet_csv_text(
     if (
         len(header) < 2
         or header[0].lower() != "student name"
-        or header[1].lower() != "hw"
     ):
-        return None, (
-            "The header row must start with Student Name,HW followed by learning-objective codes."
-        )
+        return None, _GRADESHEET_HEADER_ERROR
+
+    hw_indexes = [
+        idx for idx, col in enumerate(header)
+        if idx > 0 and col and col.strip().lower() == "hw"
+    ]
+    if len(hw_indexes) != 1:
+        return None, _GRADESHEET_HEADER_ERROR
+    hw_idx = hw_indexes[0]
 
     vendor_by_lower = {}
     for code in class_vendor_codes:
@@ -2504,10 +2582,13 @@ def parse_blank_gradesheet_csv_text(
             vendor_by_lower.setdefault(c.lower(), c)
 
     lo_headers: List[str] = []
+    lo_indexes: List[int] = []
     seen_lo = set()
     unknown: List[str] = []
-    for col in header[2:]:
-        if not col:
+    for idx, col in enumerate(header):
+        if idx == 0 or idx == hw_idx or not col:
+            continue
+        if Homework.is_hw_prev_header(col):
             continue
         canonical = vendor_by_lower.get(col.lower())
         if not canonical:
@@ -2518,6 +2599,7 @@ def parse_blank_gradesheet_csv_text(
             return None, f'Duplicate learning-objective column "{canonical}".'
         seen_lo.add(key)
         lo_headers.append(canonical)
+        lo_indexes.append(idx)
     if unknown:
         shown = ", ".join(unknown[:8])
         extra = f" (and {len(unknown) - 8} more)" if len(unknown) > 8 else ""
@@ -2539,15 +2621,14 @@ def parse_blank_gradesheet_csv_text(
         name = cells[0] if cells else ""
         if not name:
             continue
-        hw_raw = cells[1] if len(cells) > 1 else ""
+        hw_raw = cells[hw_idx] if hw_idx < len(cells) else ""
         homework_pct = None
         if hw_raw:
             parsed_hw = Homework.parse_import_hw_pct(hw_raw)
             homework_pct = str(parsed_hw) if parsed_hw is not None else hw_raw
 
         grades: Dict[str, str] = {}
-        for i, lo_code in enumerate(lo_headers):
-            idx = i + 2
+        for lo_code, idx in zip(lo_headers, lo_indexes):
             mark = cells[idx] if idx < len(cells) else ""
             grades[lo_code] = mark.upper() if mark else ""
 
@@ -3811,6 +3892,9 @@ def api_assignment_grades(class_id, assignment_id):
             "has_assignment_grades": has_assignment_grades,
             "counts_for_mastery_map": counts_for_mastery_map,
             "hw_scores": hw_map,
+            "hw_prev_scores": Homework.get_hw_prev_scores_map_for_assignment(
+                class_id, assignment_id
+            ),
             "revision_eligible": eligibility,
             "assignment_type": assignment_type,
         })
@@ -4194,33 +4278,6 @@ def api_toggle_mute(class_id):
         return _safe_api_error("Could not update mute state", 500, log_detail=e)
 
 
-@main_bp.route("/api/class/<class_id>/remove_student", methods=["POST"])
-@api_instructor_required
-def api_remove_student_from_class(class_id):
-    try:
-        if not _instructor_owns_class(class_id):
-            return jsonify({"success": False, "error": "Forbidden"}), 403
-        data = request.get_json()
-        student_id = data.get('student_id')
-        if not student_id:
-            return jsonify({"success": False, "error": "student_id is required"}), 400
-        if not _student_enrolled_in_class(class_id, student_id):
-            return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
-        supabase_admin.table("enrollments").delete() \
-            .eq("class_id", class_id).eq("student_id", student_id).execute()
-
-        # Also delete the student's grades for LOs belonging to this class
-        lo_ids = Course.get_all_lo_ids_for_class(class_id)
-        if lo_ids:
-            supabase_admin.table("grades").delete() \
-                .eq("student_id", student_id) \
-                .in_("learning_objective_id", lo_ids).execute()
-
-        return jsonify({"success": True}), 200
-    except Exception as e:
-        return _safe_api_error("Could not remove student", 500, log_detail=e)
-
-
 @main_bp.route("/api/import-grades", methods=["POST"])
 @api_login_required
 @rate_limited("import_grades", limit=30, window_sec=900)
@@ -4244,6 +4301,7 @@ def api_import_grades():
     extracted_los = [
         lo for lo in extracted_los
         if not Homework.is_import_sheet_hw_column(lo)
+        and not Homework.is_hw_prev_header(lo)
     ]
 
     student_entries: List[Tuple[str, Dict[str, Any]]] = []
@@ -4370,9 +4428,7 @@ def api_import_grades():
 
     imported = 0
     grade_rows = []
-    hw_rows = []
     to_clear_pairs: List[Dict[str, str]] = []
-    hw_clear_sids: List[str] = []
     skipped_hw_warnings: List[str] = []
     hw_storage_key = (
         Homework.resolve_hw_group_storage_key(class_id, assignment_id)
@@ -4384,6 +4440,8 @@ def api_import_grades():
         if assignment_id
         else {}
     )
+    stored_hw_map = dict(hw_map)
+    incoming_hw: Dict[str, Dict[str, Any]] = {}
 
     # Link all extracted LOs to the selected assignment (if not already linked)
     if assignment_id:
@@ -4415,22 +4473,15 @@ def api_import_grades():
 
         # Build grade rows to batch-upsert later
         grades = student.get('grades', {}) or {}
-        if "homework_pct" in student:
+        if "homework_pct" in student and assignment_id and hw_storage_key:
             parsed_hw = Homework.parse_import_hw_pct(student.get("homework_pct"))
             sid_key = str(profile_id).strip()
-            if assignment_id and hw_storage_key and parsed_hw is not None:
-                hw_rows.append(
-                    {
-                        "student_id": profile_id,
-                        "class_id": class_id,
-                        "homework_group": str(hw_storage_key).strip(),
-                        "score_pct": parsed_hw,
-                    }
-                )
+            if parsed_hw is not None:
+                incoming_hw[sid_key] = {
+                    "student_id": profile_id,
+                    "score_pct": parsed_hw,
+                }
                 hw_map[sid_key] = parsed_hw
-            elif assignment_id and hw_storage_key:
-                hw_clear_sids.append(profile_id)
-                hw_map.pop(sid_key, None)
         for lo_name, mark in grades.items():
             if not lo_name:
                 continue
@@ -4523,6 +4574,20 @@ def api_import_grades():
 
     _log_grade_upserts(grade_rows, str(class_id), session.get("user_id"))
 
+    hw_rows = []
+    for sid_key, inc in incoming_hw.items():
+        current = stored_hw_map[sid_key] if sid_key in stored_hw_map else None
+        decision = Homework.decide_hw_score_update(current, inc["score_pct"])
+        if decision["action"] == "unchanged":
+            continue
+        hw_rows.append({
+            "student_id": inc["student_id"],
+            "class_id": class_id,
+            "homework_group": str(hw_storage_key).strip(),
+            "score_pct": decision["score_pct"],
+            "prev_score_pct": decision["prev_score_pct"],
+        })
+
     # Persist homework % scores in homework_scores.
     try:
         if hw_rows:
@@ -4543,29 +4608,6 @@ def api_import_grades():
             to_clear_pairs,
             session.get("user_id"),
         )
-
-    try:
-        if hw_clear_sids and hw_storage_key:
-            uniq_hw = list({str(sid) for sid in hw_clear_sids if sid})
-            chunk_size = 150
-            for i in range(0, len(uniq_hw), chunk_size):
-                batch = uniq_hw[i:i + chunk_size]
-                existing_hw = (
-                    supabase_admin.table("homework_scores")
-                    .select("student_id, class_id, homework_group")
-                    .eq("class_id", class_id)
-                    .eq("homework_group", str(hw_storage_key).strip())
-                    .in_("student_id", batch)
-                    .execute()
-                )
-                for row in (existing_hw.data or []):
-                    supabase_admin.table("homework_scores").delete() \
-                        .eq("student_id", row["student_id"]) \
-                        .eq("class_id", class_id) \
-                        .eq("homework_group", str(hw_storage_key).strip()) \
-                        .execute()
-    except Exception as e:
-        logger.error("Error clearing homework scores on import: %s", e)
 
     return jsonify({
         "success": True,

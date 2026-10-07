@@ -10,6 +10,7 @@ Covers:
 import sys
 import os
 import io
+import re
 import unittest
 import unittest.mock
 from unittest.mock import MagicMock
@@ -39,6 +40,7 @@ from app.routes import (
     _gradesheet_letter_map_from_rows,
     _build_gradesheet_csv_text,
     _BLANK_GRADESHEET_NOTE,
+    _GRADESHEET_HEADER_ERROR,
     _enrolled_import_name_index,
     _lookup_enrolled_import_student_id,
     MAX_IMPORT_ROWS,
@@ -142,6 +144,7 @@ class TestHomeworkImportSheetColumn(unittest.TestCase):
         self.assertTrue(Homework.is_import_sheet_hw_column("  HW%  "))
         self.assertTrue(Homework.is_import_sheet_hw_column("Homework"))
         self.assertTrue(Homework.is_import_sheet_hw_column("HW1"))
+        self.assertFalse(Homework.is_import_sheet_hw_column("HW prev"))
         self.assertFalse(Homework.is_import_sheet_hw_column("EX1"))
         self.assertFalse(Homework.is_import_sheet_hw_column("A7"))
 
@@ -198,6 +201,30 @@ class TestHomeworkImportSheetColumn(unittest.TestCase):
         self.assertIsNone(Homework.parse_import_hw_pct("M"))
         self.assertIsNone(Homework.parse_import_hw_pct(""))
         self.assertIsNone(Homework.parse_import_hw_pct(None))
+
+    def test_decide_hw_score_update_first_changed_and_unchanged(self):
+        first = Homework.decide_hw_score_update(None, "80")
+        self.assertEqual(first["action"], "first_set")
+        self.assertEqual(first["score_pct"], 80)
+        self.assertEqual(first["prev_score_pct"], 80)
+
+        shifted = Homework.decide_hw_score_update(70, 85)
+        self.assertEqual(shifted["action"], "shift_and_set")
+        self.assertEqual(shifted["score_pct"], 85)
+        self.assertEqual(shifted["prev_score_pct"], 70)
+
+        same = Homework.decide_hw_score_update(70, 70)
+        self.assertEqual(same, {"action": "unchanged"})
+
+        pass_to_zero = Homework.decide_hw_score_update(-1, 0)
+        self.assertEqual(pass_to_zero["action"], "shift_and_set")
+        self.assertEqual(pass_to_zero["score_pct"], 0)
+        self.assertEqual(pass_to_zero["prev_score_pct"], -1)
+
+        pass_to_eighty = Homework.decide_hw_score_update(-1, 80)
+        self.assertEqual(pass_to_eighty["action"], "shift_and_set")
+        self.assertEqual(pass_to_eighty["score_pct"], 80)
+        self.assertEqual(pass_to_eighty["prev_score_pct"], -1)
 
     def test_student_has_recorded_score(self):
         self.assertFalse(Homework.student_has_recorded_score({}, "stu-1"))
@@ -764,6 +791,17 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
         self.assertEqual(captured_rows[0]["top_score"], "M")
         self.assertEqual(captured_rows[0]["counts_for_mastery"], True)
 
+    def test_auto_convert_does_not_read_previous_hw(self):
+        from app import routes as r
+        with unittest.mock.patch.object(r.Homework, "decide_hw_score_update") as decide:
+            rv_low, rows_low = self._patched_save_grades_call(hw_map={"stu-1": 64})
+            rv_high, rows_high = self._patched_save_grades_call(hw_map={"stu-1": 80})
+        decide.assert_not_called()
+        self.assertEqual(rv_low.status_code, 200)
+        self.assertEqual(rows_low[0]["counts_for_mastery"], False)
+        self.assertEqual(rv_high.status_code, 200)
+        self.assertEqual(rows_high[0]["counts_for_mastery"], True)
+
 
 class TestAssignmentHomeworkGroupRequired(unittest.TestCase):
     """create/update assignment reject a blank homework_group with a dedicated error."""
@@ -893,6 +931,59 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
         self.assertEqual(body.get("promoted_masteries"), 1)
         self.assertEqual(len(captured_upserts), 1)
         self.assertTrue(captured_upserts[0].get("counts_for_mastery"))
+
+    def test_typed_score_does_not_write_previous_or_shift(self):
+        from app import routes as r
+
+        captured = []
+
+        def make_query(table_name):
+            q = MagicMock()
+            if table_name == "homework_scores":
+                def upsert(rows, **kwargs):
+                    captured.extend(rows)
+                    return MagicMock(execute=MagicMock(return_value=MagicMock()))
+                q.upsert.side_effect = upsert
+            return q
+
+        sa = MagicMock()
+        sa.table.side_effect = make_query
+
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(
+                    r, "_student_enrolled_in_class", return_value=True
+                ), \
+                unittest.mock.patch.object(
+                    r, "_assignment_belongs_to_class", return_value=True
+                ), \
+                unittest.mock.patch.object(
+                    r.Homework,
+                    "resolve_hw_group_storage_key",
+                    return_value="hw-g1",
+                ), \
+                unittest.mock.patch.object(r.Homework, "decide_hw_score_update") as decide:
+            rv = self.client.post(
+                "/api/class/class-1/save-hw-percentage",
+                json={
+                    "student_id": "stu-1",
+                    "score": 91,
+                    "assignment_id": "asg-1",
+                    "prev_score_pct": 1,
+                },
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json().get("success"))
+        decide.assert_not_called()
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]["score_pct"], 91)
+        self.assertNotIn("prev_score_pct", captured[0])
 
 
 # ==========================================================================
@@ -1098,11 +1189,14 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
             unittest.mock.patch.object(
                 r.Homework, "get_hw_scores_map_for_assignment", return_value={}
             ),
+            unittest.mock.patch.object(
+                r.Homework, "get_hw_prev_scores_map_for_assignment", return_value={}
+            ),
         )
 
     def _get_assignment_grades(self, assignment_id, *, owns_class=True, belongs=True):
         patches = self._grades_patches(owns_class=owns_class, belongs=belongs)
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             return self.client.get(
                 f"/api/class/{CLASS_REPORTS_ID}/assignment/{assignment_id}/grades"
             )
@@ -1502,6 +1596,73 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         self.assertEqual(payload["students"][0]["homework_pct"], "85")
         self.assertEqual(payload["students"][0]["grades"], {"D1": "M"})
 
+    def test_filled_helper_puts_hw_prev_after_hw_and_blank_omits_it(self):
+        import csv
+        students = [
+            {"id": "stu-1", "full_name": "Doe, Jane"},
+            {"id": "stu-2", "full_name": "Smith, Alex"},
+        ]
+        los = [{"id": "lo-d1", "vendor_code": "D1"}]
+        hw_map = {"stu-1": 85, "stu-2": 0}
+        prev_map = {"stu-1": None, "stu-2": -1}
+        rows = _gradesheet_csv_data_rows(
+            students, los, hw_map, {}, True, prev_map
+        )
+        self.assertEqual(rows[0], ["Doe, Jane", "", "85", ""])
+        self.assertEqual(rows[1], ["Smith, Alex", "'-1", "0", ""])
+        filled = _build_gradesheet_csv_text(
+            "Quiz 1", "2026-08-20", ["D1"], rows, False, True
+        )
+        filled_rows = list(csv.reader(io.StringIO(filled.lstrip("\ufeff"))))
+        filled_header = next(row for row in filled_rows if row and row[0] == "Student Name")
+        self.assertEqual(filled_header[:3], ["Student Name", "HW prev", "HW"])
+        blank_rows = _gradesheet_csv_data_rows(students, los, hw_map, {})
+        blank = _build_gradesheet_csv_text(
+            "Quiz 1", "2026-08-20", ["D1"], blank_rows, True, False
+        )
+        blank_parsed = list(csv.reader(io.StringIO(blank.lstrip("\ufeff"))))
+        blank_header = next(row for row in blank_parsed if row and row[0] == "Student Name")
+        self.assertEqual(blank_header, ["Student Name", "HW", "D1"])
+        self.assertNotIn("HW prev", blank_header)
+
+    def test_parser_ignores_hw_prev_cells_including_between_objectives(self):
+        vendors = ["D1", "D2"]
+        without = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1,D2\n"
+            "Doe Jane,80,M,R\n"
+        )
+        after_hw = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,HW prev,D1,D2\n"
+            "Doe Jane,80,1,M,R\n"
+        )
+        between = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1,HW prev,D2\n"
+            "Doe Jane,80,M,99,R\n"
+        )
+        base, err = parse_blank_gradesheet_csv_text(without, vendors)
+        self.assertIsNone(err)
+        for text in (after_hw, between):
+            payload, parse_err = parse_blank_gradesheet_csv_text(text, vendors)
+            self.assertIsNone(parse_err)
+            self.assertEqual(
+                payload["students"][0]["homework_pct"],
+                base["students"][0]["homework_pct"],
+            )
+            self.assertEqual(
+                payload["students"][0]["grades"],
+                base["students"][0]["grades"],
+            )
+            self.assertNotIn("HW prev", payload["learning_objectives"])
+
     def test_csv_columns_only_los_linked_to_assignment(self):
         from app import routes as r
 
@@ -1562,6 +1723,99 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         self.assertNotIn("A1", payload["students"][0]["grades"])
         self.assertNotIn("C1", payload["students"][0]["grades"])
 
+    def test_prev_before_hw_imports_the_hw_cell(self):
+        text = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW prev,HW,D1\n"
+            "Doe Jane,1,80,M\n"
+        )
+        payload, err = parse_blank_gradesheet_csv_text(text, ["D1"])
+        self.assertIsNone(err)
+        self.assertEqual(payload["students"][0]["homework_pct"], "80")
+        self.assertEqual(payload["students"][0]["grades"], {"D1": "M"})
+
+    def test_hw_prev_after_objective_codes_imports_hw_and_marks(self):
+        text = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1,D2,HW prev\n"
+            "Doe Jane,80,M,R,99\n"
+        )
+        payload, err = parse_blank_gradesheet_csv_text(text, ["D1", "D2"])
+        self.assertIsNone(err)
+        self.assertEqual(payload["students"][0]["homework_pct"], "80")
+        self.assertEqual(payload["students"][0]["grades"], {"D1": "M", "D2": "R"})
+
+    def test_filled_export_parses_like_hw_only_file(self):
+        students = [{"id": "stu-1", "full_name": "Doe Jane"}]
+        los = [{"id": "lo-d1", "vendor_code": "D1"}]
+        filled_rows = _gradesheet_csv_data_rows(
+            students, los, {"stu-1": 85}, {("stu-1", "lo-d1"): "M"}, True, {"stu-1": 10}
+        )
+        filled = _build_gradesheet_csv_text(
+            "Quiz 1", "2026-08-20", ["D1"], filled_rows, False, True
+        )
+        hw_only = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1\n"
+            "Doe Jane,85,M\n"
+        )
+        filled_payload, filled_err = parse_blank_gradesheet_csv_text(filled, ["D1"])
+        only_payload, only_err = parse_blank_gradesheet_csv_text(hw_only, ["D1"])
+        self.assertIsNone(filled_err)
+        self.assertIsNone(only_err)
+        self.assertEqual(
+            filled_payload["students"][0]["homework_pct"],
+            only_payload["students"][0]["homework_pct"],
+        )
+        self.assertEqual(
+            filled_payload["students"][0]["grades"],
+            only_payload["students"][0]["grades"],
+        )
+
+    def test_old_hw_column_two_without_prev_is_unchanged(self):
+        text = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1,D2\n"
+            "Doe Jane,80,M,R\n"
+        )
+        payload, err = parse_blank_gradesheet_csv_text(text, ["D1", "D2"])
+        self.assertIsNone(err)
+        self.assertEqual(payload["learning_objectives"], ["D1", "D2"])
+        self.assertEqual(payload["students"][0]["homework_pct"], "80")
+        self.assertEqual(payload["students"][0]["grades"], {"D1": "M", "D2": "R"})
+
+    def test_hw_prev_without_hw_header_returns_header_error(self):
+        text = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW prev,D1\n"
+            "Doe Jane,80,M\n"
+        )
+        payload, err = parse_blank_gradesheet_csv_text(text, ["D1"])
+        self.assertIsNone(payload)
+        self.assertEqual(err, _GRADESHEET_HEADER_ERROR)
+
+    def test_two_hw_headers_return_header_error(self):
+        text = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1,HW\n"
+            "Doe Jane,80,M,70\n"
+        )
+        payload, err = parse_blank_gradesheet_csv_text(text, ["D1"])
+        self.assertIsNone(payload)
+        self.assertEqual(err, _GRADESHEET_HEADER_ERROR)
+
 
 class TestImportRosterNameMatch(unittest.TestCase):
     def test_last_first_export_name_hits_stored_first_last(self):
@@ -1589,9 +1843,13 @@ class TestImportRosterNameMatch(unittest.TestCase):
         self.assertIsNone(_lookup_enrolled_import_student_id("Jane Doe", index))
 
     def _post_grade_import(
-        self, students, enroll_rows, extra=None, lo_rows=None, learning_objectives=None
+        self, students, enroll_rows, extra=None, lo_rows=None, learning_objectives=None,
+        hw_map=None,
     ):
         from app import routes as r
+        if hw_map is None:
+            hw_map = {}
+        self.hw_upserts = []
         if lo_rows is None:
             lo_rows = [{
                 "id": "lo-1",
@@ -1647,6 +1905,21 @@ class TestImportRosterNameMatch(unittest.TestCase):
                 return grades
             if name == "enrollments":
                 return _EnrollQuery()
+            if name == "homework_scores":
+                query = MagicMock()
+
+                def upsert_hw(rows, **kwargs):
+                    self.hw_upserts.extend(rows if isinstance(rows, list) else [rows])
+                    writes.append("homework_scores.upsert")
+                    return query
+
+                query.upsert.side_effect = upsert_hw
+                query.delete.side_effect = lambda *a, **k: writes.append("homework_scores.delete") or query
+                query.select.return_value = query
+                query.eq.return_value = query
+                query.in_.return_value = query
+                query.execute.return_value = MagicMock(data=[])
+                return query
             query = MagicMock()
             query.insert.side_effect = lambda *a, **k: writes.append(name + ".insert") or query
             query.upsert.side_effect = lambda *a, **k: writes.append(name + ".upsert") or query
@@ -1682,7 +1955,7 @@ class TestImportRosterNameMatch(unittest.TestCase):
                     r.Homework, "resolve_hw_group_storage_key", return_value="quiz-1"
                 ), \
                 unittest.mock.patch.object(
-                    r.Homework, "get_hw_scores_map_for_assignment", return_value={}
+                    r.Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
                 ), \
                 unittest.mock.patch.object(r, "supabase_admin", sa):
             rv = client.post(
@@ -1871,6 +2144,71 @@ class TestImportRosterNameMatch(unittest.TestCase):
         self.assertEqual(rv_new.status_code, 200)
         self.assertEqual(assigned(rows_old), [("lo-ao10", "R"), ("lo-ao2", "M")])
         self.assertEqual(assigned(rows_old), assigned(rows_new))
+
+    def _enrolled_jane(self):
+        return [{
+            "student_id": "stu-1",
+            "class_id": "class-a",
+            "profiles": {"id": "stu-1", "full_name": "Doe, Jane"},
+        }]
+
+    def test_first_import_sets_current_and_previous_equal(self):
+        rv, _, writes, grade_rows = self._post_grade_import(
+            [{
+                "name": "Doe, Jane",
+                "grades": {"D1": "M"},
+                "homework_pct": "80",
+                "prev_score_pct": 1,
+            }],
+            self._enrolled_jane(),
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(len(self.hw_upserts), 1)
+        self.assertEqual(self.hw_upserts[0]["score_pct"], 80)
+        self.assertEqual(self.hw_upserts[0]["prev_score_pct"], 80)
+        self.assertEqual(grade_rows[0]["hw_score_at_entry"], 80)
+        self.assertNotIn("homework_scores.delete", writes)
+
+    def test_changed_import_moves_stored_current_into_previous(self):
+        rv, _, _, _ = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "M"}, "homework_pct": "90"}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 70},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(self.hw_upserts[0]["score_pct"], 90)
+        self.assertEqual(self.hw_upserts[0]["prev_score_pct"], 70)
+
+    def test_identical_import_does_not_write(self):
+        rv, _, writes, _ = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "M"}, "homework_pct": "70"}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 70},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(self.hw_upserts, [])
+        self.assertNotIn("homework_scores.upsert", writes)
+
+    def test_pass_to_zero_keeps_stored_previous(self):
+        rv, _, _, _ = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "A"}, "homework_pct": "0"}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": -1},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(self.hw_upserts[0]["score_pct"], 0)
+        self.assertEqual(self.hw_upserts[0]["prev_score_pct"], -1)
+
+    def test_blank_hw_cell_does_not_delete_or_shift(self):
+        rv, _, writes, grade_rows = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "M"}, "homework_pct": None}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 80},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(self.hw_upserts, [])
+        self.assertNotIn("homework_scores.delete", writes)
+        self.assertEqual(grade_rows[0]["hw_score_at_entry"], 80)
 
 
 class TestUpdateGradeRoster(unittest.TestCase):
@@ -2134,76 +2472,6 @@ class TestParseGradeCsvRoute(unittest.TestCase):
             )
         self.assertEqual(rv.status_code, 400)
         gemini.assert_not_called()
-
-
-class TestRemoveStudentAuthDecorator(unittest.TestCase):
-    """api_remove_student_from_class must reject non-instructors with 401,
-    not 403 — the role check should fire at the decorator level before
-    ownership is even evaluated.
-
-    Before fix: @api_login_required let any authenticated session reach
-    _instructor_owns_class, which returned 403 (role-blind).
-    After fix: @api_instructor_required checks role == 'instructor' and
-    returns 401 immediately for student sessions.
-    """
-
-    def setUp(self):
-        self.app = create_app()
-        self.app.config["TESTING"] = True
-        self.client = self.app.test_client()
-
-    def test_student_session_gets_401_not_403(self):
-        """A logged-in student must be turned away with 401 before ownership runs."""
-        from app import routes as r
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = "student-1"
-            sess["role"] = "student"        # not 'instructor'
-            sess["csrf_token"] = "test-csrf"
-
-        # _instructor_owns_class must never be called — if it were, it would
-        # return False and yield 403, masking the decorator regression.
-        with unittest.mock.patch.object(
-            r, "_instructor_owns_class"
-        ) as mock_owns:
-            rv = self.client.post(
-                "/api/class/any-class/remove_student",
-                json={"student_id": "stu-1"},
-                headers={"X-CSRF-Token": "test-csrf"},
-            )
-
-        self.assertEqual(rv.status_code, 401)
-        mock_owns.assert_not_called()
-
-    def test_unauthenticated_gets_401(self):
-        """No session at all must also yield 401."""
-        rv = self.client.post(
-            "/api/class/any-class/remove_student",
-            json={"student_id": "stu-1"},
-            headers={"X-CSRF-Token": "test-csrf"},
-        )
-        self.assertEqual(rv.status_code, 401)
-
-    def test_instructor_session_passes_decorator(self):
-        """A valid instructor session reaches the route body (ownership then
-        returns 403 from _instructor_owns_class=False, proving the decorator
-        itself was satisfied)."""
-        from app import routes as r
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = "inst-1"
-            sess["role"] = "instructor"
-            sess["csrf_token"] = "test-csrf"
-
-        with unittest.mock.patch.object(
-            r, "_instructor_owns_class", return_value=False
-        ):
-            rv = self.client.post(
-                "/api/class/any-class/remove_student",
-                json={"student_id": "stu-1"},
-                headers={"X-CSRF-Token": "test-csrf"},
-            )
-
-        # 403 means the decorator passed and _instructor_owns_class ran.
-        self.assertEqual(rv.status_code, 403)
 
 
 class TestAllowedLoIdsAssignmentScoping(unittest.TestCase):
@@ -2502,47 +2770,6 @@ class TestGradeChangeLogUpserts(unittest.TestCase):
         self.assertEqual(log_rows, [], "no grade written → no audit row must appear")
 
 
-class TestStudentNameHtmlEscaping(unittest.TestCase):
-    """onclick attributes using student.name must apply the |e filter so a
-    name containing a single quote (e.g. O'Brien) doesn't break the JS string.
-
-    Before fix: {{ student.name }} in onclick='...' left the single quote
-    unescaped — deleteStudent('uuid', 'O'Brien') is invalid JS.
-    After fix: {{ student.name|e }} produces O&#39;Brien which the browser
-    decodes back to O'Brien inside the handler.
-    """
-
-    def test_name_with_single_quote_is_html_escaped(self):
-        """The Jinja2 |e filter must convert ' to &#39; in onclick attributes."""
-        from jinja2 import Environment
-        env = Environment(autoescape=True)
-        tpl = env.from_string(
-            "onclick=\"deleteStudent('{{ sid }}', '{{ name|e }}')\""
-        )
-        rendered = tpl.render(sid="uuid-1", name="O'Brien")
-        self.assertIn("O&#39;Brien", rendered,
-                      "single quote must be HTML-escaped in onclick attribute")
-        self.assertNotIn("O'Brien", rendered,
-                         "raw single quote must not appear — it breaks the JS string")
-
-    def test_name_without_special_chars_is_unchanged(self):
-        """Names with no HTML-special characters render identically with |e."""
-        from jinja2 import Environment
-        env = Environment(autoescape=True)
-        tpl = env.from_string("onclick=\"deleteStudent('{{ sid }}', '{{ name|e }}')\"")
-        rendered = tpl.render(sid="uuid-1", name="Jane Doe")
-        self.assertIn("Jane Doe", rendered)
-
-    def test_double_quote_in_name_is_escaped(self):
-        """A name containing a double quote must also be safely escaped."""
-        from jinja2 import Environment
-        env = Environment(autoescape=True)
-        tpl = env.from_string("onclick=\"deleteStudent('{{ sid }}', '{{ name|e }}')\"")
-        rendered = tpl.render(sid="uuid-1", name='Say "Hello"')
-        self.assertIn("&#34;", rendered)
-        self.assertNotIn('"Hello"', rendered)
-
-
 class TestMaxLengthValidation(unittest.TestCase):
     """Server-side max-length checks on free-text route inputs.
 
@@ -2705,7 +2932,7 @@ class TestMaxLengthValidation(unittest.TestCase):
                 unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
             rv = self.client.post(
                 "/api/class/c1/students/stu-1/update",
-                json={"name": "Cali Smith"},
+                json={"name": "Cali Smith", "email": "cali@example.edu"},
                 headers={"X-CSRF-Token": "test-csrf"},
             )
         self.assertEqual(rv.status_code, 400)
@@ -3124,7 +3351,7 @@ class TestStudentEmailMatch(unittest.TestCase):
         sa, classes, enrollments, profiles = self._sa([], [])
         rv = self._post_edit(client, sa, {"name": "Smith, Cali", "email": "  "})
         self.assertEqual(rv.status_code, 400)
-        self.assertEqual(rv.get_json()["error"], "Email is required")
+        self.assertEqual(rv.get_json()["error"], "Email and name are required")
         sa.table.assert_not_called()
 
     def test_edit_rejects_an_invalid_email(self):
@@ -3497,16 +3724,6 @@ class TestStudentEmailMatch(unittest.TestCase):
         query.delete.assert_not_called()
         query.update.assert_not_called()
 
-    def test_remove_rejects_a_student_from_another_class(self):
-        rv, query = self._post_unenrolled(
-            "/api/class/c1/remove_student",
-            {"student_id": "stu-other"},
-        )
-        self.assertEqual(rv.status_code, 403)
-        self.assertEqual(rv.get_json()["error"], "Student not enrolled in this class")
-        query.delete.assert_not_called()
-        query.update.assert_not_called()
-
     def test_mute_rejects_a_student_from_another_class(self):
         rv, query = self._post_unenrolled(
             "/api/class/c1/toggle_mute",
@@ -3545,15 +3762,6 @@ class TestStudentEmailMatch(unittest.TestCase):
 
     def test_delete_removes_an_enrolled_student(self):
         rv, query = self._post_enrolled("/class/c1/students/stu-1/delete")
-        self.assertEqual(rv.status_code, 200)
-        self.assertTrue(rv.get_json()["success"])
-        query.delete.assert_called()
-
-    def test_remove_removes_an_enrolled_student(self):
-        rv, query = self._post_enrolled(
-            "/api/class/c1/remove_student",
-            {"student_id": "stu-1"},
-        )
         self.assertEqual(rv.status_code, 200)
         self.assertTrue(rv.get_json()["success"])
         query.delete.assert_called()
@@ -4606,6 +4814,375 @@ class TestClassHeaderTitle(unittest.TestCase):
         )
         self.assertEqual(reports.count("Test Upload | MW | F26"), 2)
         self.assertIn('mt-0.5">Test Upload</p>\';', reports)
+
+    def test_reports_prev_column_matches_every_row_for_screen_print_and_pdf(self):
+        from html.parser import HTMLParser
+
+        class _Rows(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.capture = False
+                self.rows = []
+                self.cur = None
+
+            def handle_starttag(self, tag, attrs):
+                ad = dict(attrs)
+                if tag == "table" and ad.get("id") == "all-students-table":
+                    self.capture = True
+                if not self.capture:
+                    return
+                if tag == "tr":
+                    self.cur = []
+                if tag in ("th", "td") and self.cur is not None:
+                    self.cur.append(ad)
+
+            def handle_endtag(self, tag):
+                if not self.capture:
+                    return
+                if tag == "tr" and self.cur is not None:
+                    self.rows.append(self.cur)
+                    self.cur = None
+                if tag == "table":
+                    self.capture = False
+
+        html = self._render(
+            "class_reports.html",
+            class_id="c1",
+            class_name="Test Upload",
+            class_days="MW",
+            class_section="F26",
+            students=[
+                {"id": "s1", "name": "Lee, Ana", "email": "a@b.edu"},
+                {"id": "s2", "name": "Kim, Bo", "email": ""},
+            ],
+            learning_objectives=[{"id": "lo1", "vendor_code": "D1"}],
+            assignments=[],
+        )
+        parser = _Rows()
+        parser.feed(html)
+        header = parser.rows[0]
+        prev_headers = [cell for cell in header if "data-hw-prev-col-header" in cell]
+        self.assertEqual(len(prev_headers), 1)
+        self.assertEqual(
+            [cell for cell in header if "data-hw-col-header" in cell],
+            [header[header.index(prev_headers[0]) + 1]],
+        )
+        body_rows = parser.rows[1:]
+        self.assertEqual(len(body_rows), 2)
+        for row in body_rows:
+            self.assertEqual(len(row), len(header))
+            self.assertEqual(sum(1 for cell in row if "data-hw-prev-cell" in cell), 1)
+        printable = [
+            [cell for cell in row if "data-email-col" not in cell]
+            for row in parser.rows
+        ]
+        for row in printable[1:]:
+            self.assertEqual(len(row), len(printable[0]))
+            self.assertEqual(sum(1 for cell in row if "data-hw-prev-cell" in cell), 1)
+        self.assertEqual(sum(1 for cell in printable[0] if "data-hw-prev-col-header" in cell), 1)
+        self.assertEqual(html.count("HW % prev"), 2)
+        self.assertIn("function formatHwPrevScore", html)
+        self.assertIn("function exportGradeSheetPdf", html)
+        self.assertIn("data-hw-prev-col-header", html)
+        self.assertIn("assignmentHwPrev", html)
+        self.assertIn("columnStyles", html)
+        self.assertIn(".hw-prev-score-display", html)
+        self.assertNotIn("th:nth-child(2)", html)
+        self.assertIn("function applySinglePagePrintScale", html)
+        self.assertIn("pageHeightPx", html)
+
+
+class _RemovalQuery:
+    def __init__(self, log, table, rows, fail_delete):
+        self.log = log
+        self.table = table
+        self.rows = list(rows)
+        self.fail_delete = fail_delete
+        self.op = None
+        self.filters = []
+
+    def select(self, *args, **kwargs):
+        if kwargs.get("count") == "exact" and kwargs.get("head"):
+            self.op = "count"
+        else:
+            self.op = "select"
+        return self
+
+    def delete(self):
+        self.op = "delete"
+        return self
+
+    def insert(self, rows):
+        self.op = "insert"
+        self.inserted = rows
+        return self
+
+    def eq(self, column, value):
+        self.filters.append(("eq", column, value))
+        return self
+
+    def in_(self, column, values):
+        self.filters.append(("in", column, list(values)))
+        return self
+
+    def order(self, *args, **kwargs):
+        return self
+
+    def range(self, start, end):
+        return self
+
+    def execute(self):
+        if self.op == "delete" and self.fail_delete == self.table:
+            self.log.append({
+                "table": self.table,
+                "op": "delete-failed",
+                "filters": list(self.filters),
+            })
+            raise RuntimeError("delete failed")
+        entry = {
+            "table": self.table,
+            "op": self.op,
+            "filters": list(self.filters),
+        }
+        if self.op == "insert":
+            entry["rows"] = self.inserted
+        self.log.append(entry)
+        count = len(self.rows) if self.op == "count" else None
+        data = self.rows if self.op == "select" else []
+        return unittest.mock.MagicMock(data=data, count=count)
+
+
+class TestManageStudentDeleteAndEdit(unittest.TestCase):
+    def _client(self):
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        return client
+
+    def _removal_sa(self, log, fail_delete=None):
+        grade_rows = [
+            {
+                "id": "g1",
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-this",
+                "assignment_id": "a1",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+            {
+                "id": "g2",
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-this",
+                "assignment_id": "a2",
+                "top_score": "A",
+                "second_score": None,
+                "counts_for_mastery": False,
+            },
+        ]
+        rows_for = {
+            "grades": grade_rows,
+            "homework_scores": [{"id": "h1"}],
+            "free_passes": [],
+            "enrollments": [{"id": "e1"}],
+        }
+
+        def table(name):
+            return _RemovalQuery(log, name, rows_for.get(name, []), fail_delete)
+
+        sa = unittest.mock.MagicMock()
+        sa.table.side_effect = table
+        return sa
+
+    def _run_removal(self, method, path, log, fail_delete=None, owns=True, enrolled=True):
+        from app import routes as r
+        client = self._client()
+        sa = self._removal_sa(log, fail_delete=fail_delete)
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=enrolled), \
+                unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=["lo-this"]):
+            if method == "GET":
+                return client.get(path)
+            return client.post(path, headers={"X-CSRF-Token": "test-csrf"})
+
+    def test_counts_equal_what_delete_removes(self):
+        log = []
+        counts = self._run_removal(
+            "GET",
+            "/api/class/c1/students/stu-1/removal-counts",
+            log,
+        )
+        deleted = self._run_removal(
+            "POST",
+            "/class/c1/students/stu-1/delete",
+            log,
+        )
+        self.assertEqual(counts.status_code, 200)
+        body = counts.get_json()
+        self.assertEqual(body["grade_rows"], 2)
+        self.assertEqual(body["homework_scores"], 1)
+        self.assertEqual(deleted.status_code, 200)
+        count_filters = {e["table"]: e["filters"] for e in log if e["op"] == "count"}
+        delete_filters = {e["table"]: e["filters"] for e in log if e["op"] == "delete"}
+        self.assertEqual(count_filters, delete_filters)
+        self.assertEqual(
+            [e["table"] for e in log if e["op"] == "delete"],
+            ["grades", "homework_scores", "free_passes", "enrollments"],
+        )
+        self.assertIn(("in", "learning_objective_id", ["lo-this"]), delete_filters["grades"])
+        self.assertIn(("eq", "class_id", "c1"), delete_filters["homework_scores"])
+        self.assertIn(("eq", "student_id", "stu-1"), delete_filters["homework_scores"])
+        self.assertIn(("eq", "class_id", "c1"), delete_filters["enrollments"])
+        self.assertIn(("eq", "student_id", "stu-1"), delete_filters["enrollments"])
+        deleted_tables = [e["table"] for e in log if e["op"] == "delete"]
+        self.assertNotIn("profiles", deleted_tables)
+        self.assertTrue(any(e["table"] == "grade_change_log" and e["op"] == "insert" for e in log))
+        self.assertFalse(any(e["table"] == "grade_change_log" and e["op"] == "delete" for e in log))
+        for entry in log:
+            for _op, _column, value in entry["filters"]:
+                values = value if isinstance(value, list) else [value]
+                self.assertNotIn("c2", values)
+
+    def test_homework_delete_failure_leaves_the_enrollment(self):
+        log = []
+        rv = self._run_removal(
+            "POST",
+            "/class/c1/students/stu-1/delete",
+            log,
+            fail_delete="homework_scores",
+        )
+        self.assertEqual(rv.status_code, 500)
+        self.assertEqual(
+            [e["table"] for e in log if e["op"] in ("delete", "delete-failed")],
+            ["grades", "homework_scores"],
+        )
+        self.assertNotIn("enrollments", [e["table"] for e in log if e["op"] == "delete"])
+
+    def test_removal_counts_forbidden_when_the_class_is_not_owned(self):
+        log = []
+        rv = self._run_removal(
+            "GET",
+            "/api/class/c1/students/stu-1/removal-counts",
+            log,
+            owns=False,
+        )
+        self.assertEqual(rv.status_code, 403)
+        self.assertEqual(log, [])
+
+    def test_removal_counts_forbidden_when_the_student_is_not_enrolled(self):
+        log = []
+        rv = self._run_removal(
+            "GET",
+            "/api/class/c1/students/stu-1/removal-counts",
+            log,
+            enrolled=False,
+        )
+        self.assertEqual(rv.status_code, 403)
+        self.assertEqual(rv.get_json()["error"], "Student not enrolled in this class")
+        self.assertEqual(log, [])
+
+    def test_edit_duplicate_email_does_not_update_the_profile(self):
+        client = self._client()
+        classes = _EmailTable([{"id": "c1"}])
+        enrollments = _EmailTable([{
+            "class_id": "c1",
+            "student_id": "stu-other",
+            "profiles": {
+                "id": "stu-other",
+                "full_name": "Roe, Richard",
+                "email": "shared@example.edu",
+            },
+        }])
+        profiles = _EmailTable()
+        sa = unittest.mock.MagicMock()
+        sa.table.side_effect = lambda name: {
+            "classes": classes,
+            "enrollments": enrollments,
+            "profiles": profiles,
+        }[name]
+        from app import routes as r
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
+            rv = client.post(
+                "/api/class/c1/students/stu-1/update",
+                json={"name": "Smith, Cali", "email": "Shared@Example.EDU"},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 409)
+        self.assertEqual(profiles.updates, [])
+
+    def test_helper_rejects_the_same_name_and_email_on_add_and_edit(self):
+        from app import routes as r
+        cases = (
+            ({"name": "Smith Cali", "email": "a@b.edu"}, COMMA_REQUIRED),
+            ({"name": "Smith, Cali", "email": "not-an-email"}, "Invalid email format"),
+            (
+                {"name": ("N" * 300) + ", Ann", "email": "a@b.edu"},
+                "Name must be 255 characters or fewer",
+            ),
+        )
+        paths = (
+            "/class/c1/add_student",
+            "/api/class/c1/students/stu-1/update",
+        )
+        for path in paths:
+            for body, error in cases:
+                client = self._client()
+                with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                        unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
+                    rv = client.post(
+                        path,
+                        json=body,
+                        headers={"X-CSRF-Token": "test-csrf"},
+                    )
+                self.assertEqual(rv.status_code, 400)
+                self.assertEqual(rv.get_json()["error"], error)
+
+    def test_removed_student_route_is_missing(self):
+        client = self._client()
+        rv = client.post(
+            "/api/class/c1/remove_student",
+            json={"student_id": "stu-1"},
+            headers={"X-CSRF-Token": "test-csrf"},
+        )
+        self.assertEqual(rv.status_code, 404)
+
+    def test_manage_students_card_shows_the_active_count(self):
+        from flask import render_template, session
+        app = create_app()
+        student = {
+            "id": "stu-1",
+            "name": "Lee, Ana",
+            "email": "ana@example.edu",
+            "learning_objectives": [],
+            "objective_total": 0,
+            "muted": False,
+        }
+        with app.test_request_context("/"):
+            session["role"] = "instructor"
+            html = render_template(
+                "class_detail.html",
+                class_id="c1",
+                class_name="Test Upload",
+                class_days="MW",
+                class_section="F26",
+                students=[student],
+                all_students=[student],
+                learning_objectives=[],
+                overdue_revisions=[],
+                assignments=[],
+            )
+        self.assertIn("Manage Students", html)
+        self.assertIn('id="activeStudentsCount"', html)
+        match = re.search(r'id="activeStudentsCount"[^>]*>([^<]*)<', html)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1).strip(), "1")
 
 
 if __name__ == '__main__':

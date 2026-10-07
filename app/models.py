@@ -526,6 +526,16 @@ class Homework:
         s = re.sub(r"\s+", " ", str(raw).strip())
         return s or None
 
+    HW_PREV_HEADER = "HW prev"
+
+    @staticmethod
+    def is_hw_prev_header(name) -> bool:
+        """True for the read-only previous-score column, which is not a homework score or an objective."""
+        if name is None:
+            return False
+        s = re.sub(r"\s+", " ", str(name).strip())
+        return bool(s) and s.lower() == Homework.HW_PREV_HEADER.lower()
+
     @staticmethod
     def is_import_sheet_hw_column(name) -> bool:
         """True for sheet headers that represent homework / assignment percentage, not a mastery LO.
@@ -534,6 +544,8 @@ class Homework:
         is stored in homework_scores instead of learning-objective grades.
         """
         if not name or not str(name).strip():
+            return False
+        if Homework.is_hw_prev_header(name):
             return False
         s = re.sub(r"[%_]+", " ", str(name).strip(), flags=re.I)
         s = re.sub(r"\s+", " ", s).strip()
@@ -621,6 +633,31 @@ class Homework:
             return -1
         iv = int(round(v))
         return max(0, min(100, iv))
+
+    @staticmethod
+    def decide_hw_score_update(current, incoming):
+        """Return the import write for one student in one homework group.
+
+        current is the stored score_pct, or None when that student has no row.
+        Only incoming is parsed. Equality is float(current) == that parsed
+        value. A shift copies current into prev_score_pct unchanged.
+        """
+        parsed_in = Homework.parse_import_hw_pct(incoming)
+        if parsed_in is None:
+            return {"action": "unchanged"}
+        if current is None:
+            return {
+                "action": "first_set",
+                "score_pct": parsed_in,
+                "prev_score_pct": parsed_in,
+            }
+        if float(current) == parsed_in:
+            return {"action": "unchanged"}
+        return {
+            "action": "shift_and_set",
+            "score_pct": parsed_in,
+            "prev_score_pct": current,
+        }
 
     @staticmethod
     def is_exam_grade_eligible_hw_score(score):
@@ -712,16 +749,18 @@ class Homework:
         return canonical or hg_raw
 
     @staticmethod
-    def get_hw_scores_map_for_assignment(class_id, assignment_id):
-        """Return {student_id: score_pct} for the HW group this assignment belongs to.
+    def _hw_column_map_for_assignment(class_id, assignment_id, column):
+        """Return {student_id: column} for the HW group this assignment belongs to.
 
         Scores are keyed by the shared homework_group string. Rows keyed by assignment UUID
-        (older data) are merged in so every assignment in the group shows the same HW %.
+        (older data) are merged in so every assignment in the group shows the same value.
 
         Order is important: legacy rows are loaded first and the group-keyed
-        row is loaded last, so a newer "canonical" value overrides any stale
+        row is loaded last, so a newer canonical value overrides any stale
         per-assignment entries in the map.
         """
+        if column not in ("score_pct", "prev_score_pct"):
+            return {}
         try:
             resp = supabase_admin.table("assignments").select("id, homework_group").eq(
                 "id", assignment_id
@@ -731,6 +770,14 @@ class Homework:
             row = resp.data[0]
             hg = (row.get("homework_group") or "").strip()
             hw_map = {}
+            select_cols = "student_id, " + column
+
+            def _merge(rows):
+                for r in (rows or []):
+                    sid = str(r.get("student_id") or "").strip()
+                    if sid:
+                        hw_map[sid] = r.get(column)
+
             if hg:
                 sib = supabase_admin.table("assignments").select("id").eq(
                     "class_id", class_id
@@ -738,31 +785,35 @@ class Homework:
                 sib_ids = [r["id"] for r in (sib.data or [])]
                 if sib_ids:
                     leg = supabase_admin.table("homework_scores").select(
-                        "student_id, score_pct"
+                        select_cols
                     ).eq("class_id", class_id).in_("homework_group", sib_ids).execute()
-                    for r in (leg.data or []):
-                        sid = str(r["student_id"]).strip()
-                        if sid:
-                            hw_map[sid] = r["score_pct"]
+                    _merge(leg.data)
                 cur = supabase_admin.table("homework_scores").select(
-                    "student_id, score_pct"
+                    select_cols
                 ).eq("class_id", class_id).eq("homework_group", hg).execute()
-                for r in (cur.data or []):
-                    sid = str(r["student_id"]).strip()
-                    if sid:
-                        hw_map[sid] = r["score_pct"]
+                _merge(cur.data)
             else:
                 single = supabase_admin.table("homework_scores").select(
-                    "student_id, score_pct"
+                    select_cols
                 ).eq("class_id", class_id).eq("homework_group", assignment_id).execute()
-                for r in (single.data or []):
-                    sid = str(r["student_id"]).strip()
-                    if sid:
-                        hw_map[sid] = r["score_pct"]
+                _merge(single.data)
             return hw_map
         except Exception as e:
-            logger.error("Error loading homework scores for assignment %s: %s", assignment_id, e)
+            logger.error(
+                "Error loading homework %s for assignment %s: %s",
+                column, assignment_id, e,
+            )
             return {}
+
+    @staticmethod
+    def get_hw_scores_map_for_assignment(class_id, assignment_id):
+        """Return {student_id: score_pct} for this assignment's homework group."""
+        return Homework._hw_column_map_for_assignment(class_id, assignment_id, "score_pct")
+
+    @staticmethod
+    def get_hw_prev_scores_map_for_assignment(class_id, assignment_id):
+        """Return {student_id: prev_score_pct} for this assignment's homework group."""
+        return Homework._hw_column_map_for_assignment(class_id, assignment_id, "prev_score_pct")
 
     @staticmethod
     def student_has_recorded_score(hw_map, student_id) -> bool:

@@ -168,12 +168,13 @@
           <thead>
             <tr class="border-b border-slate-200 dark:border-slate-700">
               <th class="text-left px-3 py-2 font-medium text-slate-500 dark:text-slate-400 w-48">Student</th>
-              <th class="text-center px-2 py-2 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">
+              <th class="text-center px-2 py-2 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap" data-email-col>
                 <button type="button" id="emailAllBtn" onclick="emailAllVisibleReports(this)"
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors">
                   Email All
                 </button>
               </th>
+              <th class="text-center px-2 py-2 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap" data-hw-prev-col-header>HW % prev</th>
               <th class="text-center px-2 py-2 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap" data-hw-col-header>HW %</th>
               {% for lo in learning_objectives %}
               <th class="text-center px-3 py-3 font-medium text-slate-500 dark:text-slate-400 text-xs" data-lo-id="{{ lo.id }}">
@@ -188,7 +189,7 @@
               <td class="px-3 py-2 font-medium text-slate-900 dark:text-white">
                 <span class="truncate min-w-0">{{ student.name }}</span>
               </td>
-              <td class="px-2 py-2 text-center">
+              <td class="px-2 py-2 text-center" data-email-col>
                 {% if student.email %}
                 <button type="button" onclick="emailStudentReport('{{ student.id }}', this)"
                   class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors"
@@ -199,6 +200,9 @@
                 {% else %}
                 <span class="text-slate-300 dark:text-slate-600">—</span>
                 {% endif %}
+              </td>
+              <td class="px-2 py-2 text-center" data-hw-prev-cell>
+                <span class="hw-prev-score-display inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300" data-student-id="{{ student.id }}" data-assignment-id=""></span>
               </td>
               <td class="px-2 py-2 text-center" data-hw-cell>
                 <span class="hw-score-display inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300" data-student-id="{{ student.id }}" data-assignment-id="">—</span>
@@ -329,9 +333,15 @@ td[data-lo-id] .mastery-badge {
   padding: 2px 2px !important;
   line-height: 1.1 !important;
 }
-#assignmentReport.measuring-print th:nth-child(2),
-#assignmentReport.measuring-print td:nth-child(2) {
+#assignmentReport.measuring-print th[data-email-col],
+#assignmentReport.measuring-print td[data-email-col] {
   display: none !important;
+}
+#assignmentReport.measuring-print th[data-hw-col-header],
+#assignmentReport.measuring-print th[data-hw-prev-col-header],
+#assignmentReport.measuring-print td[data-hw-cell],
+#assignmentReport.measuring-print td[data-hw-prev-cell] {
+  white-space: nowrap !important;
 }
 #assignmentReport.measuring-print .print\:hidden {
   display: none !important;
@@ -351,7 +361,8 @@ td[data-lo-id] .mastery-badge {
   border: 0 !important;
   border-radius: 0 !important;
 }
-#assignmentReport.measuring-print .hw-score-display {
+#assignmentReport.measuring-print .hw-score-display,
+#assignmentReport.measuring-print .hw-prev-score-display {
   font-size: 12px !important;
   padding: 0 !important;
   border: 0 !important;
@@ -451,9 +462,15 @@ td[data-lo-id] .mastery-badge {
     text-align: center !important;
   }
   /* Email column is not needed on printable grade sheets. */
-  #assignmentReport th:nth-child(2),
-  #assignmentReport td:nth-child(2) {
+  #assignmentReport th[data-email-col],
+  #assignmentReport td[data-email-col] {
     display: none !important;
+  }
+  #assignmentReport th[data-hw-col-header],
+  #assignmentReport th[data-hw-prev-col-header],
+  #assignmentReport td[data-hw-cell],
+  #assignmentReport td[data-hw-prev-cell] {
+    white-space: nowrap !important;
   }
   #assignmentReport .text-slate-300,
   #assignmentReport .dark\:text-slate-600 {
@@ -473,7 +490,8 @@ td[data-lo-id] .mastery-badge {
     color: #0f172a !important;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
   }
-  #assignmentReport .hw-score-display {
+  #assignmentReport .hw-score-display,
+  #assignmentReport .hw-prev-score-display {
     font-size: calc(12px * var(--print-scale)) !important;
     padding: calc(0px * var(--print-scale)) !important;
     border: 0 !important;
@@ -548,6 +566,16 @@ const lowHwBadgeClass =
   'hw-score-display inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300';
 const hwPassBadgeClass =
   'hw-score-display inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-sky-600 text-white';
+
+function formatHwPrevScore(score) {
+  if (score === null || score === undefined || score === '') return '';
+  if (score === -1) return 'HW Pass';
+  return score + '%';
+}
+
+function hwPrevBadgeClass(scoreClass) {
+  return String(scoreClass || '').replace('hw-score-display', 'hw-prev-score-display');
+}
 // Per-assignment payload cache. The class reports page lets the instructor
 // flip between assignments repeatedly; the API response for a given
 // assignment never changes during a single visit, so caching by assignment
@@ -571,6 +599,33 @@ function _applyHwScoresInScope(scope, hwScores) {
         nextText = score + '%';
         nextClass = score >= REVISION_M_MIN ? highHwBadgeClass
           : (score >= EXAM_HW_MIN ? midHwBadgeClass : lowHwBadgeClass);
+      }
+    }
+    if (el.textContent !== nextText) el.textContent = nextText;
+    if (el.className !== nextClass) el.className = nextClass;
+  }
+}
+
+function _applyHwPrevScoresInScope(scope, hwPrevScores) {
+  const els = document.querySelectorAll(scope);
+  const scores = hwPrevScores || {};
+  for (let i = 0; i < els.length; i++) {
+    const el = els[i];
+    const sid = el.getAttribute('data-student-id');
+    let nextText = '';
+    let nextClass = hwPrevBadgeClass(defaultHwBadgeClass);
+    if (sid && Object.prototype.hasOwnProperty.call(scores, sid)) {
+      const score = scores[sid];
+      nextText = formatHwPrevScore(score);
+      if (nextText === '') {
+        nextClass = hwPrevBadgeClass(defaultHwBadgeClass);
+      } else if (score === -1) {
+        nextClass = hwPrevBadgeClass(hwPassBadgeClass);
+      } else {
+        nextClass = hwPrevBadgeClass(
+          score >= REVISION_M_MIN ? highHwBadgeClass
+            : (score >= EXAM_HW_MIN ? midHwBadgeClass : lowHwBadgeClass)
+        );
       }
     }
     if (el.textContent !== nextText) el.textContent = nextText;
@@ -668,12 +723,17 @@ function _applyAssignmentGradesInScope(scopeAssignmentId, gradesMap, countsMap) 
 }
 
 function fetchHwScoresForAssignment(assignmentId, scopeAssignmentId, renderAssignmentGrades) {
-  const scope = (scopeAssignmentId === undefined || scopeAssignmentId === null)
-    ? '.hw-score-display'
-    : '.hw-score-display[data-assignment-id="' + String(scopeAssignmentId) + '"]';
+  const scoped = (scopeAssignmentId !== undefined && scopeAssignmentId !== null);
+  const scope = scoped
+    ? '.hw-score-display[data-assignment-id="' + String(scopeAssignmentId) + '"]'
+    : '.hw-score-display';
+  const prevScope = scoped
+    ? '.hw-prev-score-display[data-assignment-id="' + String(scopeAssignmentId) + '"]'
+    : '.hw-prev-score-display';
 
   if (!assignmentId) {
     _applyHwScoresInScope(scope, {});
+    _applyHwPrevScoresInScope(prevScope, {});
     // No assignment context: re-apply the server-rendered counts_for_mastery
     // (stored on the badge's data-non-counting attribute) so the class-wide
     // view still shows red borders for non-counting historical M/MR.
@@ -684,6 +744,7 @@ function fetchHwScoresForAssignment(assignmentId, scopeAssignmentId, renderAssig
   if (__assignmentGradesCache.has(cacheKey)) {
     const cached = __assignmentGradesCache.get(cacheKey);
     _applyHwScoresInScope(scope, cached.hwScores);
+    _applyHwPrevScoresInScope(prevScope, cached.hwPrevScores);
     if (renderAssignmentGrades) {
       _applyAssignmentGradesInScope(scopeAssignmentId, cached.gradesMap, cached.countsMap);
     }
@@ -697,11 +758,13 @@ function fetchHwScoresForAssignment(assignmentId, scopeAssignmentId, renderAssig
       if (!data.success) return;
       const payload = {
         hwScores: data.hw_scores || {},
+        hwPrevScores: data.hw_prev_scores || {},
         countsMap: data.counts_for_mastery_map || {},
         gradesMap: data.grades || {},
       };
       __assignmentGradesCache.set(cacheKey, payload);
       _applyHwScoresInScope(scope, payload.hwScores);
+      _applyHwPrevScoresInScope(prevScope, payload.hwPrevScores);
       if (renderAssignmentGrades) {
         _applyAssignmentGradesInScope(scopeAssignmentId, payload.gradesMap, payload.countsMap);
       }
@@ -1028,7 +1091,8 @@ function renderAllAssignmentsView(typeFilter) {
     html += '    <table class="w-full text-sm" data-assignment-id="' + escapeHtml(assignmentId) + '">';
     html += '      <thead><tr class="border-b border-slate-200 dark:border-slate-700">';
     html += '        <th class="text-left px-3 py-2 font-medium text-slate-500 dark:text-slate-400 w-48">Student</th>';
-    html += '        <th class="text-center px-2 py-2 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap print:hidden">Email</th>';
+    html += '        <th class="text-center px-2 py-2 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap print:hidden" data-email-col>Email</th>';
+    html += '        <th class="text-center px-2 py-2 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap" data-hw-prev-col-header>HW % prev</th>';
     html += '        <th class="text-center px-2 py-2 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap" data-hw-col-header>HW %</th>';
     loMeta.forEach(function (lo) {
       html += '        <th class="text-center px-3 py-3 font-medium text-slate-500 dark:text-slate-400 text-xs" data-lo-id="' + escapeHtml(lo.id) + '"><div class="text-xs font-bold text-slate-800 dark:text-white">' + escapeHtml(lo.code) + '</div></th>';
@@ -1042,13 +1106,14 @@ function renderAllAssignmentsView(typeFilter) {
       const lowered = studentName.toLowerCase();
       html += '        <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors student-row group" data-student-name="' + escapeHtml(lowered) + '" data-student-id="' + escapeHtml(studentId) + '">';
       html += '          <td class="px-3 py-2 font-medium text-slate-900 dark:text-white"><span class="truncate min-w-0">' + escapeHtml(studentName) + '</span></td>';
-      html += '          <td class="px-2 py-2 text-center print:hidden">';
+      html += '          <td class="px-2 py-2 text-center print:hidden" data-email-col>';
       if (student.email) {
         html += '            <button type="button" onclick="emailStudentReport(\'' + escapeHtml(studentId) + '\', this, \'' + escapeHtml(assignmentId) + '\')" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors">Email</button>';
       } else {
         html += '            <span class="text-slate-300 dark:text-slate-600">—</span>';
       }
       html += '          </td>';
+      html += '          <td class="px-2 py-2 text-center" data-hw-prev-cell><span class="hw-prev-score-display inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300" data-student-id="' + escapeHtml(studentId) + '" data-assignment-id="' + escapeHtml(assignmentId) + '"></span></td>';
       html += '          <td class="px-2 py-2 text-center" data-hw-cell><span class="hw-score-display inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300" data-student-id="' + escapeHtml(studentId) + '" data-assignment-id="' + escapeHtml(assignmentId) + '">—</span></td>';
       loMeta.forEach(function (lo) {
         html += '          <td class="px-3 py-3 text-center" data-lo-id="' + escapeHtml(lo.id) + '"><span class="text-slate-300 dark:text-slate-600">—</span></td>';
@@ -1521,6 +1586,7 @@ async function exportGradeSheetPdf(btn) {
 
     let assignmentGrades = {};
     let assignmentCountsForMastery = {};
+    let assignmentHwPrev = {};
     try {
       const res = await fetch(`/api/class/${classId}/assignment/${exportAssignmentId}/grades`, {
         credentials: 'same-origin'
@@ -1531,6 +1597,7 @@ async function exportGradeSheetPdf(btn) {
       }
       assignmentGrades = data.grades || {};
       assignmentCountsForMastery = data.counts_for_mastery_map || {};
+      assignmentHwPrev = data.hw_prev_scores || {};
     } catch (e) {
       alert('Could not load saved assignment grades for export.');
       return;
@@ -1546,16 +1613,15 @@ async function exportGradeSheetPdf(btn) {
       return;
     }
 
-    // Drop the per-row "Email" column from the export entirely. Locate it by
-    // matching the Email-All button rather than a hard-coded index, so the
-    // export still works if column order shifts.
+    // Drop the per-row Email column from the export. The cell is marked
+    // data-email-col, so a column added after HW % does not shift the drop.
+    function isReportsEmailCell(el) {
+      return el.hasAttribute('data-email-col') || !!el.querySelector('#emailAllBtn');
+    }
     const allHeaderThs = Array.from(table.querySelectorAll('thead tr th'));
-    const emailHeaderIdx = allHeaderThs.findIndex(function (th) {
-      return th.querySelector('#emailAllBtn');
-    });
 
-    const headerCells = allHeaderThs.filter(function (th, idx) {
-      if (idx === emailHeaderIdx) return false;
+    const headerCells = allHeaderThs.filter(function (th) {
+      if (isReportsEmailCell(th)) return false;
       if (th.classList.contains('hidden')) return false;
       if (th.style && th.style.display === 'none') return false;
       return true;
@@ -1564,6 +1630,9 @@ async function exportGradeSheetPdf(btn) {
     const headerLoIds = headerCells.map(function (th) {
       return String(th.getAttribute('data-lo-id') || '').trim();
     });
+    const headerPrev = headerCells.map(function (th) {
+      return th.hasAttribute('data-hw-prev-col-header');
+    });
 
     const body = [];
     const rowEls = Array.from(table.querySelectorAll('tbody tr.student-row')).filter(function (tr) {
@@ -1571,8 +1640,8 @@ async function exportGradeSheetPdf(btn) {
     });
     rowEls.forEach(function (tr) {
       const sid = String(tr.getAttribute('data-student-id') || '').trim();
-      const cells = Array.from(tr.querySelectorAll('td')).filter(function (td, idx) {
-        if (idx === emailHeaderIdx) return false;
+      const cells = Array.from(tr.querySelectorAll('td')).filter(function (td) {
+        if (isReportsEmailCell(td)) return false;
         if (td.classList.contains('hidden')) return false;
         if (td.style && td.style.display === 'none') return false;
         return true;
@@ -1598,6 +1667,13 @@ async function exportGradeSheetPdf(btn) {
           out = 'I';
         }
         rowVals[colIdx] = out;
+      }
+      for (let colIdx = 0; colIdx < rowVals.length; colIdx++) {
+        if (!headerPrev[colIdx]) continue;
+        const raw = (sid && Object.prototype.hasOwnProperty.call(assignmentHwPrev, sid))
+          ? assignmentHwPrev[sid]
+          : null;
+        rowVals[colIdx] = formatHwPrevScore(raw);
       }
 
       body.push(rowVals);
@@ -1645,11 +1721,20 @@ async function exportGradeSheetPdf(btn) {
       'I':  [146, 64, 14]
     };
 
+    const columnStyles = {};
+    headerCells.forEach(function (th, idx) {
+      if (th.hasAttribute('data-hw-col-header') || th.hasAttribute('data-hw-prev-col-header')) {
+        columnStyles[idx] = { cellWidth: 58, halign: 'center' };
+      }
+    });
+
     doc.autoTable({
       head: [headers],
       body: body,
       startY: 54,
+      tableWidth: doc.internal.pageSize.getWidth() - 40,
       margin: { left: 20, right: 20, top: 54, bottom: 20 },
+      columnStyles: columnStyles,
       theme: 'grid',
       styles: {
         font: 'helvetica',

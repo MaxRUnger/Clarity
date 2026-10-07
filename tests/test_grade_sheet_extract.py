@@ -91,6 +91,22 @@ def test_normalize_data_canonicalizes_column_keys():
     assert out["students"][0]["grades"].get("A7") == "M"
 
 
+def test_normalize_data_skips_hw_prev_as_score_and_objective():
+    a = object.__new__(GradeSheetGeminiAnalyzer)
+    raw = {
+        "learning_objectives": ["HW", "HW prev", "D1"],
+        "students": [{
+            "name": "Jane Doe",
+            "grades": {"HW": "80", "HW prev": "70", "D1": "M"},
+        }],
+    }
+    out = GradeSheetGeminiAnalyzer._normalize_data(a, raw)
+    assert out["students"][0]["homework_pct"] == "80"
+    assert "HW prev" not in out["learning_objectives"]
+    assert "HW prev" not in out["students"][0]["grades"]
+    assert out["students"][0]["grades"].get("D1") == "M"
+
+
 def test_normalize_data_duplicate_headers_merge_first_nonempty():
     a = object.__new__(GradeSheetGeminiAnalyzer)
     raw = {

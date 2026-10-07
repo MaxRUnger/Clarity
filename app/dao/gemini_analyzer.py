@@ -528,6 +528,7 @@ class GradeSheetGeminiAnalyzer:
         lo_only = [
             h for h in learning_objectives
             if not Homework.is_import_sheet_hw_column(h)
+            and not Homework.is_hw_prev_header(h)
         ]
 
         first_hw_label = hw_headers[0] if hw_headers else None
@@ -546,6 +547,8 @@ class GradeSheetGeminiAnalyzer:
                 if h not in raw_grades:
                     continue
                 mark = raw_grades[h]
+                if Homework.is_hw_prev_header(h):
+                    continue
                 if Homework.is_import_sheet_hw_column(h):
                     parsed = Homework.parse_import_hw_pct(mark)
                     if parsed is not None:
@@ -579,7 +582,7 @@ _cached_analyzer = None
 # Bumping `_module_version` invalidates the in-process cached analyzer. Used
 # whenever the prompt, config, or normalization logic changes so reloaded
 # code does not keep serving an analyzer wired to the old behavior.
-_module_version = 18  # Local PDF extract fast path + adaptive zoom + extraction_path
+_module_version = 19  # Skip the read-only HW prev column during normalization
 
 def get_gemini_analyzer() -> Optional[GradeSheetGeminiAnalyzer]:
     """

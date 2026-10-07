@@ -86,7 +86,14 @@ let assignmentLOs   = [];          // vendor_codes from selected assignment
 let approvedExtraLOs = new Set();  // extra LOs the user approved
 let lastExtraLOList = [];          // from latest runLOComparison (for Select all)
 
+const HW_PREV_HEADER = 'HW prev';
+
+function isHwPrevHeader(lo) {
+  return String(lo == null ? '' : lo).trim().toLowerCase() === HW_PREV_HEADER.toLowerCase();
+}
+
 function isHomeworkHeader(lo) {
+  if (isHwPrevHeader(lo)) return false;
   if (lo == null || typeof lo !== 'string') return false;
   const raw = lo.trim();
   if (!raw) return false;
@@ -757,6 +764,10 @@ function displayExtractedData(data) {
   (data.students || []).forEach(s => {
     if (!s.grades) return;
     Object.keys(s.grades).forEach(h => {
+      if (isHwPrevHeader(h)) {
+        delete s.grades[h];
+        return;
+      }
       if (!isHomeworkHeader(h)) return;
       const raw = s.grades[h];
       if (s.homework_pct == null || String(s.homework_pct).trim() === '') {
@@ -775,7 +786,7 @@ function displayExtractedData(data) {
 
   if (Array.isArray(data.learning_objectives)) {
     data.learning_objectives = data.learning_objectives.filter(
-      lo => !isHomeworkHeader(lo)
+      lo => !isHomeworkHeader(lo) && !isHwPrevHeader(lo)
     );
   }
 
@@ -1036,7 +1047,7 @@ function buildFilteredStudents() {
   return (uploadedPDFData.students || []).map(s => {
     const grades = {};
     Object.keys(s.grades || {}).forEach(lo => {
-      if (isHomeworkHeader(lo)) return;
+      if (isHomeworkHeader(lo) || isHwPrevHeader(lo)) return;
       if (isCsv || includeLOs.has(lo.toUpperCase())) {
         grades[lo] = s.grades[lo];
       }
@@ -1364,7 +1375,7 @@ async function handleFormSubmit(e) {
   const filteredStudents = buildFilteredStudents();
 
   const filteredLOs = isCsv
-    ? (uploadedPDFData.learning_objectives || []).filter(lo => !isHomeworkHeader(lo))
+    ? (uploadedPDFData.learning_objectives || []).filter(lo => !isHomeworkHeader(lo) && !isHwPrevHeader(lo))
     : (uploadedPDFData.learning_objectives || []).filter(lo =>
         includeLOs.has(lo.toUpperCase())
       );

@@ -18,7 +18,7 @@
     <button type="button" onclick="document.getElementById('studentManagementModal').classList.remove('hidden')" class="text-left bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm hover:scale-[1.02] transition-transform">
       <div class="flex items-start justify-between">
         <div>
-          <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Active Students</p>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Manage Students</p>
           <p id="activeStudentsCount" class="text-3xl font-semibold text-slate-900 dark:text-white">{{ total_students }}</p>
         </div>
         <div class="p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900 text-blue-600 dark:text-blue-400">
@@ -95,9 +95,6 @@
                 {{ homework_percentage_badge(passed, total) }}
               </a>
             </div>
-            <button type="button" onclick="deleteStudent('{{ student.id }}', '{{ student.name|e }}')" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors flex-shrink-0" title="Delete student">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-            </button>
           </div>
         </div>
         {% endfor %}
@@ -370,7 +367,7 @@
     </div>
     <div class="flex-1 overflow-y-auto p-6 space-y-2" id="modalStudentList">
       {% for student in all_students %}
-      <div class="modal-student flex items-center justify-between p-4 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 gap-4{% if student.muted %} opacity-60{% endif %}" data-name="{{ student.name|lower }} {{ (student.email or '')|lower }}" data-student-id="{{ student.id }}">
+      <div class="modal-student flex items-center justify-between p-4 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 gap-4{% if student.muted %} opacity-60{% endif %}" data-name="{{ student.name|lower }} {{ (student.email or '')|lower }}" data-student-id="{{ student.id }}" data-display-name="{{ student.name }}" data-email="{{ student.email or '' }}">
         <div class="flex-1 min-w-0">
           <p class="font-medium text-slate-900 dark:text-white{% if student.muted %} line-through{% endif %}">{{ student.name }}</p>
           {% if student.email %}
@@ -384,6 +381,8 @@
           <input type="checkbox" class="mute-toggle rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500" data-student-id="{{ student.id }}" onchange="toggleMute(this)"{% if student.muted %} checked{% endif %}>
           <span>Mute</span>
         </label>
+        <button type="button" onclick="openEditStudent(this)" class="text-sm text-slate-700 dark:text-slate-200 hover:underline shrink-0">Edit</button>
+        <button type="button" onclick="openDeleteStudent(this)" class="text-sm text-red-600 dark:text-red-400 hover:underline shrink-0">Delete</button>
         <a href="{{ url_for('main.class_student_detail', class_id=class_id, student_id=student.id) }}" class="text-sm text-blue-600 dark:text-blue-400 hover:underline shrink-0">View progress →</a>
       </div>
       {% endfor %}
@@ -420,6 +419,45 @@
         </button>
       </div>
     </form>
+  </div>
+</div>
+
+<div id="editStudentModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onclick="if(event.target===this) this.classList.add('hidden')">
+  <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full" onclick="event.stopPropagation()">
+    <div class="p-6 border-b border-slate-200 dark:border-slate-700">
+      <h2 class="font-semibold text-slate-900 dark:text-white">Edit Student</h2>
+      <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">Changes apply to this student in all of your classes.</p>
+    </div>
+    <form id="editStudentForm" onsubmit="saveEditStudent(event)" class="p-6 space-y-4">
+      <input type="hidden" id="editStudentId">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Email</label>
+        <input type="email" id="editStudentEmail" required class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Name (Last, First)</label>
+        <input type="text" id="editStudentName" required class="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <p id="editStudentError" class="hidden text-sm text-red-600 dark:text-red-400"></p>
+      <div class="flex gap-3 pt-2">
+        <button type="button" onclick="document.getElementById('editStudentModal').classList.add('hidden')" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+        <button type="submit" id="editStudentSave" class="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="studentRemovalModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onclick="if(event.target===this) this.classList.add('hidden')">
+  <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full" onclick="event.stopPropagation()">
+    <div class="p-6 space-y-4">
+      <h2 class="font-semibold text-slate-900 dark:text-white">Delete student</h2>
+      <p id="studentRemovalBody" class="text-sm text-slate-600 dark:text-slate-300"></p>
+      <p id="studentRemovalError" class="hidden text-sm text-red-600 dark:text-red-400"></p>
+      <div class="flex gap-3 pt-2">
+        <button type="button" onclick="document.getElementById('studentRemovalModal').classList.add('hidden')" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+        <button type="button" id="studentRemovalConfirm" disabled class="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">Delete</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -551,9 +589,6 @@ function buildStudentRowHTMLDashboard(s, classId) {
           '</div>' +
           '<a href="' + detailPath + '" class="shrink-0 hover:opacity-90" tabindex="-1" aria-hidden="true">' + badge + '</a>' +
         '</div>' +
-        '<button type="button" onclick="deleteStudent(' + JSON.stringify(s.id) + ', ' + JSON.stringify(s.name) + ')" class="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors flex-shrink-0" title="Delete student">' +
-          '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>' +
-        '</button>' +
       '</div>' +
     '</div>'
   );
@@ -726,39 +761,129 @@ function switchView(view) {
     btnStudents.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors';
   }
 }
-function deleteStudent(studentId, studentName) {
-  if (window.__studentDeleteInFlight) return;
-  if (!confirm('Delete ' + studentName + ' from this class? This removes all their grades and cannot be undone.')) return;
-  window.__studentDeleteInFlight = true;
-  var url = '/class/{{ class_id }}/students/' + encodeURIComponent(studentId) + '/delete';
-  fetch(url, {
+var removalTargetId = null;
+
+function showModalLineError(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = 'Network error, please try again';
+  el.classList.remove('hidden');
+}
+
+function readJsonResult(response) {
+  return response.json().then(function (data) {
+    return { success: response.ok && data && data.success, data: data };
+  });
+}
+
+function openEditStudent(btn) {
+  var row = btn.closest('.modal-student');
+  document.getElementById('editStudentId').value = row.getAttribute('data-student-id');
+  document.getElementById('editStudentEmail').value = row.getAttribute('data-email') || '';
+  document.getElementById('editStudentName').value = row.getAttribute('data-display-name') || '';
+  var err = document.getElementById('editStudentError');
+  err.textContent = '';
+  err.classList.add('hidden');
+  document.getElementById('editStudentSave').disabled = false;
+  document.getElementById('editStudentModal').classList.remove('hidden');
+}
+
+function saveEditStudent(event) {
+  event.preventDefault();
+  var saveBtn = document.getElementById('editStudentSave');
+  var err = document.getElementById('editStudentError');
+  var studentId = document.getElementById('editStudentId').value;
+  saveBtn.disabled = true;
+  err.classList.add('hidden');
+  fetch('/api/class/{{ class_id }}/students/' + encodeURIComponent(studentId) + '/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     credentials: 'same-origin',
-    body: '{}'
-  })
-    .then(function (response) {
-      return response.json().then(function (data) {
-        return { ok: response.ok, data: data };
-      });
+    body: JSON.stringify({
+      email: document.getElementById('editStudentEmail').value,
+      name: document.getElementById('editStudentName').value
     })
+  })
+    .then(readJsonResult)
     .then(function (result) {
-      if (!result.ok || !result.data.success) {
-        alert('Error: ' + (result.data.error || 'Unknown error'));
+      if (!result.success) {
+        err.textContent = (result.data && result.data.error) || 'Could not save student';
+        err.classList.remove('hidden');
+        saveBtn.disabled = false;
         return;
       }
-      location.reload();
+      var next = new URL(window.location.href);
+      next.searchParams.set('manage_students', '1');
+      window.location.assign(next.toString());
     })
-    .catch(function (err) {
-      var msg = (err && err.message) ? String(err.message) : String(err);
-      var hint = '';
-      if (/failed to fetch|networkerror|load failed|aborted|reset/i.test(msg)) {
-        hint = '\n\nTip: If this happened right after saving code, the dev server may have restarted and dropped the request. Try again, or run with FLASK_NO_RELOADER=1 for a stable local server.';
+    .catch(function () {
+      showModalLineError('editStudentError');
+      saveBtn.disabled = false;
+    });
+}
+
+function openDeleteStudent(btn) {
+  var row = btn.closest('.modal-student');
+  var studentId = row.getAttribute('data-student-id');
+  var studentName = row.getAttribute('data-display-name') || '';
+  var confirmBtn = document.getElementById('studentRemovalConfirm');
+  var err = document.getElementById('studentRemovalError');
+  var body = document.getElementById('studentRemovalBody');
+  removalTargetId = studentId;
+  confirmBtn.disabled = true;
+  confirmBtn.onclick = null;
+  err.textContent = '';
+  err.classList.add('hidden');
+  body.textContent = 'Loading removal counts for ' + studentName + '.';
+  document.getElementById('studentRemovalModal').classList.remove('hidden');
+  fetch('/api/class/{{ class_id }}/students/' + encodeURIComponent(studentId) + '/removal-counts', {
+    headers: { 'Accept': 'application/json' },
+    credentials: 'same-origin'
+  })
+    .then(readJsonResult)
+    .then(function (result) {
+      if (removalTargetId !== studentId) return;
+      if (!result.success) {
+        err.textContent = (result.data && result.data.error) || 'Could not load removal counts';
+        err.classList.remove('hidden');
+        return;
       }
-      alert('Could not reach the server to delete this student.' + hint);
+      var grades = result.data.grade_rows;
+      var homework = result.data.homework_scores;
+      body.textContent = 'Delete ' + studentName + ' from this class? This permanently removes their enrollment, ' + grades + ' grade rows, and ' + homework + ' homework scores in this class. Their profile is kept. This cannot be undone.';
+      confirmBtn.disabled = false;
+      confirmBtn.onclick = function () {
+        if (removalTargetId !== studentId) return;
+        confirmBtn.disabled = true;
+        fetch('/class/{{ class_id }}/students/' + encodeURIComponent(studentId) + '/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          credentials: 'same-origin',
+          body: '{}'
+        })
+          .then(readJsonResult)
+          .then(function (deleteResult) {
+            if (removalTargetId !== studentId) return;
+            if (!deleteResult.success) {
+              err.textContent = (deleteResult.data && deleteResult.data.error) || 'Could not delete student';
+              err.classList.remove('hidden');
+              confirmBtn.disabled = false;
+              return;
+            }
+            var next = new URL(window.location.href);
+            next.searchParams.set('manage_students', '1');
+            window.location.href = next.toString();
+          })
+          .catch(function () {
+            if (removalTargetId !== studentId) return;
+            showModalLineError('studentRemovalError');
+            confirmBtn.disabled = false;
+          });
+      };
     })
-    .finally(function () {
-      window.__studentDeleteInFlight = false;
+    .catch(function () {
+      if (removalTargetId !== studentId) return;
+      showModalLineError('studentRemovalError');
     });
 }
 function toggleAssignment(el) {
