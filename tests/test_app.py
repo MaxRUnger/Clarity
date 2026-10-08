@@ -5370,6 +5370,28 @@ class TestClassHeaderTitle(unittest.TestCase):
                 )
                 self._assert_title(html, section)
 
+    def test_print_mastery_badge_sizes_to_its_text(self):
+        html = self._render(
+            "class_student_detail.html",
+            class_id="c1",
+            class_name="Test Upload",
+            class_days="MW",
+            class_section="F26",
+            student={
+                "id": "s1",
+                "name": "Lee, Ana",
+                "email": "",
+                "learning_objectives": [],
+                "objective_total": 0,
+            },
+        )
+        start = html.find(".roster-print-student .mastery-badge,")
+        self.assertGreaterEqual(start, 0)
+        block = html[start:html.find("}", start)]
+        self.assertIn("width: auto", block)
+        self.assertIn("min-width: max-content", block)
+        self.assertIsNone(re.search(r"width:\s*\d", block))
+
     def test_history_email_and_report_print_keep_raw_name(self):
         history = self._render(
             "student_history.html",
