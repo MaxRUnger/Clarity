@@ -2505,6 +2505,24 @@ class TestUpdateGradeRoster(unittest.TestCase):
         for row in roster:
             self.assertEqual(set(row.keys()), {"id", "full_name"})
 
+    def test_update_grade_post_is_not_allowed(self):
+        from app import routes as r
+
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
+            rv = client.post(
+                "/class/class-a/update_grade",
+                data={"confirmed": "true"},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        self.assertEqual(rv.status_code, 405)
+
     def test_update_grade_template_roster_script_and_analyzer_version(self):
         path = os.path.join(
             os.path.dirname(__file__), "..", "app", "templates", "update_grade.html",
@@ -2516,6 +2534,51 @@ class TestUpdateGradeRoster(unittest.TestCase):
             src,
         )
         self.assertIn("pdf_analyzer.js') }}?v=19", src)
+
+    def test_speed_grader_autosave_runs_when_the_tab_hides(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "class_speed_grader.html",
+        )
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+
+        def extract(name):
+            marker = "function " + name + "("
+            start = src.find(marker)
+            self.assertGreaterEqual(start, 0, name)
+            brace = src.find("{", start)
+            depth = 0
+            end = -1
+            for i in range(brace, len(src)):
+                if src[i] == "{":
+                    depth += 1
+                elif src[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            self.assertGreaterEqual(end, 0, name)
+            return src[start:end]
+
+        save = extract("runAutosave")
+        self.assertNotIn("document.hidden", src)
+        self.assertLess(save.find("if (!hasUnsavedChanges) return;"), save.find("if (autosaveInFlight) return;"))
+        self.assertLess(save.find("if (autosaveInFlight) return;"), save.find("autosaveInFlight = true;"))
+        self.assertLess(save.find("autosaveInFlight = true;"), save.find("await performSave(null);"))
+        self.assertLess(save.find("await performSave(null);"), save.find("autosaveInFlight = false;"))
+        self.assertIn("window.setInterval(runAutosave, 180000);", src)
+        self.assertIn("every 3 minutes", src)
+        self.assertNotIn("every minute", src)
+        self.assertIn("handleSessionExpired", src)
+
+        handler_at = src.find("addEventListener('visibilitychange'")
+        self.assertGreaterEqual(handler_at, 0)
+        handler = src[handler_at:src.find("});", handler_at) + 3]
+        self.assertIn("document.visibilityState === 'hidden'", handler)
+        self.assertEqual(handler.count("runAutosave()"), 1)
+        self.assertLess(handler.find("document.visibilityState === 'hidden'"), handler.find("runAutosave()"))
+        self.assertNotIn("visible", handler)
+        self.assertNotIn("performSave", handler)
 
     def test_pdf_analyzer_posts_ignored_names_without_preview(self):
         path = os.path.join(

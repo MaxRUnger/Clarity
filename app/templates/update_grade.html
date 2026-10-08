@@ -24,8 +24,7 @@
   </div>
 </div>
 {% else %}
-<form action="{{ url_for('main.upload_grades', class_id=class_id) }}" method="post" enctype="multipart/form-data" id="uploadForm" class="space-y-6">
-  <input type="hidden" name="confirmed" value="true">
+<form id="uploadForm" class="space-y-6">
   <div>
     <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">Upload Grades</h1>
     <p class="text-slate-500 dark:text-slate-400 mt-1">Import grades from a PDF, image, or CSV and review before adding to grader</p>
@@ -182,7 +181,7 @@
               </svg>
               <p class="font-medium text-slate-700 dark:text-slate-300 mb-1">Click to upload or drag and drop</p>
               <p class="text-sm text-slate-400 dark:text-slate-500">CSV, PDF, JPG, or PNG up to 10MB</p>
-              <input type="file" id="pdfInput" name="file" accept=".csv,.pdf,.jpg,.jpeg,.png" class="hidden" onchange="handleFileSelect(this)">
+              <input type="file" id="pdfInput" accept=".csv,.pdf,.jpg,.jpeg,.png" class="hidden" onchange="handleFileSelect(this)">
             </div>
           </label>
           <p id="selectedFileName" class="text-sm text-slate-500 dark:text-slate-400 mt-3 hidden"></p>
@@ -225,7 +224,7 @@
           <input type="radio" name="mapMode" id="mapModeExisting" value="existing" checked onchange="onMapModeChange()">
           Use an existing assignment
         </label>
-        <select name="assignment_id" id="assignmentSelect" onchange="onAssignmentSelected()" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white">
+        <select id="assignmentSelect" onchange="onAssignmentSelected()" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white">
           <option value="" disabled selected>Select assignment</option>
           {% for assignment in assignments %}
             <option value="{{ assignment.id }}">{{ assignment.name }}</option>

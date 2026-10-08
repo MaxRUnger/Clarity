@@ -3361,7 +3361,7 @@ def class_speed_grader(class_id):
                            lo_names=lo_names,
                            auto_convert_m=class_data.get('auto_convert_m', False))
 
-@main_bp.route("/class/<class_id>/update_grade", methods=["GET", "POST"], endpoint='upload_grades')
+@main_bp.route("/class/<class_id>/update_grade", methods=["GET"], endpoint='upload_grades')
 @login_required
 def update_grade_handler(class_id):
     if not _instructor_owns_class(class_id):
@@ -3371,28 +3371,6 @@ def update_grade_handler(class_id):
 
     if not class_data:
         return redirect(url_for('main.instructor_dashboard'))
-    
-    if request.method == "POST":
-        # Block upload if no assignments exist
-        assignments_check = supabase_admin.table("assignments") \
-            .select("id") \
-            .eq("class_id", class_id) \
-            .limit(1) \
-            .execute()
-        if not assignments_check.data:
-            return "Cannot upload grades: no assignments exist for this class", 400
-
-        file = request.files.get('file')
-        assignment_id = request.form.get('assignment_id')
-
-        if not file or file.filename == '':
-            return "No file selected", 400
-
-        logger.info("File uploaded for class %s: %s, assignment_id=%s", class_id, file.filename, assignment_id)
-
-        # Placeholder for grade import parsing implementation.
-        # Currently we just redirect back to the class detail page.
-        return redirect(url_for('main.class_detail', class_id=class_id))
 
     assignments = load_assignments_for_class(class_id)
     template_kwargs = {
@@ -4519,9 +4497,6 @@ def api_import_grades():
         chunk_size = 150
         for i in range(0, len(grade_rows), chunk_size):
             chunk = grade_rows[i:i + chunk_size]
-            # Add updated_at to each row so the timestamp refreshes on overwrite
-            for row in chunk:
-                row["updated_at"] = "now()"
             supabase_admin.table("grades").upsert(
                 chunk, on_conflict="student_id,learning_objective_id,assignment_id"
             ).execute()

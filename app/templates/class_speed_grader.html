@@ -1647,27 +1647,31 @@ if (assignmentFilterEl) {
   }, true);
 }
 
-// Simple autosave: every minute, if there are unsaved changes and the tab is
-// visible, persist HW % and grades using the same save pipeline.
+// Autosave every 3 minutes while grades are unsaved, including in a background
+// tab. Hiding the tab saves immediately. A save already in flight is left alone.
 let autosaveTimer = null;
+let autosaveInFlight = false;
+async function runAutosave() {
+  if (!hasUnsavedChanges) return;
+  if (autosaveInFlight) return;
+  autosaveInFlight = true;
+  const notice = document.getElementById('autosaveNotice');
+  try {
+    if (notice) notice.classList.remove('hidden');
+    await performSave(null);
+  } finally {
+    autosaveInFlight = false;
+    if (notice) notice.classList.add('hidden');
+  }
+}
 function startAutosaveTimer() {
   if (autosaveTimer !== null) return;
-  autosaveTimer = window.setInterval(async function () {
-    if (document.hidden) return;
-    if (!hasUnsavedChanges) return;
-    const notice = document.getElementById('autosaveNotice');
-    try {
-      if (notice) notice.classList.remove('hidden');
-      await performSave(null);
-    } finally {
-      if (notice) notice.classList.add('hidden');
-    }
-  }, 180000);
+  autosaveTimer = window.setInterval(runAutosave, 180000);
 }
 startAutosaveTimer();
 document.addEventListener('visibilitychange', function () {
-  if (!document.hidden) {
-    startAutosaveTimer();
+  if (document.visibilityState === 'hidden') {
+    runAutosave();
   }
 });
 </script>
