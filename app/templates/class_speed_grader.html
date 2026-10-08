@@ -1570,7 +1570,9 @@ async function performSave(btn) {
     });
     if (!res.ok) {
       const err = await res.json().catch(function () { return {}; });
-      throw new Error(err.error || res.statusText);
+      const failure = new Error(err.error || res.statusText);
+      failure.status = res.status;
+      throw failure;
     }
     gradeHistory.length = 0;
     updateUndoBtn();
@@ -1586,6 +1588,12 @@ async function performSave(btn) {
       }, 2000);
     }
   } catch (e) {
+    if (e && (e.status === 401 || e.message === 'Unauthorized')) {
+      if (window.ClarityUI && typeof window.ClarityUI.handleSessionExpired === 'function') {
+        window.ClarityUI.handleSessionExpired();
+      }
+      return;
+    }
     if (btn) {
       alert('Error saving grades: ' + e.message);
       btn.disabled = false;

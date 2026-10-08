@@ -1036,6 +1036,9 @@ def _lookup_enrolled_import_student_id(
     return None
 
 
+FREE_PASSES_ALLOWED = 2
+
+
 def _batch_get_free_passes(student_ids, class_id):
     """Batch-fetch passes_used for a list of students. Returns {student_id: passes_used}."""
     if not student_ids:
@@ -3320,7 +3323,7 @@ def class_speed_grader(class_id):
     if not class_data:
         return redirect(url_for('main.instructor_dashboard'))
 
-    hw_passes_allowed = 2
+    hw_passes_allowed = FREE_PASSES_ALLOWED
 
     # Load assignments with their linked LOs
     assignments = load_assignments_for_class(class_id)
@@ -3998,7 +4001,7 @@ def use_free_pass(class_id):
         if not _student_enrolled_in_class(class_id, str(student_id)):
             return jsonify({"success": False, "error": "Student is not enrolled in this class"}), 403
 
-        passes_allowed = 2
+        passes_allowed = FREE_PASSES_ALLOWED
 
         existing = supabase_admin.table("free_passes") \
             .select("id, passes_used") \
@@ -4042,7 +4045,7 @@ def return_free_pass(class_id):
         if not _student_enrolled_in_class(class_id, str(student_id)):
             return jsonify({"success": False, "error": "Student is not enrolled in this class"}), 403
 
-        passes_allowed = 2
+        passes_allowed = FREE_PASSES_ALLOWED
 
         existing = supabase_admin.table("free_passes") \
             .select("id, passes_used") \

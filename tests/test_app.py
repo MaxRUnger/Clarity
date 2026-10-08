@@ -5563,6 +5563,9 @@ class _RemovalQuery:
     def order(self, *args, **kwargs):
         return self
 
+    def limit(self, *args, **kwargs):
+        return self
+
     def range(self, start, end):
         return self
 
@@ -5827,6 +5830,224 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         match = re.search(r'id="activeStudentsCount"[^>]*>([^<]*)<', html)
         self.assertIsNotNone(match)
         self.assertEqual(match.group(1).strip(), "1")
+
+
+class TestFreePassAllowance(unittest.TestCase):
+    def _post(self, path, rows):
+        from app import routes as r
+        log = []
+
+        class _PassQuery:
+            def __init__(self):
+                self.op = None
+                self.payload = None
+
+            def select(self, *args, **kwargs):
+                self.op = "select"
+                return self
+
+            def insert(self, row):
+                self.op = "insert"
+                self.payload = row
+                return self
+
+            def update(self, row):
+                self.op = "update"
+                self.payload = row
+                return self
+
+            def eq(self, column, value):
+                return self
+
+            def execute(self):
+                log.append({"op": self.op, "payload": self.payload})
+                data = rows if self.op == "select" else []
+                return unittest.mock.MagicMock(data=data)
+
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch.object(r, "supabase_admin") as sa, \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
+            sa.table.side_effect = lambda name: _PassQuery()
+            rv = client.post(
+                path,
+                json={"student_id": "stu-1"},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        return rv, log
+
+    def test_first_use_inserts_one_and_returns_one_less_than_the_allowance(self):
+        from app.routes import FREE_PASSES_ALLOWED
+        rv, log = self._post("/api/class/c1/use_pass", [])
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.get_json()["passes_remaining"], FREE_PASSES_ALLOWED - 1)
+        inserted = [entry for entry in log if entry["op"] == "insert"]
+        self.assertEqual(len(inserted), 1)
+        self.assertEqual(inserted[0]["payload"]["passes_used"], 1)
+        self.assertEqual(
+            [entry for entry in log if entry["op"] == "update"],
+            [],
+        )
+
+    def test_use_at_the_limit_returns_400_and_does_not_update(self):
+        from app.routes import FREE_PASSES_ALLOWED
+        rv, log = self._post(
+            "/api/class/c1/use_pass",
+            [{"id": "fp1", "passes_used": FREE_PASSES_ALLOWED}],
+        )
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], "No passes remaining")
+        self.assertEqual(
+            [entry for entry in log if entry["op"] == "update"],
+            [],
+        )
+
+    def test_return_from_one_used_restores_the_allowance(self):
+        from app.routes import FREE_PASSES_ALLOWED
+        rv, log = self._post(
+            "/api/class/c1/return_pass",
+            [{"id": "fp1", "passes_used": 1}],
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.get_json()["passes_remaining"], FREE_PASSES_ALLOWED)
+        updated = [entry for entry in log if entry["op"] == "update"]
+        self.assertEqual(len(updated), 1)
+        self.assertEqual(updated[0]["payload"], {"passes_used": 0})
+
+
+class TestClassDeleteRoutes(unittest.TestCase):
+    def _client(self):
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        return client
+
+    def _post(self, path, rows_for, owns=True, lo_ids=None):
+        from app import routes as r
+        log = []
+
+        def table(name):
+            return _RemovalQuery(log, name, rows_for.get(name, []), None)
+
+        client = self._client()
+        with unittest.mock.patch.object(r, "supabase_admin") as sa, \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
+                unittest.mock.patch.object(
+                    r.Course, "get_all_lo_ids_for_class", return_value=lo_ids or []
+                ):
+            sa.table.side_effect = table
+            rv = client.post(path, headers={"X-CSRF-Token": "test-csrf"})
+        return rv, log
+
+    def test_delete_class_rejects_a_non_owner_before_any_delete(self):
+        rv, log = self._post("/class/c1/delete", {}, owns=False, lo_ids=["lo-1"])
+        self.assertEqual(rv.status_code, 403)
+        self.assertEqual(rv.get_json()["error"], "Forbidden")
+        self.assertEqual(log, [])
+
+    def test_delete_class_owner_redirects_after_the_class_rows_are_deleted(self):
+        rv, log = self._post(
+            "/class/c1/delete",
+            {
+                "grades": [{
+                    "student_id": "stu-1",
+                    "learning_objective_id": "lo-1",
+                    "assignment_id": "a1",
+                    "top_score": "M",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                }],
+            },
+            lo_ids=["lo-1"],
+        )
+        self.assertEqual(rv.status_code, 302)
+        self.assertTrue(rv.headers["Location"].endswith("/instructor/dashboard"))
+        deleted = [entry["table"] for entry in log if entry["op"] == "delete"]
+        self.assertEqual(deleted, [
+            "assignment_objectives",
+            "grades",
+            "learning_objectives",
+            "assignments",
+            "enrollments",
+            "classes",
+        ])
+
+    def test_delete_lo_from_another_class_returns_404_with_no_delete(self):
+        rv, log = self._post("/class/c1/delete_lo/lo-other", {"learning_objectives": []})
+        self.assertEqual(rv.status_code, 404)
+        self.assertEqual(rv.get_json()["error"], "Learning objective not found")
+        self.assertEqual([entry for entry in log if entry["op"] == "delete"], [])
+        selects = [entry for entry in log if entry["op"] == "select"]
+        self.assertEqual(len(selects), 1)
+        self.assertIn(("eq", "id", "lo-other"), selects[0]["filters"])
+        self.assertIn(("eq", "class_id", "c1"), selects[0]["filters"])
+
+    def test_delete_lo_in_this_class_deletes_links_grades_and_the_objective(self):
+        rv, log = self._post(
+            "/class/c1/delete_lo/lo-1",
+            {
+                "learning_objectives": [{"id": "lo-1", "class_id": "c1"}],
+                "grades": [{
+                    "student_id": "stu-1",
+                    "learning_objective_id": "lo-1",
+                    "assignment_id": "a1",
+                    "top_score": "M",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                }],
+            },
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        deleted = [entry["table"] for entry in log if entry["op"] == "delete"]
+        self.assertEqual(deleted, [
+            "assignment_objectives",
+            "grades",
+            "learning_objectives",
+        ])
+
+    def test_delete_assignment_from_another_class_returns_404(self):
+        rv, log = self._post(
+            "/class/c1/delete_assignment/asg-other",
+            {"assignments": []},
+        )
+        self.assertEqual(rv.status_code, 404)
+        self.assertEqual(rv.get_json()["error"], "Not found")
+        self.assertEqual([entry for entry in log if entry["op"] == "delete"], [])
+        selects = [entry for entry in log if entry["op"] == "select"]
+        self.assertEqual(len(selects), 1)
+        self.assertIn(("eq", "id", "asg-other"), selects[0]["filters"])
+        self.assertIn(("eq", "class_id", "c1"), selects[0]["filters"])
+
+    def test_delete_assignment_removes_the_assignment_and_links_and_keeps_grades(self):
+        rv, log = self._post(
+            "/class/c1/delete_assignment/a1",
+            {
+                "assignments": [{"id": "a1", "class_id": "c1"}],
+                "grades": [{
+                    "student_id": "stu-1",
+                    "learning_objective_id": "lo-1",
+                    "assignment_id": "a1",
+                    "top_score": "M",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                }],
+            },
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        deleted = [entry["table"] for entry in log if entry["op"] == "delete"]
+        self.assertEqual(deleted, ["assignment_objectives", "assignments"])
+        self.assertNotIn("grades", deleted)
 
 
 if __name__ == '__main__':

@@ -11,10 +11,25 @@
       .replace(/'/g, "&#39;");
   }
 
+  let sessionExpiryHandled = false;
+
+  function handleSessionExpired() {
+    if (sessionExpiryHandled) return;
+    sessionExpiryHandled = true;
+    window.alert("Your session expired. Please sign in again.");
+    window.location.assign("/login");
+  }
+
   async function apiRequest(url, options = {}) {
     try {
       const res = await fetch(url, options);
       const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        handleSessionExpired();
+        // The browser is going to /login. This promise stays pending so the
+        // caller's own failure alert stays unreached.
+        return new Promise(() => {});
+      }
       if (!res.ok || data.success === false) {
         return {
           ok: false,
@@ -125,6 +140,7 @@
   window.ClarityUI = {
     escapeHtml,
     apiRequest,
+    handleSessionExpired,
     applyInstructorModeVisibility,
     startMobileCsvPoll,
     debounce,
