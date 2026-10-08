@@ -868,10 +868,10 @@ def _csv_format_hw_score(score) -> str:
 
 def _gradesheet_letter_map_from_rows(grade_rows) -> Dict[Tuple[str, str], str]:
     letter_map: Dict[Tuple[str, str], str] = {}
-    for g in grade_rows or []:
-        sid = str(g.get("student_id") or "").strip()
-        lo_id = str(g.get("learning_objective_id") or "").strip()
-        letter = str(g.get("top_score") or "").strip()
+    for grade in grade_rows or []:
+        sid = str(grade.get("student_id") or "").strip()
+        lo_id = str(grade.get("learning_objective_id") or "").strip()
+        letter = str(grade.get("top_score") or "").strip()
         if sid and lo_id and letter:
             letter_map[(sid, lo_id)] = letter
     return letter_map
@@ -1069,14 +1069,14 @@ def _aggregate_lo_grades(
     """
     lo_grades = {}
     allowed_ids = set(lo_lookup.keys()) if isinstance(lo_lookup, dict) else None
-    for g in (raw_grades or []):
-        lo_id = str(g.get('learning_objective_id')) if g.get('learning_objective_id') else None
+    for grade in (raw_grades or []):
+        lo_id = str(grade.get('learning_objective_id')) if grade.get('learning_objective_id') else None
         if not lo_id:
             continue
         if allowed_ids is not None and len(allowed_ids) > 0 and lo_id not in allowed_ids:
             continue
         if lo_id not in lo_grades:
-            lo_info = _merge_lo_row(lo_lookup, lo_id, g.get("learning_objectives"))
+            lo_info = _merge_lo_row(lo_lookup, lo_id, grade.get("learning_objectives"))
             lo_grades[lo_id] = {
                 'learning_objective_id': lo_id,
                 'name': _lo_display_title(lo_info),
@@ -1087,20 +1087,20 @@ def _aggregate_lo_grades(
                 'grades_list': [],
                 'grades_meta': [],
             }
-        top = g.get('top_score')
+        top = grade.get('top_score')
         # New persistent flag (scripts/add_grades_counts_for_mastery.sql) wins;
         # legacy rows missing the column default to True so existing M's still
         # count. Optional callback retained for compatibility (used by tests
         # and any caller layering extra constraints on top of the persisted
         # flag); it can only further restrict, never re-enable.
-        row_counts_persistent = g.get('counts_for_mastery')
+        row_counts_persistent = grade.get('counts_for_mastery')
         if row_counts_persistent is None:
             row_counts_persistent = True
         row_counts_persistent = bool(row_counts_persistent)
         row_counts_callback = True
         if mastery_row_allowed is not None:
             try:
-                row_counts_callback = bool(mastery_row_allowed(g))
+                row_counts_callback = bool(mastery_row_allowed(grade))
             except Exception:
                 row_counts_callback = True
         row_counts = row_counts_persistent and row_counts_callback
@@ -3869,12 +3869,12 @@ def api_assignment_grades(class_id, assignment_id):
         grades_map = {}
         counts_for_mastery_map = {}
         has_assignment_grades = False
-        for g in (result.data or []):
-            if str(g.get("top_score") or "").strip():
+        for grade in (result.data or []):
+            if str(grade.get("top_score") or "").strip():
                 has_assignment_grades = True
-            key = f"{g['student_id']}|{g['learning_objective_id']}"
-            grades_map[key] = g['top_score']
-            flag = g.get('counts_for_mastery')
+            key = f"{grade['student_id']}|{grade['learning_objective_id']}"
+            grades_map[key] = grade['top_score']
+            flag = grade.get('counts_for_mastery')
             counts_for_mastery_map[key] = True if flag is None else bool(flag)
 
         # Import / legacy rows often have assignment_id NULL while still targeting LOs on this
@@ -3911,11 +3911,11 @@ def api_assignment_grades(class_id, assignment_id):
                 .in_("learning_objective_id", lo_ids)
                 .execute()
             )
-            for g in (unscoped.data or []):
-                key = f"{g['student_id']}|{g['learning_objective_id']}"
+            for grade in (unscoped.data or []):
+                key = f"{grade['student_id']}|{grade['learning_objective_id']}"
                 if key not in grades_map:
-                    grades_map[key] = g["top_score"]
-                    flag = g.get('counts_for_mastery')
+                    grades_map[key] = grade["top_score"]
+                    flag = grade.get('counts_for_mastery')
                     counts_for_mastery_map[key] = True if flag is None else bool(flag)
 
         # HW % is shared by all assignments in the same homework_group (see Homework.get_hw_scores_map_for_assignment)
@@ -3972,18 +3972,18 @@ def _promote_non_counting_masteries_for_student(class_id: str, student_id: str, 
     ).execute()
 
     rows = []
-    for g in resp.data or []:
-        if g.get("counts_for_mastery") is not False:
+    for grade in resp.data or []:
+        if grade.get("counts_for_mastery") is not False:
             continue
         row = {
             "student_id": student_id,
-            "learning_objective_id": g["learning_objective_id"],
-            "top_score": g["top_score"],
+            "learning_objective_id": grade["learning_objective_id"],
+            "top_score": grade["top_score"],
             "counts_for_mastery": True,
         }
         if changed_by is not None:
             row["last_modified_by"] = changed_by
-        aid = g.get("assignment_id")
+        aid = grade.get("assignment_id")
         if aid is not None:
             row["assignment_id"] = aid
         rows.append(row)

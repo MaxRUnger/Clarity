@@ -153,8 +153,8 @@ class Course:
                             "learning_objective_id", lo_id_list
                         ).order("id")
                     )
-                for g in grade_rows:
-                    grades_by_student.setdefault(g["student_id"], []).append(g)
+                for grade in grade_rows:
+                    grades_by_student.setdefault(grade["student_id"], []).append(grade)
 
             for enrollment in enrollments:
                 profile = enrollment.get('profiles')
@@ -267,7 +267,7 @@ class Grade:
             )
 
             assignment_ids = sorted({
-                g.get('assignment_id') for g in grade_rows if g.get('assignment_id')
+                grade.get('assignment_id') for grade in grade_rows if grade.get('assignment_id')
             })
             if not assignment_ids:
                 return []
@@ -304,19 +304,19 @@ class Grade:
                         .execute()
                     )
                     for row in (sib_resp.data or []):
-                        g = (row.get('homework_group') or '').strip()
+                        group = (row.get('homework_group') or '').strip()
                         rid = row.get('id')
-                        if not g or not rid:
+                        if not group or not rid:
                             continue
-                        sibling_ids_by_group.setdefault(g, []).append(rid)
+                        sibling_ids_by_group.setdefault(group, []).append(rid)
                 except Exception as e:
                     logger.error("Bulk sibling-assignment lookup failed: %s", e)
 
             # Collect every key under which homework_scores might exist for these groups.
             group_keys: set = set()
-            for g, sibs in sibling_ids_by_group.items():
-                group_keys.add(g)
-                for sid in sibs:
+            for group, sibling_ids in sibling_ids_by_group.items():
+                group_keys.add(group)
+                for sid in sibling_ids:
                     group_keys.add(sid)
             for aid in assignment_ids:
                 group_keys.add(aid)
@@ -367,26 +367,26 @@ class Grade:
                 hw_by_assignment[aid] = _hw_map_for_assignment(aid)
 
             overdue = []
-            for g in grade_rows:
-                assignment = g.get('assignments') or {}
+            for grade in grade_rows:
+                assignment = grade.get('assignments') or {}
                 rev_due = assignment.get('revision_due')
                 if not rev_due or rev_due >= today:
                     continue
-                aid = g.get('assignment_id')
-                snapshot = g.get('hw_score_at_entry')
+                aid = grade.get('assignment_id')
+                snapshot = grade.get('hw_score_at_entry')
                 if snapshot is None:
-                    score = hw_by_assignment.get(aid, {}).get(g['student_id'])
+                    score = hw_by_assignment.get(aid, {}).get(grade['student_id'])
                 else:
                     score = snapshot
                 if not Homework.is_revision_to_m_eligible_hw_score(score):
                     continue
-                lo = g.get('learning_objectives') or {}
+                lo = grade.get('learning_objectives') or {}
                 overdue.append({
-                    'student_id': g['student_id'],
+                    'student_id': grade['student_id'],
                     'assignment_name': assignment.get('name', ''),
                     'revision_due': rev_due,
                     'lo_name': lo.get('vendor_code') or lo.get('name', 'Unknown LO'),
-                    'top_score': g.get('top_score') or '',
+                    'top_score': grade.get('top_score') or '',
                 })
             return overdue
         except Exception as e:

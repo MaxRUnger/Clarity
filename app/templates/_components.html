@@ -104,10 +104,10 @@
         <p class="lo-grades-label sheet-label text-slate-600 dark:text-slate-300 text-sm mt-3 mb-1">Grades</p>
         <div class="lo-grades flex flex-wrap items-center gap-2">
           {% set meta_list = lo.grades_meta if lo.grades_meta else [] %}
-          {% for g in (lo.grades_list or []) %}
+          {% for mark in (lo.grades_list or []) %}
           {% set meta = meta_list[loop.index0] if loop.index0 < (meta_list|length) else None %}
-          {% set is_non_counting = (g in ('M', 'MR')) and meta and (meta.counts_for_mastery == false) %}
-          <span class="mastery-badge mastery-{{ g|lower }} px-2 py-0.5 text-xs font-semibold font-mono rounded border{% if is_non_counting %} non-counting-grade{% endif %}">{{ g }}</span>
+          {% set is_non_counting = (mark in ('M', 'MR')) and meta and (meta.counts_for_mastery == false) %}
+          <span class="mastery-badge mastery-{{ mark|lower }} px-2 py-0.5 text-xs font-semibold font-mono rounded border{% if is_non_counting %} non-counting-grade{% endif %}">{{ mark }}</span>
           {% endfor %}
           <span class="sheet-label text-xs text-slate-600 dark:text-slate-300">{{ lo.m_count }} / {{ lo.required_ms }} Ms{% if lo.mr_count %}<span class="ml-1">({{ lo.mr_count }} MR)</span>{% endif %}</span>
         </div>

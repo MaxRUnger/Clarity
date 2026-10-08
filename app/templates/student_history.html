@@ -1,4 +1,5 @@
 {% extends "app_base.html" %}
+{% from "_components.html" import mastery_badge_styles %}
 
 {% block content %}
 <div class="space-y-5 student-history-page">
@@ -67,7 +68,7 @@
               <div class="text-2xl font-bold text-slate-900 dark:text-white">
                 {% set score1 = grade.top_score %}
                 {% if score1 %}
-                  {% if score1 in ['M', 'R', 'RQ', 'P', 'X', 'A'] %}
+                  {% if score1 in ['M', 'MR', 'R', 'RQ', 'P', 'X', 'A'] %}
                     <!-- Mastery code -->
                     <span class="mastery-badge mastery-{{ score1|lower }} inline-block px-3 py-1 text-lg font-semibold font-mono rounded border">{{ score1 }}</span>
                   {% else %}
@@ -81,7 +82,7 @@
               {% set score2 = grade.second_score %}
               {% if score2 and score2 != score1 %}
               <div class="text-sm text-slate-500 dark:text-slate-400 mt-2">
-                {% if score2 in ['M', 'R', 'RQ', 'P', 'X', 'A'] %}
+                {% if score2 in ['M', 'MR', 'R', 'RQ', 'P', 'X', 'A'] %}
                   <span class="mastery-badge mastery-{{ score2|lower }} inline-block px-2 py-0.5 text-xs font-semibold font-mono rounded border">{{ score2 }}</span>
                 {% else %}
                   <span class="student-history-numeric inline-block px-2 py-0.5 text-xs font-semibold rounded border border-slate-300 bg-white dark:bg-slate-800 dark:border-slate-600">{{ score2 }}</span>
@@ -104,9 +105,9 @@
   <div class="student-history-print-table hidden print:block mt-4">
     {% set ns = namespace(assignments=[]) %}
     {% for lo in learning_objectives %}
-      {% for g in lo.grades %}
-        {% if g.assignments and g.assignments.name %}
-          {% set aname = g.assignments.name|string %}
+      {% for grade in lo.grades %}
+        {% if grade.assignments and grade.assignments.name %}
+          {% set aname = grade.assignments.name|string %}
           {% if aname not in ns.assignments %}
             {% set ns.assignments = ns.assignments + [aname] %}
           {% endif %}
@@ -128,13 +129,13 @@
           <td class="assignment-name">{{ aname }}</td>
           {% for lo in learning_objectives %}
           {% set cell = namespace(scores=[]) %}
-          {% for g in lo.grades %}
-            {% if g.assignments and (g.assignments.name|string) == aname %}
-              {% if g.top_score %}
-                {% set cell.scores = cell.scores + [g.top_score] %}
+          {% for grade in lo.grades %}
+            {% if grade.assignments and (grade.assignments.name|string) == aname %}
+              {% if grade.top_score %}
+                {% set cell.scores = cell.scores + [grade.top_score] %}
               {% endif %}
-              {% if g.second_score %}
-                {% set cell.scores = cell.scores + [g.second_score] %}
+              {% if grade.second_score %}
+                {% set cell.scores = cell.scores + [grade.second_score] %}
               {% endif %}
             {% endif %}
           {% endfor %}
@@ -194,10 +195,10 @@ function emailStudentHistoryReport(btnEl) {
     if (grades.length === 0) {
       lines.push('  (no grades yet)');
     } else {
-      grades.forEach(function (g) {
-        var an = (g.assignments && g.assignments.name) ? g.assignments.name : 'Assignment';
-        var s1 = g.top_score != null ? String(g.top_score) : '—';
-        var s2 = g.second_score != null && g.second_score !== g.top_score ? String(g.second_score) : '';
+      grades.forEach(function (grade) {
+        var an = (grade.assignments && grade.assignments.name) ? grade.assignments.name : 'Assignment';
+        var s1 = grade.top_score != null ? String(grade.top_score) : '—';
+        var s2 = grade.second_score != null && grade.second_score !== grade.top_score ? String(grade.second_score) : '';
         lines.push('  ' + an + ': ' + s1 + (s2 ? ' / ' + s2 : ''));
       });
     }
@@ -250,15 +251,8 @@ function emailStudentHistoryReport(btnEl) {
 }
 </script>
 
+{{ mastery_badge_styles() }}
 <style>
-.mastery-m  { background: #dcfce7; color: #15803d; border-color: #86efac; }
-.mastery-r  { background: #fef9c3; color: #a16207; border-color: #fde047; }
-.mastery-rq { background: #ffedd5; color: #c2410c; border-color: #fdba74; }
-.mastery-p  { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
-.mastery-x  { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
-.mastery-a  { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
-.mastery-i  { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
-
 @media print {
   @page { size: letter portrait; margin: 0.22in; }
   body { background: white !important; }

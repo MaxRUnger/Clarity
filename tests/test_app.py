@@ -5265,6 +5265,33 @@ class TestClassHeaderTitle(unittest.TestCase):
         self.assertIn("Test Upload | MW | F26", history)
         self.assertIn('"class_name": "Test Upload"', history)
 
+    def test_history_mr_score_renders_as_mastery_badge(self):
+        html = self._render(
+            "student_history.html",
+            class_id="c1",
+            student_id="s1",
+            student_name="Lee, Ana",
+            student_email="",
+            instructor_title="Professor Estes",
+            class_name="Test Upload",
+            class_days="MW",
+            class_section="F26",
+            learning_objectives=[
+                {
+                    "vendor_code": "D1",
+                    "grades": [
+                        {
+                            "top_score": "MR",
+                            "second_score": None,
+                            "assignments": {"name": "Quiz 1"},
+                        }
+                    ],
+                }
+            ],
+        )
+        self.assertIn("mastery-badge mastery-mr", html)
+        self.assertNotRegex(html, r'student-history-numeric[^>]*>\s*MR\s*<')
+
         reports = self._render(
             "class_reports.html",
             class_id="c1",
