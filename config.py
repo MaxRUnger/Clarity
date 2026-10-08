@@ -63,7 +63,7 @@ class Config:
     SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
     SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "clarity_session")
     PERMANENT_SESSION_LIFETIME = timedelta(
-        minutes=int(os.environ.get("SESSION_LIFETIME_MINUTES", "480"))
+        minutes=int(os.environ.get("SESSION_LIFETIME_MINUTES", "120"))
     )
     SESSION_REFRESH_EACH_REQUEST = _env_bool("SESSION_REFRESH_EACH_REQUEST", True)
 

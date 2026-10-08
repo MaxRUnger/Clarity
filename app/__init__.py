@@ -75,6 +75,17 @@ def create_app(config_class=Config):
         }
 
     @app.before_request
+    def slide_idle_session():
+        # Asset responses stay free of Set-Cookie. Re-signing every static
+        # file would keep an idle tab alive for as long as it kept loading
+        # scripts and stylesheets.
+        if request.endpoint == "static":
+            return None
+        if session.get("user_id"):
+            session.modified = True
+        return None
+
+    @app.before_request
     def csrf_protect():
         # CSRF is only enforced on state-changing methods for authenticated
         # sessions. Unauthenticated POSTs (login/signup) and the mobile-upload
@@ -115,15 +126,16 @@ def create_app(config_class=Config):
         # The CSRF token is also mirrored into an `XSRF-TOKEN` cookie so
         # client-side fetch wrappers can read it (the session cookie itself
         # remains HttpOnly). `httponly=False` is intentional here.
-        token = session.get("csrf_token")
-        if token:
-            resp.set_cookie(
-                "XSRF-TOKEN",
-                token,
-                secure=app.config.get("SESSION_COOKIE_SECURE", False),
-                samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
-                httponly=False,
-            )
+        if request.endpoint != "static":
+            token = session.get("csrf_token")
+            if token:
+                resp.set_cookie(
+                    "XSRF-TOKEN",
+                    token,
+                    secure=app.config.get("SESSION_COOKIE_SECURE", False),
+                    samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
+                    httponly=False,
+                )
         return resp
     
     return app
