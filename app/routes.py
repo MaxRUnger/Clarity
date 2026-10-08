@@ -262,11 +262,6 @@ def _clean_class_form(form):
     }, None
 
 
-def _reject_missing_section_column(exc):
-    """A missing section_number column must fail. Do not drop it and continue."""
-    if "section_number" in str(exc):
-        raise exc
-
 # Shared caps for all bulk-import entry points (CSV and JSON body alike).
 # Bytes cap matches the pre-existing LO CSV limit; row cap keeps a single
 # request from blocking a worker on thousands of upserts / DoS-ing memory.
@@ -2104,40 +2099,12 @@ def copy_class(class_id):
             "is_online": bool(source.get("is_online")),
             "auto_convert_m": bool(source.get("auto_convert_m")),
         }
-        if source.get("hw_passes_enabled") is not None:
-            optional_fields["hw_passes_enabled"] = bool(source.get("hw_passes_enabled"))
-        if source.get("hw_passes_allowed") is not None:
-            optional_fields["hw_passes_allowed"] = int(source.get("hw_passes_allowed") or 2)
-
-        def _insert_class_row(data: dict):
-            return supabase_admin.table("classes").insert(data).execute()
 
         new_id = None
-        try:
-            full_data = {**new_class_data, **optional_fields}
-            ins = _insert_class_row(full_data)
-            if ins.data:
-                new_id = ins.data[0].get("id")
-        except Exception as col_err:
-            _reject_missing_section_column(col_err)
-            if "PGRST204" in str(col_err) or "schema cache" in str(col_err):
-                reduced = {**new_class_data, **optional_fields}
-                for k in ("is_online", "hw_passes_enabled", "hw_passes_allowed", "auto_convert_m"):
-                    reduced.pop(k, None)
-                try:
-                    ins = _insert_class_row(reduced)
-                    if ins.data:
-                        new_id = ins.data[0].get("id")
-                except Exception as err2:
-                    _reject_missing_section_column(err2)
-                    if "PGRST204" in str(err2) or "schema cache" in str(err2):
-                        ins = _insert_class_row(new_class_data)
-                        if ins.data:
-                            new_id = ins.data[0].get("id")
-                    else:
-                        raise
-            else:
-                raise
+        full_data = {**new_class_data, **optional_fields}
+        ins = supabase_admin.table("classes").insert(full_data).execute()
+        if ins.data:
+            new_id = ins.data[0].get("id")
 
         if not new_id:
             return redirect(url_for("main.instructor_dashboard"))
@@ -3284,15 +3251,9 @@ def student_history(class_id, student_id):
             "student_id, profiles(id, full_name, email)"
         ).eq("class_id", class_id).eq("student_id", student_id).single().execute()
         enrollment_data = enrollment.data
-    except Exception:
-        try:
-            enrollment = supabase_admin.table("enrollments").select(
-                "student_id, profiles(id, full_name)"
-            ).eq("class_id", class_id).eq("student_id", student_id).single().execute()
-            enrollment_data = enrollment.data
-        except Exception as e:
-            logger.error("Error loading student enrollment: %s", e)
-            return redirect(url_for('main.class_reports', class_id=class_id))
+    except Exception as e:
+        logger.error("Error loading student enrollment: %s", e)
+        return redirect(url_for('main.class_reports', class_id=class_id))
 
     if not enrollment_data:
         return redirect(url_for('main.class_reports', class_id=class_id))
@@ -3685,31 +3646,8 @@ def add_class():
         if cleaned["auto_convert_m"]:
             optional_fields["auto_convert_m"] = True
 
-        # Try inserting with all fields first; if a column is missing, retry without optional fields
-        try:
-            full_data = {**new_class_data, **optional_fields}
-            supabase_admin.table("classes").insert(full_data).execute()
-        except Exception as col_err:
-            _reject_missing_section_column(col_err)
-            if 'PGRST204' in str(col_err) or 'schema cache' in str(col_err):
-                # If the new online flag column doesn't exist yet, retry without it first
-                if "is_online" in full_data:
-                    reduced_data = dict(full_data)
-                    reduced_data.pop("is_online", None)
-                    try:
-                        supabase_admin.table("classes").insert(reduced_data).execute()
-                    except Exception as reduced_err:
-                        _reject_missing_section_column(reduced_err)
-                        if 'PGRST204' in str(reduced_err) or 'schema cache' in str(reduced_err):
-                            # Last fallback: insert only core columns
-                            supabase_admin.table("classes").insert(new_class_data).execute()
-                        else:
-                            raise
-                else:
-                    # Fallback: insert only core columns
-                    supabase_admin.table("classes").insert(new_class_data).execute()
-            else:
-                raise
+        full_data = {**new_class_data, **optional_fields}
+        supabase_admin.table("classes").insert(full_data).execute()
         return redirect(url_for('main.instructor_dashboard'))
     except Exception as e:
         logger.error("Failed to create class: %s", e)

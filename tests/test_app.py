@@ -4862,6 +4862,8 @@ class TestClassSectionNumber(unittest.TestCase):
         self.assertEqual(payload["section_number"], "F26")
         self.assertNotEqual(payload["section_number"], "OLD")
         self.assertNotIn("num_learning_objectives", payload)
+        self.assertNotIn("hw_passes_enabled", payload)
+        self.assertNotIn("hw_passes_allowed", payload)
 
     def test_copy_blank_section_stores_null(self):
         _result, payload = self._copy("  ", "copy-blank")
@@ -4929,6 +4931,125 @@ class TestClassSectionNumber(unittest.TestCase):
         accepted, accepted_payload = self._add("F26", token)
         self.assertEqual(accepted.status_code, 302)
         self.assertEqual(accepted_payload["section_number"], "F26")
+
+    def test_create_schema_error_is_one_insert(self):
+        from flask import session
+        from unittest.mock import MagicMock, patch
+        from app.routes import add_class
+        calls = {"n": 0}
+
+        def insert(_payload):
+            chain = MagicMock()
+
+            def execute():
+                calls["n"] += 1
+                raise Exception("Could not find the is_online column of classes in the schema cache")
+
+            chain.execute.side_effect = execute
+            return chain
+
+        app = create_app()
+        data = {
+            "name": "Test Upload",
+            "semester": "Fall",
+            "year": "2026",
+            "days": "MW",
+            "create_class_token": "schema-create",
+            "section_number": "F26",
+        }
+        with app.test_request_context("/add_class", method="POST", data=data):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            session["create_class_token"] = "schema-create"
+            with patch("app.routes.ensure_profile_exists"), \
+                 patch("app.routes.supabase_admin") as sb:
+                sb.table.return_value.insert.side_effect = insert
+                result = add_class()
+        self.assertEqual(result[1], 500)
+        self.assertEqual(result[0], "Failed to create class.")
+        self.assertEqual(calls["n"], 1)
+
+    def test_copy_schema_error_is_one_insert(self):
+        from flask import session
+        from unittest.mock import MagicMock, patch
+        from app.routes import copy_class
+        calls = {"n": 0}
+        saved = {}
+        source = MagicMock()
+        source.data = [{
+            "semester": "Fall 2026",
+            "section_number": "OLD",
+            "min_masteries": 2,
+            "is_online": False,
+            "auto_convert_m": True,
+            "hw_passes_enabled": True,
+            "hw_passes_allowed": 2,
+        }]
+        classes = MagicMock()
+        classes.select.return_value.eq.return_value.eq.return_value.execute.return_value = source
+
+        def insert(payload):
+            saved["payload"] = payload
+            chain = MagicMock()
+
+            def execute():
+                calls["n"] += 1
+                raise Exception("Could not find the is_online column of classes in the schema cache")
+
+            chain.execute.side_effect = execute
+            return chain
+
+        classes.insert.side_effect = insert
+        lo_resp = MagicMock()
+        lo_resp.data = []
+        app = create_app()
+        data = {
+            "name": "Copy of Test",
+            "days": "MW",
+            "section_number": "F26",
+            "copy_class_token": "schema-copy",
+        }
+        with app.test_request_context("/class/c1/copy", method="POST", data=data):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            session["copy_class_token"] = "schema-copy"
+            with patch("app.routes._instructor_owns_class", return_value=True), \
+                 patch("app.routes._select_class_pool_learning_objectives", return_value=lo_resp), \
+                 patch("app.routes.supabase_admin") as sb:
+                sb.table.return_value = classes
+                result = copy_class("c1")
+        self.assertEqual(result[1], 500)
+        self.assertEqual(result[0], "Failed to copy class.")
+        self.assertEqual(calls["n"], 1)
+        self.assertNotIn("hw_passes_enabled", saved["payload"])
+        self.assertNotIn("hw_passes_allowed", saved["payload"])
+
+    def test_history_enrollment_select_includes_email_once(self):
+        from flask import session
+        from unittest.mock import MagicMock, patch
+        from app.routes import student_history
+        selects = []
+
+        def select(cols):
+            selects.append(cols)
+            chain = MagicMock()
+            chain.eq.return_value = chain
+            chain.single.return_value = chain
+            chain.execute.side_effect = Exception("Could not find the email column of profiles in the schema cache")
+            return chain
+
+        app = create_app()
+        with app.test_request_context("/class/c1/student/s1/history"):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            with patch("app.routes._instructor_owns_class", return_value=True), \
+                 patch("app.routes.Course.get_full_class_data", return_value={"name": "MW", "learning_objectives": []}), \
+                 patch("app.routes.supabase_admin") as sb:
+                sb.table.return_value.select.side_effect = select
+                result = student_history("c1", "s1")
+        self.assertEqual(result.status_code, 302)
+        self.assertTrue(result.headers["Location"].endswith("/class/c1/reports"))
+        self.assertEqual(selects, ["student_id, profiles(id, full_name, email)"])
 
 
 class TestClassDisplayTitle(unittest.TestCase):
