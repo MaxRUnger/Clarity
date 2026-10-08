@@ -172,6 +172,11 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
           </svg>
         </button>
+        {% if unattached_count %}
+        <p class="mb-2 text-sm text-amber-800 dark:text-amber-200">
+          {{ unattached_count }} objective{% if unattached_count != 1 %}s{% endif %} not attached to an assignment yet
+        </p>
+        {% endif %}
         <div id="assignmentsExistingLosListWrapper" class="hidden">
         <div id="assignmentsExistingLosList" class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto content-start">
           {% for lo in all_los %}
@@ -568,6 +573,7 @@ function saveAssignment() {
     : `/class/${CLASS_ID}/create_assignment`;
   const method = assignmentId ? 'PUT' : 'POST';
 
+  function postSave() {
   fetch(url, {
     method: method,
     headers: {
@@ -596,6 +602,42 @@ function saveAssignment() {
     console.error('Assignment save failed', error);
     showAssignmentFormError('Error saving assignment: ' + error.message);
   });
+  }
+
+  if (!assignmentId) {
+    postSave();
+    return;
+  }
+
+  const params = selectedLOs.map(function (loId) {
+    return 'selected_lo=' + encodeURIComponent(loId);
+  }).join('&');
+  fetch(
+    '/api/class/' + encodeURIComponent(CLASS_ID)
+      + '/assignments/' + encodeURIComponent(assignmentId)
+      + '/detach-grade-count' + (params ? '?' + params : ''),
+    { credentials: 'same-origin' }
+  )
+    .then(function (response) { return response.json(); })
+    .then(function (payload) {
+      const gradeRows = payload && payload.success ? Number(payload.grade_rows || 0) : NaN;
+      if (Number.isNaN(gradeRows)) {
+        showAssignmentFormError('Could not check grades for objectives that are not selected.');
+        return;
+      }
+      if (gradeRows > 0) {
+        const noun = gradeRows === 1 ? 'grade row' : 'grade rows';
+        const ok = confirm(
+          'This deletes ' + gradeRows + ' ' + noun
+            + ' on this assignment for objectives that are not selected. Grades on other assignments stay. Continue?'
+        );
+        if (!ok) return;
+      }
+      postSave();
+    })
+    .catch(function () {
+      showAssignmentFormError('Could not check grades for objectives that are not selected.');
+    });
 }
 
 function downloadBlankCsv(assignmentId) {

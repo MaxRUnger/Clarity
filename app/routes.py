@@ -1132,6 +1132,58 @@ def class_lo_lookup(pool):
     return {str(lo["id"]): lo for lo in (pool or []) if lo.get("id")}
 
 
+def _attached_objective_ids(class_id: str) -> set:
+    """Objective ids linked to at least one assignment in this class.
+
+    One paged read of assignment_objectives per class per request. Later callers
+    reuse the set from the request cache.
+    """
+    cache = _request_cache()
+    key = ("_attached_objective_ids", str(class_id))
+    if key in cache:
+        return cache[key]
+    rows = fetch_all_rows(
+        supabase_admin.table("assignment_objectives")
+        .select(
+            "assignment_id, learning_objective_id, "
+            "assignments!assignment_objectives_assignment_id_fkey!inner(class_id)"
+        )
+        .eq("assignments.class_id", str(class_id))
+        .order("assignment_id")
+        .order("learning_objective_id")
+    )
+    ids = {
+        str(row.get("learning_objective_id"))
+        for row in rows
+        if row.get("learning_objective_id")
+    }
+    cache[key] = ids
+    return ids
+
+
+def objectives_attached_to_assignments(
+    class_id: str, pool: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Pool rows linked to at least one assignment. Each objective is kept once."""
+    rows = list(pool or [])
+    if not class_id or not rows:
+        return rows
+    attached_ids = _attached_objective_ids(str(class_id))
+    return [lo for lo in rows if str(lo.get("id") or "") in attached_ids]
+
+
+def _class_data_for_progress(class_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Copy class data whose objective list is the attached set when the class has an id."""
+    if not class_data or not class_data.get("id"):
+        return class_data
+    progress_data = dict(class_data)
+    progress_data["learning_objectives"] = objectives_attached_to_assignments(
+        class_data.get("id"),
+        class_data.get("learning_objectives") or [],
+    )
+    return progress_data
+
+
 def lo_cell_status(m_count, required):
     """passed when m >= r, close when one mastery short, otherwise behind."""
     m = 0 if m_count is None else m_count
@@ -1160,6 +1212,8 @@ def _process_enrollments(class_data):
         - lo_lookup: {str(lo_id): lo_dict}
     """
     pool = class_data.get("learning_objectives") or []
+    if class_data.get("id"):
+        pool = objectives_attached_to_assignments(class_data.get("id"), pool)
     lo_lookup = class_lo_lookup(pool)
     active_students = []
     all_students = []
@@ -1378,6 +1432,8 @@ def student_dashboard():
                     class_id, e,
                 )
                 pool = []
+            else:
+                pool = objectives_attached_to_assignments(class_id, pool)
             lo_lookup = class_lo_lookup(pool)
             data["learning_objectives"], data["objective_total"] = class_progress(
                 raw_grades, lo_lookup
@@ -1425,8 +1481,11 @@ def class_detail(class_id):
         logger.error("class_detail: get_full_class_data returned None for class_id=%s", class_id)
         return redirect(url_for('main.instructor_dashboard'))
 
-    students_for_template, all_students_for_modal, _ = _process_enrollments(class_data)
-    summary = organize_by_learning_objectives(students_for_template, class_data.get('learning_objectives', []))
+    progress_data = _class_data_for_progress(class_data)
+    students_for_template, all_students_for_modal, _ = _process_enrollments(progress_data)
+    summary = organize_by_learning_objectives(
+        students_for_template, progress_data.get("learning_objectives") or []
+    )
     assignments = load_assignments_for_class(class_id)
 
     overdue_raw = Grade.get_overdue_revisions(class_id)
@@ -1479,8 +1538,9 @@ def class_learning_objectives_summary(class_id):
         logger.error("class_learning_objectives_summary: get_full_class_data returned None for class_id=%s", class_id)
         return redirect(url_for('main.instructor_dashboard'))
 
-    students_for_template, _, _ = _process_enrollments(class_data)
-    class_los = class_data.get('learning_objectives', []) or []
+    progress_data = _class_data_for_progress(class_data)
+    students_for_template, _, _ = _process_enrollments(progress_data)
+    class_los = progress_data.get("learning_objectives") or []
     total_students = len(students_for_template)
 
     summary_rows = []
@@ -1766,6 +1826,79 @@ def _write_grade_change_log(chunk: List[Dict[str, Any]]) -> None:
         )
 
 
+def _linked_objective_id_set(linked_ids: List[Any]) -> set:
+    return {
+        str(raw).strip()
+        for raw in (linked_ids or [])
+        if str(raw or "").strip()
+    }
+
+
+def grades_outside_linked_objectives(
+    assignment_id: str,
+    linked_ids: List[Any],
+) -> List[Dict[str, Any]]:
+    """Grades on this assignment whose objective is outside the linked set.
+
+    The detach count and the grade delete both use this list, so the number
+    shown and the number deleted stay the same.
+    """
+    keep = _linked_objective_id_set(linked_ids)
+    assignment_key = str(assignment_id)
+    rows = fetch_all_rows(
+        supabase_admin.table("grades")
+        .select(
+            "id, student_id, learning_objective_id, assignment_id, top_score, "
+            "second_score, counts_for_mastery"
+        )
+        .eq("assignment_id", assignment_key)
+        .order("id")
+    )
+    matched = []
+    for row in rows:
+        row_assignment = str(row.get("assignment_id") or "").strip()
+        if row_assignment and row_assignment != assignment_key:
+            continue
+        lo_id = str(row.get("learning_objective_id") or "").strip()
+        if lo_id not in keep:
+            matched.append(row)
+    return matched
+
+
+def delete_grades_outside_linked_objectives(
+    class_id: str,
+    assignment_id: str,
+    linked_ids: List[Any],
+    changed_by: Optional[str],
+) -> int:
+    """Delete grades on this assignment whose objective is outside linked_ids.
+
+    An empty linked set deletes every grade with this assignment_id.
+    Grades on other assignments are left in place. homework_scores are not read
+    or written. The audit log is written before the delete.
+    """
+    rows = grades_outside_linked_objectives(assignment_id, linked_ids)
+    if not rows:
+        return 0
+    _log_grade_deletions(rows, class_id, changed_by)
+    delete_q = supabase_admin.table("grades").delete().eq(
+        "assignment_id", str(assignment_id)
+    )
+    keep = _linked_objective_id_set(linked_ids)
+    if keep:
+        lo_ids = []
+        seen = set()
+        for row in rows:
+            lo_id = str(row.get("learning_objective_id") or "").strip()
+            if lo_id and lo_id not in seen:
+                seen.add(lo_id)
+                lo_ids.append(lo_id)
+        if lo_ids:
+            delete_q = delete_q.in_("learning_objective_id", lo_ids)
+    delete_q.execute()
+    return len(rows)
+
+
 def _log_grade_deletions(rows: List[Dict[str, Any]], class_id: str, changed_by: Optional[str]) -> None:
     """Best-effort audit log for grade rows about to be hard-deleted.
 
@@ -1963,7 +2096,7 @@ def class_students(class_id):
     if not class_data:
         return redirect(url_for('main.instructor_dashboard'))
 
-    students, _, _ = _process_enrollments(class_data)
+    students, _, _ = _process_enrollments(_class_data_for_progress(class_data))
 
     return render_template("class_students.html",
                             class_id=class_id,
@@ -2133,7 +2266,9 @@ def class_student_detail(class_id, student_id):
     if not class_data:
         return redirect(url_for('main.instructor_dashboard'))
 
-    pool = class_data.get("learning_objectives") or []
+    pool = objectives_attached_to_assignments(
+        class_id, class_data.get("learning_objectives") or []
+    )
     lo_lookup = class_lo_lookup(pool)
 
     student = None
@@ -2195,6 +2330,15 @@ def class_assignments(class_id):
         logger.error("Error loading LOs for class %s: %s", class_id, e)
         all_los = []
 
+    attached_ids = {
+        str(lo.get("id") or "")
+        for lo in objectives_attached_to_assignments(class_id, all_los or [])
+    }
+    unattached_count = sum(
+        1 for lo in (all_los or [])
+        if str(lo.get("id") or "") not in attached_ids
+    )
+
     lo_ctx = build_lo_csv_mobile_upload_context(
         class_id, session.get("user_id"), session.get("role")
     )
@@ -2208,6 +2352,7 @@ def class_assignments(class_id):
         class_name=class_data["name"],
         assignments=assignments,
         all_los=all_los,
+        unattached_count=unattached_count,
         **lo_ctx,
     )
 
@@ -2315,29 +2460,98 @@ def update_assignment(class_id, assignment_id):
         "assignment_type": assignment_type,
     }
 
+    class_lo_ids = set(Course.get_lo_ids_for_class(class_id) or [])
+    selected_ids = []
+    seen_selected = set()
+    for lo_id in data.get('selected_los', []):
+        if not lo_id or lo_id not in class_lo_ids:
+            continue
+        lo_key = str(lo_id)
+        if lo_key in seen_selected:
+            continue
+        seen_selected.add(lo_key)
+        selected_ids.append(lo_key)
+
     try:
-        # Update assignment
         supabase_admin.table("assignments").update(update_fields).eq(
             "id", assignment_id
         ).eq("class_id", class_id).execute()
-        
-        # Update linked LOs — delete existing, batch insert new
-        supabase_admin.table("assignment_objectives").delete().eq("assignment_id", assignment_id).execute()
-        class_lo_ids = set(Course.get_lo_ids_for_class(class_id) or [])
-        ao_rows = []
-        for lo_id in data.get('selected_los', []):
-            if not lo_id or lo_id not in class_lo_ids:
-                continue
-            ao_rows.append({
-                "assignment_id": assignment_id,
-                "learning_objective_id": lo_id,
-            })
-        if ao_rows:
-            _insert_assignment_objectives(ao_rows)
-        
-        return jsonify({"success": True})
     except Exception as e:
         return _safe_api_error("Could not update assignment", 500, log_detail=e)
+
+    try:
+        old_rows = fetch_all_rows(
+            supabase_admin.table("assignment_objectives")
+            .select("learning_objective_id")
+            .eq("assignment_id", assignment_id)
+            .order("learning_objective_id")
+        )
+    except Exception as e:
+        return _safe_api_error("Could not update assignment", 500, log_detail=e)
+
+    current_ids = []
+    seen_current = set()
+    for row in old_rows:
+        lo_key = str(row.get("learning_objective_id") or "").strip()
+        if lo_key and lo_key not in seen_current:
+            seen_current.add(lo_key)
+            current_ids.append(lo_key)
+    current_set = set(current_ids)
+    selected_set = set(selected_ids)
+    removed = [lo_id for lo_id in current_ids if lo_id not in selected_set]
+    added = [lo_id for lo_id in selected_ids if lo_id not in current_set]
+
+    try:
+        if added:
+            _insert_assignment_objectives([
+                {"assignment_id": assignment_id, "learning_objective_id": lo_id}
+                for lo_id in added
+            ])
+    except Exception as e:
+        return _safe_api_error("Could not update assignment", 500, log_detail=e)
+
+    try:
+        if removed:
+            supabase_admin.table("assignment_objectives").delete().eq(
+                "assignment_id", assignment_id
+            ).in_("learning_objective_id", removed).execute()
+    except Exception as e:
+        return _safe_api_error("Could not update assignment", 500, log_detail=e)
+
+    try:
+        delete_grades_outside_linked_objectives(
+            class_id, assignment_id, selected_ids, session.get("user_id")
+        )
+    except Exception as e:
+        return _safe_api_error(
+            "Could not delete grades for removed objectives", 500, log_detail=e
+        )
+
+    return jsonify({"success": True})
+
+
+@main_bp.route(
+    "/api/class/<class_id>/assignments/<assignment_id>/detach-grade-count",
+    methods=["GET"],
+)
+@api_instructor_required
+def api_detach_grade_count(class_id, assignment_id):
+    if not _instructor_owns_class(class_id):
+        return jsonify({"success": False, "error": "Forbidden"}), 403
+    if not _assignment_belongs_to_class(class_id, assignment_id):
+        return jsonify({"success": False, "error": "Invalid assignment for class"}), 400
+    selected_ids = []
+    seen = set()
+    for raw in request.args.getlist("selected_lo"):
+        lo_id = str(raw or "").strip()
+        if lo_id and lo_id not in seen:
+            seen.add(lo_id)
+            selected_ids.append(lo_id)
+    try:
+        rows = grades_outside_linked_objectives(assignment_id, selected_ids)
+    except Exception as e:
+        return _safe_api_error("Could not count grades", 500, log_detail=e)
+    return jsonify({"success": True, "grade_rows": len(rows)})
 
 @main_bp.route("/class/<class_id>/delete_assignment/<assignment_id>", methods=["POST"])
 @api_instructor_required
@@ -2358,17 +2572,9 @@ def delete_assignment(class_id, assignment_id):
         if not owner_check.data:
             return jsonify({"success": False, "error": "Not found"}), 404
 
-        try:
-            existing = supabase_admin.table("grades").select(
-                "student_id, learning_objective_id, assignment_id, top_score, "
-                "second_score, counts_for_mastery"
-            ).eq("assignment_id", assignment_id).execute()
-            _log_grade_deletions(existing.data or [], class_id, session["user_id"])
-        except Exception as e:
-            logger.warning(
-                "Could not audit-log grade deletions for assignment %s: %s",
-                assignment_id, e,
-            )
+        delete_grades_outside_linked_objectives(
+            class_id, assignment_id, [], session.get("user_id")
+        )
 
         supabase_admin.table("assignment_objectives").delete().eq(
             "assignment_id", assignment_id
@@ -2918,8 +3124,9 @@ def class_reports(class_id):
     if not class_data:
         return redirect(url_for('main.instructor_dashboard'))
 
-    students, _, _ = _process_enrollments(class_data)
-    learning_objectives = class_data.get('learning_objectives', [])
+    progress_data = _class_data_for_progress(class_data)
+    students, _, _ = _process_enrollments(progress_data)
+    learning_objectives = progress_data.get("learning_objectives") or []
 
     # Load assignments with their linked LOs and dates
     assignments = load_assignments_for_class(class_id, desc=False)
@@ -3276,8 +3483,9 @@ def student_history(class_id, student_id):
         logger.error("Error loading grades: %s", e)
         all_grades = []
     
-    # Get all learning objectives for the class
-    learning_objectives = class_data.get('learning_objectives', [])
+    learning_objectives = objectives_attached_to_assignments(
+        class_id, class_data.get("learning_objectives") or []
+    )
     
     # Organize grades by learning objective
     student_grades = {}

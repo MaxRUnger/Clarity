@@ -4309,7 +4309,11 @@ class TestFullClassDataGradePaging(unittest.TestCase):
         client, students = self._client(True)
         with unittest.mock.patch("app.models.supabase_admin", client):
             class_data = Course.get_full_class_data("class-mw")
-        active, _, _ = _process_enrollments(class_data)
+        with unittest.mock.patch(
+            "app.routes.objectives_attached_to_assignments",
+            side_effect=lambda class_id, pool: list(pool or []),
+        ):
+            active, _, _ = _process_enrollments(class_data)
         self.assertEqual(len(active), 38)
         seen = set()
         for student in active:
@@ -5591,11 +5595,13 @@ class TestClassHeaderTitle(unittest.TestCase):
 
 
 class _RemovalQuery:
-    def __init__(self, log, table, rows, fail_delete):
+    def __init__(self, log, table, rows, fail_delete, fail_insert=None, fail_update=None):
         self.log = log
         self.table = table
         self.rows = list(rows)
         self.fail_delete = fail_delete
+        self.fail_insert = fail_insert
+        self.fail_update = fail_update
         self.op = None
         self.filters = []
 
@@ -5613,6 +5619,11 @@ class _RemovalQuery:
     def insert(self, rows):
         self.op = "insert"
         self.inserted = rows
+        return self
+
+    def update(self, payload):
+        self.op = "update"
+        self.updated = payload
         return self
 
     def eq(self, column, value):
@@ -5633,6 +5644,21 @@ class _RemovalQuery:
         return self
 
     def execute(self):
+        if self.op == "update" and self.fail_update == self.table:
+            self.log.append({
+                "table": self.table,
+                "op": "update-failed",
+                "filters": list(self.filters),
+            })
+            raise RuntimeError("update failed")
+        if self.op == "insert" and self.fail_insert == self.table:
+            self.log.append({
+                "table": self.table,
+                "op": "insert-failed",
+                "filters": list(self.filters),
+                "rows": self.inserted,
+            })
+            raise RuntimeError("insert failed")
         if self.op == "delete" and self.fail_delete == self.table:
             self.log.append({
                 "table": self.table,
@@ -6091,26 +6117,636 @@ class TestClassDeleteRoutes(unittest.TestCase):
         self.assertIn(("eq", "id", "asg-other"), selects[0]["filters"])
         self.assertIn(("eq", "class_id", "c1"), selects[0]["filters"])
 
-    def test_delete_assignment_removes_the_assignment_and_links_and_keeps_grades(self):
+    def test_delete_assignment_deletes_grades_for_linked_objectives_on_that_assignment(self):
         rv, log = self._post(
             "/class/c1/delete_assignment/a1",
             {
                 "assignments": [{"id": "a1", "class_id": "c1"}],
-                "grades": [{
+                "assignment_objectives": [
+                    {"assignment_id": "a1", "learning_objective_id": "lo-1"},
+                ],
+                "grades": [
+                    {
+                        "student_id": "stu-1",
+                        "learning_objective_id": "lo-1",
+                        "assignment_id": "a1",
+                        "top_score": "M",
+                        "second_score": None,
+                        "counts_for_mastery": True,
+                    },
+                    {
+                        "student_id": "stu-1",
+                        "learning_objective_id": "lo-1",
+                        "assignment_id": "a2",
+                        "top_score": "M",
+                        "second_score": None,
+                        "counts_for_mastery": True,
+                    },
+                ],
+            },
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        deleted = [entry["table"] for entry in log if entry["op"] == "delete"]
+        self.assertEqual(deleted, ["grades", "assignment_objectives", "assignments"])
+        grade_delete = next(
+            entry for entry in log
+            if entry["table"] == "grades" and entry["op"] == "delete"
+        )
+        self.assertIn(("eq", "assignment_id", "a1"), grade_delete["filters"])
+        self.assertFalse(any(item[0] == "in" for item in grade_delete["filters"]))
+        self.assertNotIn(("eq", "assignment_id", "a2"), grade_delete["filters"])
+        self.assertNotIn("homework_scores", deleted)
+
+
+class TestAttachedObjectives(unittest.TestCase):
+    def _clear_cache(self):
+        from app import routes as r
+        r._request_cache().clear()
+
+    def _passing(self, lo_id):
+        return [
+            {"learning_objective_id": lo_id, "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": lo_id, "top_score": "M", "counts_for_mastery": True},
+        ]
+
+    def _run(self, class_id, pool, grades, link_rows, students=1):
+        from app import routes as r
+        calls = []
+
+        class _Query:
+            def __init__(self, name):
+                self.name = name
+                self.filters = []
+
+            def select(self, *args, **kwargs):
+                return self
+
+            def eq(self, column, value):
+                self.filters.append(("eq", column, value))
+                return self
+
+            def order(self, *args, **kwargs):
+                return self
+
+            def range(self, start, end):
+                return self
+
+            def execute(self):
+                calls.append({"table": self.name, "filters": list(self.filters)})
+                rows = link_rows if self.name == "assignment_objectives" else []
+                return unittest.mock.MagicMock(data=rows)
+
+        enrollments = []
+        for index in range(students):
+            enrollments.append({
+                "muted": False,
+                "profiles": {
+                    "id": "s%s" % index,
+                    "full_name": "Student, %s" % index,
+                    "email": "s%s@b.edu" % index,
+                    "grades": list(grades),
+                },
+            })
+        class_data = {
+            "id": class_id,
+            "learning_objectives": pool,
+            "enrollments": enrollments,
+        }
+        self._clear_cache()
+        try:
+            with unittest.mock.patch.object(r, "supabase_admin") as sa:
+                sa.table.side_effect = lambda name: _Query(name)
+                active, _, _ = r._process_enrollments(class_data)
+                attached = r.objectives_attached_to_assignments(class_id, pool)
+        finally:
+            self._clear_cache()
+        ao_calls = [row for row in calls if row["table"] == "assignment_objectives"]
+        return active, attached, ao_calls
+
+    def test_legacy_unattached_grades_stay_within_the_attached_total(self):
+        pool = [
+            {"id": "lo-0", "name": "LO 0", "vendor_code": "T0", "required_ms": 2},
+            {"id": "lo-1", "name": "LO 1", "vendor_code": "T1", "required_ms": 2},
+            {"id": "lo-2", "name": "LO 2", "vendor_code": "T2", "required_ms": 2},
+        ]
+        grades = self._passing("lo-0") + self._passing("lo-1") + self._passing("lo-2")
+        links = [
+            {"assignment_id": "a1", "learning_objective_id": "lo-0"},
+            {"assignment_id": "a2", "learning_objective_id": "lo-0"},
+        ]
+        active, attached, ao_calls = self._run("c-attached", pool, grades, links, students=3)
+        self.assertEqual(len(ao_calls), 1)
+        self.assertIn(("eq", "assignments.class_id", "c-attached"), ao_calls[0]["filters"])
+        self.assertEqual([lo["id"] for lo in attached], ["lo-0"])
+        self.assertEqual(len(active), 3)
+        for student in active:
+            passed = sum(1 for row in student["learning_objectives"] if row["is_passed"])
+            self.assertEqual(student["objective_total"], 1)
+            self.assertEqual(passed, 1)
+            self.assertLessEqual(passed, student["objective_total"])
+            self.assertEqual(
+                [row["learning_objective_id"] for row in student["learning_objectives"]],
+                ["lo-0"],
+            )
+
+    def test_no_assignment_links_leave_passed_and_total_at_zero(self):
+        pool = [
+            {"id": "lo-0", "name": "LO 0", "vendor_code": "T0", "required_ms": 2},
+        ]
+        active, attached, ao_calls = self._run(
+            "c-none", pool, self._passing("lo-0"), [], students=3
+        )
+        self.assertEqual(len(ao_calls), 1)
+        self.assertEqual(attached, [])
+        for student in active:
+            passed = sum(1 for row in student["learning_objectives"] if row["is_passed"])
+            self.assertEqual(student["objective_total"], 0)
+            self.assertEqual(passed, 0)
+            self.assertLessEqual(passed, student["objective_total"])
+
+    def test_assignments_page_states_the_unattached_count_outside_the_list(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "class_assignments.html"
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        message = src.index("not attached to an assignment yet")
+        wrapper = src.index('id="assignmentsExistingLosListWrapper"')
+        self.assertLess(message, wrapper)
+        self.assertIn("{% if unattached_count %}", src)
+
+    def test_learning_objectives_card_links_to_the_summary_page(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "class_detail.html"
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        self.assertIn("total_los = learning_objectives|length", src)
+        self.assertIn("main.class_learning_objectives_summary", src)
+
+    def test_save_confirms_only_when_removed_objectives_have_grades(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "class_assignments.html"
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        start = src.index("function saveAssignment()")
+        end = src.index("\nfunction downloadBlankCsv")
+        body = src[start:end]
+        create_branch = body.index("if (!assignmentId)")
+        count_fetch = body.index("detach-grade-count")
+        dialog = body.index("if (gradeRows > 0)")
+        self.assertIn("selected_lo=", body)
+        self.assertLess(create_branch, count_fetch)
+        self.assertNotIn("confirm(", body[create_branch:count_fetch])
+        self.assertIn("postSave();", body[create_branch:count_fetch])
+        self.assertLess(dialog, body.index("confirm(", dialog))
+        self.assertIn("postSave();", body[dialog:])
+
+
+class TestUpdateAssignmentDetach(unittest.TestCase):
+    def _client(self):
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        return client
+
+    def _rows(self):
+        return {
+            "assignments": [{
+                "id": "a1",
+                "class_id": "c1",
+                "homework_group": "Quiz 1",
+            }],
+            "learning_objectives": [{"id": "lo-1"}, {"id": "lo-2"}],
+            "assignment_objectives": [
+                {"learning_objective_id": "lo-1"},
+                {"learning_objective_id": "lo-2"},
+            ],
+            "grades": [
+                {
+                    "student_id": "stu-1",
+                    "learning_objective_id": "lo-2",
+                    "assignment_id": "a1",
+                    "top_score": "M",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                },
+                {
+                    "student_id": "stu-1",
+                    "learning_objective_id": "lo-2",
+                    "assignment_id": "a2",
+                    "top_score": "M",
+                    "second_score": None,
+                    "counts_for_mastery": True,
+                },
+                {
                     "student_id": "stu-1",
                     "learning_objective_id": "lo-1",
                     "assignment_id": "a1",
                     "top_score": "M",
                     "second_score": None,
                     "counts_for_mastery": True,
-                }],
-            },
+                },
+            ],
+        }
+
+    def _send(self, method, path, rows_for, body=None, owns=True, fail_delete=None, fail_insert=None, fail_update=None):
+        from app import routes as r
+        log = []
+
+        def table(name):
+            return _RemovalQuery(
+                log,
+                name,
+                rows_for.get(name, []),
+                fail_delete,
+                fail_insert=fail_insert,
+                fail_update=fail_update,
+            )
+
+        client = self._client()
+        with unittest.mock.patch.object(r, "supabase_admin") as sa, \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
+                unittest.mock.patch.object(
+                    r.Course, "get_lo_ids_for_class", return_value=["lo-1", "lo-2"]
+                ):
+            sa.table.side_effect = table
+            headers = {"X-CSRF-Token": "test-csrf"}
+            if method == "PUT":
+                rv = client.put(path, json=body or {}, headers=headers)
+            else:
+                rv = client.get(path, headers=headers)
+        return rv, log
+
+    def _body(self, selected):
+        return {
+            "name": "Quiz",
+            "homework_group": "Quiz 1",
+            "selected_los": selected,
+            "assignment_type": "mastery_opp",
+        }
+
+    def _link_writes(self, log):
+        return [
+            entry for entry in log
+            if entry["table"] == "assignment_objectives"
+            and entry["op"] in ("insert", "delete", "insert-failed", "delete-failed")
+        ]
+
+    def test_same_objectives_make_no_link_writes(self):
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            self._rows(),
+            self._body(["lo-1", "lo-2"]),
         )
         self.assertEqual(rv.status_code, 200)
         self.assertTrue(rv.get_json()["success"])
-        deleted = [entry["table"] for entry in log if entry["op"] == "delete"]
-        self.assertEqual(deleted, ["assignment_objectives", "assignments"])
-        self.assertNotIn("grades", deleted)
+        self.assertEqual(self._link_writes(log), [])
+        self.assertFalse(any(
+            entry["table"] == "grades" and entry["op"] in ("delete", "delete-failed")
+            for entry in log
+        ))
+
+    def test_adding_one_objective_inserts_only_that_link(self):
+        rows = self._rows()
+        rows["assignment_objectives"] = [{"learning_objective_id": "lo-1"}]
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            rows,
+            self._body(["lo-1", "lo-2"]),
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        inserts = [
+            entry for entry in log
+            if entry["table"] == "assignment_objectives" and entry["op"] == "insert"
+        ]
+        self.assertEqual(len(inserts), 1)
+        self.assertEqual(inserts[0]["rows"], [{
+            "assignment_id": "a1",
+            "learning_objective_id": "lo-2",
+        }])
+        self.assertFalse(any(
+            entry["table"] == "assignment_objectives" and entry["op"] == "delete"
+            for entry in log
+        ))
+        self.assertFalse(any(
+            entry["table"] == "grades" and entry["op"] == "delete"
+            for entry in log
+        ))
+
+    def test_removing_one_objective_deletes_only_that_link_then_its_grades(self):
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            self._rows(),
+            self._body(["lo-1"]),
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        link_deletes = [
+            entry for entry in log
+            if entry["table"] == "assignment_objectives" and entry["op"] == "delete"
+        ]
+        self.assertEqual(len(link_deletes), 1)
+        self.assertIn(("eq", "assignment_id", "a1"), link_deletes[0]["filters"])
+        self.assertIn(("in", "learning_objective_id", ["lo-2"]), link_deletes[0]["filters"])
+        self.assertFalse(any(
+            entry["table"] == "assignment_objectives" and entry["op"] == "insert"
+            for entry in log
+        ))
+        grade_delete = next(
+            entry for entry in log
+            if entry["table"] == "grades" and entry["op"] == "delete"
+        )
+        self.assertGreater(
+            log.index(grade_delete),
+            log.index(link_deletes[0]),
+        )
+        self.assertIn(("eq", "assignment_id", "a1"), grade_delete["filters"])
+        self.assertIn(("in", "learning_objective_id", ["lo-2"]), grade_delete["filters"])
+        self.assertNotIn(("eq", "assignment_id", "a2"), grade_delete["filters"])
+        self.assertNotIn("homework_scores", [entry["table"] for entry in log])
+
+    def test_failed_insert_deletes_nothing(self):
+        rows = self._rows()
+        rows["assignment_objectives"] = [{"learning_objective_id": "lo-1"}]
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            rows,
+            self._body(["lo-1", "lo-2"]),
+            fail_insert="assignment_objectives",
+        )
+        self.assertEqual(rv.status_code, 500)
+        self.assertEqual(rv.get_json()["error"], "Could not update assignment")
+        self.assertTrue(any(
+            entry["table"] == "assignment_objectives" and entry["op"] == "insert-failed"
+            for entry in log
+        ))
+        self.assertEqual(
+            [entry for entry in log if entry["op"] in ("delete", "delete-failed")],
+            [],
+        )
+        self.assertTrue(any(
+            entry["table"] == "assignments" and entry["op"] == "update"
+            for entry in log
+        ))
+
+    def test_failed_link_delete_deletes_no_grades(self):
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            self._rows(),
+            self._body(["lo-1"]),
+            fail_delete="assignment_objectives",
+        )
+        self.assertEqual(rv.status_code, 500)
+        self.assertEqual(rv.get_json()["error"], "Could not update assignment")
+        self.assertTrue(any(
+            entry["table"] == "assignment_objectives" and entry["op"] == "delete-failed"
+            for entry in log
+        ))
+        self.assertEqual(
+            [
+                entry for entry in log
+                if entry["table"] == "grades" and entry["op"] in ("delete", "delete-failed")
+            ],
+            [],
+        )
+
+    def test_failed_link_rewrite_does_not_delete_grades(self):
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            self._rows(),
+            self._body(["lo-1"]),
+            fail_delete="assignment_objectives",
+        )
+        self.assertEqual(rv.status_code, 500)
+        self.assertEqual(rv.get_json()["error"], "Could not update assignment")
+        grade_ops = [
+            entry for entry in log
+            if entry["table"] == "grades" and entry["op"] in ("delete", "delete-failed")
+        ]
+        self.assertEqual(grade_ops, [])
+
+    def test_failed_grade_delete_returns_its_own_error(self):
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            self._rows(),
+            self._body(["lo-1"]),
+            fail_delete="grades",
+        )
+        self.assertEqual(rv.status_code, 500)
+        self.assertEqual(
+            rv.get_json()["error"],
+            "Could not delete grades for removed objectives",
+        )
+        self.assertTrue(any(
+            entry["table"] == "assignment_objectives" and entry["op"] == "delete"
+            for entry in log
+        ))
+        self.assertTrue(any(
+            entry["table"] == "grades" and entry["op"] == "delete-failed"
+            for entry in log
+        ))
+
+    def test_non_owner_update_is_forbidden_before_any_write(self):
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            self._rows(),
+            self._body(["lo-1"]),
+            owns=False,
+        )
+        self.assertEqual(rv.status_code, 403)
+        self.assertEqual(rv.get_json()["error"], "Forbidden")
+        self.assertEqual(log, [])
+
+    def test_assignment_from_another_class_is_rejected_before_any_write(self):
+        rows = self._rows()
+        rows["assignments"] = []
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            rows,
+            self._body(["lo-1"]),
+        )
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], "Invalid assignment for class")
+        self.assertEqual([entry for entry in log if entry["op"] == "delete"], [])
+
+    def test_missing_name_is_rejected_before_any_write(self):
+        body = self._body(["lo-1"])
+        body["name"] = ""
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            self._rows(),
+            body,
+        )
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.get_json()["error"], "Assignment name is required.")
+        self.assertEqual([entry for entry in log if entry["op"] == "delete"], [])
+
+    def test_detach_count_requires_class_ownership(self):
+        rv, log = self._send(
+            "GET",
+            "/api/class/c1/assignments/a1/detach-grade-count?lo_id=lo-2",
+            self._rows(),
+            owns=False,
+        )
+        self.assertEqual(rv.status_code, 403)
+        self.assertEqual(rv.get_json()["error"], "Forbidden")
+        self.assertEqual(log, [])
+
+    def test_detach_count_of_zero_is_returned_for_the_owner(self):
+        rows = self._rows()
+        rows["grades"] = []
+        rv, log = self._send(
+            "GET",
+            "/api/class/c1/assignments/a1/detach-grade-count?selected_lo=lo-1&selected_lo=lo-2",
+            rows,
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.get_json()["grade_rows"], 0)
+        self.assertNotIn("homework_scores", [entry["table"] for entry in log])
+
+    def test_orphan_grades_are_deleted_when_the_removed_set_is_empty(self):
+        rows = self._rows()
+        rows["assignment_objectives"] = [{"learning_objective_id": "lo-1"}]
+        rows["grades"] = [
+            {
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-1",
+                "assignment_id": "a1",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+            {
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-9",
+                "assignment_id": "a1",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+            {
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-9",
+                "assignment_id": "a2",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+        ]
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            rows,
+            self._body(["lo-1"]),
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertTrue(rv.get_json()["success"])
+        self.assertEqual(self._link_writes(log), [])
+        grade_delete = next(
+            entry for entry in log
+            if entry["table"] == "grades" and entry["op"] == "delete"
+        )
+        self.assertIn(("eq", "assignment_id", "a1"), grade_delete["filters"])
+        self.assertIn(("in", "learning_objective_id", ["lo-9"]), grade_delete["filters"])
+        self.assertNotIn(("eq", "assignment_id", "a2"), grade_delete["filters"])
+
+    def test_detach_count_and_deletion_agree(self):
+        rows = self._rows()
+        rows["assignment_objectives"] = [{"learning_objective_id": "lo-1"}]
+        rows["grades"] = [
+            {
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-1",
+                "assignment_id": "a1",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+            {
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-9",
+                "assignment_id": "a1",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+            {
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-9",
+                "assignment_id": "a2",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+        ]
+        counted, _count_log = self._send(
+            "GET",
+            "/api/class/c1/assignments/a1/detach-grade-count?selected_lo=lo-1",
+            rows,
+        )
+        saved, save_log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            rows,
+            self._body(["lo-1"]),
+        )
+        self.assertEqual(counted.status_code, 200)
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(counted.get_json()["grade_rows"], 1)
+        grade_delete = next(
+            entry for entry in save_log
+            if entry["table"] == "grades" and entry["op"] == "delete"
+        )
+        self.assertEqual(
+            counted.get_json()["grade_rows"],
+            len(next(
+                item[2] for item in grade_delete["filters"] if item[0] == "in"
+            )),
+        )
+        self.assertIn(("in", "learning_objective_id", ["lo-9"]), grade_delete["filters"])
+        self.assertIn(("eq", "assignment_id", "a1"), grade_delete["filters"])
+        self.assertNotIn(("eq", "assignment_id", "a2"), grade_delete["filters"])
+
+    def test_failed_row_update_writes_no_links_and_deletes_no_grades(self):
+        rv, log = self._send(
+            "PUT",
+            "/class/c1/assignments/a1/update",
+            self._rows(),
+            self._body(["lo-2"]),
+            fail_update="assignments",
+        )
+        self.assertEqual(rv.status_code, 500)
+        self.assertEqual(rv.get_json()["error"], "Could not update assignment")
+        self.assertTrue(any(
+            entry["table"] == "assignments" and entry["op"] == "update-failed"
+            for entry in log
+        ))
+        self.assertEqual(self._link_writes(log), [])
+        self.assertEqual(
+            [
+                entry for entry in log
+                if entry["table"] == "grades" and entry["op"] in ("delete", "delete-failed")
+            ],
+            [],
+        )
 
 
 if __name__ == '__main__':

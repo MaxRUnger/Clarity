@@ -14,6 +14,11 @@
   </div>
 
   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+    {% if not learning_objectives %}
+    <div class="px-5 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+      No objectives are attached to an assignment yet.
+    </div>
+    {% endif %}
     {% if learning_objectives or grid_rows %}
     <div class="overflow-x-auto">
       <table class="min-w-full text-sm border-collapse">
@@ -66,10 +71,6 @@
           </tr>
         </tfoot>
       </table>
-    </div>
-    {% else %}
-    <div class="px-5 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
-      No learning objectives found for this class.
     </div>
     {% endif %}
   </div>
