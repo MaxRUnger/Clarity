@@ -1782,6 +1782,79 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         self.assertEqual(mapped[("stu-1", "lo-d1")], "M")
         self.assertNotIn(("stu-1", "lo-d2"), mapped)
 
+    def test_letter_map_keeps_every_grade_past_the_row_cap(self):
+        from app.routes import _gradesheet_letter_map_for_assignment
+
+        rows = []
+        students = []
+        for student_index in range(101):
+            sid = "s%03d" % student_index
+            students.append({"id": sid})
+            for lo_index in range(11):
+                rows.append({
+                    "id": "%s-lo%02d" % (sid, lo_index),
+                    "student_id": sid,
+                    "learning_objective_id": "lo%02d" % lo_index,
+                    "top_score": "M",
+                })
+        los = [{"id": "lo%02d" % lo_index} for lo_index in range(11)]
+        pages = []
+
+        class _Grades:
+            def __init__(self):
+                self.batch = []
+                self.start = None
+                self.end = None
+
+            def select(self, *args, **kwargs):
+                return self
+
+            def eq(self, *args, **kwargs):
+                return self
+
+            def in_(self, column, values):
+                if column == "student_id":
+                    self.batch = list(values)
+                return self
+
+            def order(self, *args, **kwargs):
+                return self
+
+            def range(self, start, end):
+                self.start = start
+                self.end = end
+                return self
+
+            def execute(self):
+                matched = [row for row in rows if row["student_id"] in set(self.batch)]
+                if self.start is None:
+                    data = matched[:1000]
+                else:
+                    data = matched[self.start:self.end + 1]
+                    pages.append((len(self.batch), self.start, self.end, len(matched)))
+                return unittest.mock.MagicMock(data=data)
+
+        class _Admin:
+            def table(self, name):
+                self.last = name
+                return _Grades()
+
+        with unittest.mock.patch("app.routes.supabase_admin", _Admin()):
+            letter_map = _gradesheet_letter_map_for_assignment("asg-1", students, los)
+
+        self.assertEqual(len(letter_map), 101 * 11)
+        batch_sizes = []
+        seen = []
+        for size, start, end, matched in pages:
+            if not seen or seen[-1] != size:
+                batch_sizes.append(size)
+                seen.append(size)
+        self.assertEqual(batch_sizes, [100, 1])
+        self.assertIn((100, 0, 999, 1100), pages)
+        self.assertIn((100, 1000, 1999, 1100), pages)
+        self.assertEqual(letter_map[("s000", "lo00")], "M")
+        self.assertEqual(letter_map[("s100", "lo10")], "M")
+
     def test_blank_template_csv_has_note_and_empty_grade_cells(self):
         students = [{"id": "stu-1", "full_name": "Doe, Jane"}]
         los = [{"id": "lo-d1", "vendor_code": "D1"}]
@@ -4338,6 +4411,74 @@ class TestFullClassDataGradePaging(unittest.TestCase):
         self.assertIn((("id",), 0, 999, 1520), client.grade_pages)
         self.assertIn((("id",), 1000, 1999, 1520), client.grade_pages)
 
+    def test_more_than_1000_objectives_and_enrollments_are_kept(self):
+        from app.models import Course
+        los = [
+            {
+                "id": "lo-%04d" % index,
+                "name": "L%04d" % index,
+                "vendor_code": "L%04d" % index,
+                "description": None,
+                "required_ms": 2,
+                "class_id": "class-mw",
+            }
+            for index in range(1001)
+        ]
+        enrollments = [
+            {
+                "id": "enr-%04d" % index,
+                "class_id": "class-mw",
+                "student_id": "stu-%04d" % index,
+                "muted": False,
+                "profiles": {
+                    "id": "stu-%04d" % index,
+                    "full_name": "Student, %04d" % index,
+                    "role": "student",
+                    "email": "s%04d@example.edu" % index,
+                },
+            }
+            for index in range(1001)
+        ]
+        client = _PagingClient({
+            "classes": [{"id": "class-mw", "name": "MW"}],
+            "learning_objectives": los,
+            "enrollments": enrollments,
+            "grades": [],
+        })
+        with unittest.mock.patch("app.models.supabase_admin", client):
+            class_data = Course.get_full_class_data("class-mw")
+        self.assertEqual(len(class_data["learning_objectives"]), 1001)
+        self.assertEqual(len(class_data["enrollments"]), 1001)
+
+    def test_assignment_links_and_homework_scores_past_the_row_cap(self):
+        from app.models import Course, Homework
+        links = [
+            {"assignment_id": "a1", "learning_objective_id": "lo-%04d" % index}
+            for index in range(1001)
+        ]
+        scores = [
+            {
+                "id": "h-%04d" % index,
+                "class_id": "c1",
+                "student_id": "s-%04d" % index,
+                "homework_group": "a1",
+                "score_pct": 80,
+            }
+            for index in range(1001)
+        ]
+        client = _PagingClient({
+            "assignment_objectives": links,
+            "assignments": [{"id": "a1", "class_id": "c1", "homework_group": ""}],
+            "homework_scores": scores,
+        })
+        with unittest.mock.patch("app.models.supabase_admin", client):
+            lo_ids = Course.get_assignment_lo_ids("a1")
+            hw_map = Homework.get_hw_scores_map_for_assignment("c1", "a1")
+        self.assertEqual(len(lo_ids), 1001)
+        self.assertEqual(len(hw_map), 1001)
+        self.assertEqual(hw_map["s-0000"], 80)
+        self.assertEqual(hw_map["s-1000"], 80)
+
     def test_zero_objectives_load_no_grades(self):
         from app.models import Course
         client, _students = self._client(False)
@@ -4832,6 +4973,51 @@ class TestLoCellStatus(unittest.TestCase):
         self.assertIsNotNone(re.search(r"text-green-700[\s\S]*?✓", html))
         self.assertIn('title="2/2"', html)
         self.assertIn('title="2/3"', html)
+
+    def test_helper_text_matches_the_page(self):
+        from flask import session
+        from unittest.mock import patch
+        from app.routes import (
+            class_learning_objectives_summary,
+            learning_objective_cell_text,
+            learning_objective_progress_text,
+        )
+        pool = [
+            {"id": "lo-0", "name": "T0", "vendor_code": "T0", "required_ms": 2},
+            {"id": "lo-1", "name": "T1", "vendor_code": "T1", "required_ms": 3},
+        ]
+        grades = [
+            {"learning_objective_id": "lo-0", "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": "lo-0", "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": "lo-1", "top_score": "M", "counts_for_mastery": True},
+            {"learning_objective_id": "lo-1", "top_score": "M", "counts_for_mastery": True},
+        ]
+        class_data = {
+            "name": "MW",
+            "learning_objectives": pool,
+            "enrollments": [{
+                "muted": False,
+                "profiles": {
+                    "id": "s1",
+                    "full_name": "Lee, Ana",
+                    "email": "a@b.edu",
+                    "grades": grades,
+                },
+            }],
+        }
+        app = create_app()
+        with app.test_request_context("/class/c1/learning-objectives"):
+            session["user_id"] = "u1"
+            session["role"] = "instructor"
+            with patch("app.routes._instructor_owns_class", return_value=True), \
+                 patch("app.routes.Course.get_full_class_data", return_value=class_data):
+                html = class_learning_objectives_summary("c1")
+        self.assertEqual(learning_objective_cell_text(2, 2), "✓")
+        self.assertEqual(learning_objective_cell_text(2, 3), "2/3")
+        self.assertEqual(learning_objective_progress_text(1, 2), "1/2")
+        self.assertIn(learning_objective_cell_text(2, 2), html)
+        self.assertIn(learning_objective_cell_text(2, 3), html)
+        self.assertIn(learning_objective_progress_text(1, 2), html)
 
 
 class TestClassSectionNumber(unittest.TestCase):
@@ -6747,6 +6933,378 @@ class TestUpdateAssignmentDetach(unittest.TestCase):
             ],
             [],
         )
+
+
+class TestClassArchiveExport(unittest.TestCase):
+    S1 = "aaaaaaaa-1111-1111-1111-111111111111"
+    S2 = "bbbbbbbb-2222-2222-2222-222222222222"
+    S3 = "cccccccc-3333-3333-3333-333333333333"
+    S4 = "dddddddd-4444-4444-4444-444444444444"
+    ASG1 = "11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    ASG2 = "22222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+    def _clear_attached_cache(self):
+        from app import routes as routes_module
+        routes_module._request_cache().pop(("_attached_objective_ids", "c-archive"), None)
+
+    def _class_data(self):
+        def marks(lo_id, count):
+            return [
+                {
+                    "learning_objective_id": lo_id,
+                    "top_score": "M",
+                    "counts_for_mastery": True,
+                }
+                for _index in range(count)
+            ]
+
+        people = [
+            (self.S3, "Doe/Jane, Ann", "doe@example.edu", False, []),
+            (self.S1, "Lee, Ana", "hidden@example.edu", False, marks("lo-1", 2) + marks("lo-9", 2)),
+            (self.S2, "Lee, Ana", "lee2@example.edu", False, []),
+            (self.S4, "Muted, Max", "secret@example.edu", True, marks("lo-1", 1)),
+        ]
+        return {
+            "id": "c-archive",
+            "name": "Archive Class",
+            "learning_objectives": [
+                {"id": "lo-1", "name": "D1", "vendor_code": "D1", "required_ms": 2},
+                {"id": "lo-9", "name": "ZZZ", "vendor_code": "ZZZ", "required_ms": 2},
+            ],
+            "enrollments": [
+                {
+                    "muted": muted,
+                    "profiles": {
+                        "id": sid,
+                        "full_name": name,
+                        "email": email,
+                        "grades": grades,
+                    },
+                }
+                for sid, name, email, muted, grades in people
+            ],
+        }
+
+    def _links(self):
+        return [
+            {"assignment_id": self.ASG1, "learning_objective_id": "lo-1"},
+            {"assignment_id": self.ASG2, "learning_objective_id": "lo-1"},
+        ]
+
+    def _assignments(self):
+        return [
+            {"id": self.ASG1, "name": "Exam 1", "date_returned": "2026-08-20"},
+            {"id": self.ASG2, "name": "Quiz 2", "date_returned": "2026-08-20"},
+        ]
+
+    def _build(self):
+        from app.archive_export import build_class_archive_zip
+        from app.models import Course, Homework
+        from flask import session
+        from app.routes import class_learning_objectives_summary
+
+        class _Links:
+            def __init__(self, rows):
+                self.rows = rows
+                self.start = 0
+                self.end = None
+
+            def select(self, *args, **kwargs):
+                return self
+
+            def eq(self, *args, **kwargs):
+                return self
+
+            def order(self, *args, **kwargs):
+                return self
+
+            def range(self, start, end):
+                self.start = start
+                self.end = end
+                return self
+
+            def execute(self):
+                end = len(self.rows) - 1 if self.end is None else self.end
+                return unittest.mock.MagicMock(data=self.rows[self.start:end + 1])
+
+        class _Admin:
+            def table(self, name):
+                if name != "assignment_objectives":
+                    raise AssertionError(name)
+                return _Links(self_test._links())
+
+        self_test = self
+        hw = {self.S1: 88}
+        prev = {self.S1: 70}
+
+        def letters(assignment_id, students, learning_objectives):
+            if assignment_id == self.ASG1:
+                return {(self.S1, "lo-1"): "M"}
+            return {}
+
+        self._clear_attached_cache()
+        try:
+            with unittest.mock.patch.object(
+                Course, "get_full_class_data", return_value=self._class_data()
+            ) as loaded, \
+                    unittest.mock.patch(
+                        "app.archive_export._load_assignments",
+                        return_value=self._assignments(),
+                    ), \
+                    unittest.mock.patch.object(
+                        Course, "get_assignment_lo_ids", return_value=["lo-1"]
+                    ), \
+                    unittest.mock.patch.object(
+                        Homework, "get_hw_scores_map_for_assignment", return_value=hw
+                    ), \
+                    unittest.mock.patch.object(
+                        Homework, "get_hw_prev_scores_map_for_assignment", return_value=prev
+                    ), \
+                    unittest.mock.patch(
+                        "app.routes._gradesheet_export_bundle"
+                    ) as bundle, \
+                    unittest.mock.patch(
+                        "app.archive_export._gradesheet_letter_map_for_assignment",
+                        side_effect=letters,
+                    ), \
+                    unittest.mock.patch("app.routes.supabase_admin", _Admin()):
+                zip_bytes, manifest = build_class_archive_zip("c-archive")
+                self.assertEqual(loaded.call_count, 1)
+                bundle.assert_not_called()
+                app = create_app()
+                with app.test_request_context("/class/c-archive/learning-objectives"):
+                    session["user_id"] = "inst"
+                    session["role"] = "instructor"
+                    with unittest.mock.patch("app.routes._instructor_owns_class", return_value=True):
+                        html = class_learning_objectives_summary("c-archive")
+        finally:
+            self._clear_attached_cache()
+        return zip_bytes, manifest, hw, prev, html
+
+    def test_zip_matches_the_filled_builder_and_keeps_every_enrollment(self):
+        import csv
+        import zipfile
+        import fitz
+        from app.routes import (
+            _build_gradesheet_csv_text,
+            _gradesheet_csv_data_rows,
+            learning_objective_cell_text,
+            learning_objective_progress_text,
+        )
+        from app.student_names import row_sort_key
+
+        zip_bytes, manifest, hw, prev, html = self._build()
+        self.assertEqual(manifest["objectives_entry"], "learning_objectives.csv")
+        self.assertEqual(manifest["source_assignments"], 2)
+        self.assertEqual(manifest["source_students"], 4)
+
+        ordered = sorted(
+            [
+                {"id": self.S3, "full_name": "Doe/Jane, Ann"},
+                {"id": self.S1, "full_name": "Lee, Ana"},
+                {"id": self.S2, "full_name": "Lee, Ana"},
+                {"id": self.S4, "full_name": "Muted, Max"},
+            ],
+            key=row_sort_key,
+        )
+        los = [{"id": "lo-1", "vendor_code": "D1"}]
+        expected = {}
+        for assignment, letters in (
+            (self._assignments()[0], {(self.S1, "lo-1"): "M"}),
+            (self._assignments()[1], {}),
+        ):
+            rows = _gradesheet_csv_data_rows(ordered, los, hw, letters, True, prev)
+            expected[f"assignments/{assignment['name']}_gradesheet.csv"] = _build_gradesheet_csv_text(
+                assignment["name"],
+                assignment["date_returned"],
+                ["D1"],
+                rows,
+                False,
+                True,
+            )
+
+        archive = zipfile.ZipFile(io.BytesIO(zip_bytes))
+        names = archive.namelist()
+        self.assertTrue(all(".." not in name.split("/") for name in names))
+        for name in names:
+            slashes = 0 if name == "learning_objectives.csv" else 1
+            self.assertEqual(name.count("/"), slashes, name)
+        quiz_files = [name for name in names if name.startswith("assignments/")]
+        self.assertEqual(sorted(quiz_files), [
+            "assignments/Exam 1_gradesheet.csv",
+            "assignments/Quiz 2_gradesheet.csv",
+        ])
+        self.assertEqual(manifest["assignment_entries"], quiz_files)
+        for name in quiz_files:
+            text = archive.read(name).decode("utf-8")
+            self.assertEqual(text, expected[name])
+            self.assertNotIn("hidden@example.edu", text)
+            self.assertNotIn("secret@example.edu", text)
+            self.assertNotIn("ZZZ", text)
+        quiz2 = archive.read("assignments/Quiz 2_gradesheet.csv").decode("utf-8")
+        parsed = list(csv.reader(io.StringIO(quiz2.lstrip("\ufeff"))))
+        header = next(row for row in parsed if row and row[0] == "Student Name")
+        self.assertEqual(header[:3], ["Student Name", "HW prev", "HW"])
+        muted_row = next(row for row in parsed if row and row[0] == "Muted, Max")
+        self.assertEqual(muted_row[3], "")
+
+        objectives = archive.read("learning_objectives.csv").decode("utf-8")
+        self.assertNotIn("ZZZ", objectives)
+        self.assertNotIn("secret@example.edu", objectives)
+        grid = list(csv.reader(io.StringIO(objectives.lstrip("\ufeff"))))
+        self.assertEqual(grid[0], ["Student", "D1", "Progress"])
+        by_progress = {}
+        for row in grid[1:]:
+            by_progress.setdefault(row[0], []).append(row)
+        self.assertEqual(by_progress["Muted, Max"][0][1], learning_objective_cell_text(1, 2))
+        self.assertEqual(by_progress["Muted, Max"][0][2], learning_objective_progress_text(0, 1))
+        lee_cells = {(row[1], row[2]) for row in by_progress["Lee, Ana"]}
+        self.assertEqual(lee_cells, {
+            (learning_objective_cell_text(2, 2), learning_objective_progress_text(1, 1)),
+            (learning_objective_cell_text(0, 2), learning_objective_progress_text(0, 1)),
+        })
+
+        pdf_names = [name for name in names if name.startswith("students/")]
+        self.assertEqual(manifest["student_entries"], pdf_names)
+        self.assertEqual(sorted(pdf_names), [
+            "students/Doe_Jane, Ann_gradesheet.pdf",
+            "students/Lee, Ana__aaaaaaaa_gradesheet.pdf",
+            "students/Lee, Ana__bbbbbbbb_gradesheet.pdf",
+            "students/Muted, Max_gradesheet.pdf",
+        ])
+
+        passed_line = ""
+        for name in pdf_names:
+            document = fitz.open(stream=archive.read(name), filetype="pdf")
+            text = "".join(page.get_text() for page in document)
+            document.close()
+            self.assertNotIn("@", text)
+            self.assertNotIn(self.S1, text)
+            self.assertNotIn(self.S4, text)
+            if "Lee, Ana" in text and "1 / 1" in text:
+                passed_line = text
+                self.assertIn("Passed", text)
+                self.assertNotIn("ZZZ", text)
+            if name == "students/Muted, Max_gradesheet.pdf":
+                self.assertIn("Muted, Max", text)
+                self.assertIn("Passed", text)
+        self.assertIn("Passed", passed_line)
+        self.assertIn("1 / 1", passed_line)
+        self.assertIn(learning_objective_cell_text(2, 2), html)
+        self.assertIn(learning_objective_cell_text(0, 2), html)
+        self.assertIn(learning_objective_progress_text(1, 1), html)
+        self.assertNotIn("ZZZ", html)
+        self.assertNotIn("Muted, Max", html)
+
+    def test_entry_stem_keeps_plain_names_and_cleans_illegal_characters(self):
+        from app.archive_export import archive_entry_stem
+        self.assertEqual(archive_entry_stem("Exam 1", "assignment"), "Exam 1")
+        self.assertEqual(archive_entry_stem("Estes, Brody", "student"), "Estes, Brody")
+        self.assertEqual(archive_entry_stem("Exam 1: A/B?", "assignment"), "Exam 1_ A_B_")
+        self.assertEqual(archive_entry_stem("A\nb", "student"), "A_b")
+        self.assertEqual(archive_entry_stem("CON", "student"), "CON_")
+        self.assertEqual(archive_entry_stem("..", "assignment"), "assignment")
+
+    def test_duplicate_stems_get_the_id_suffix_ignoring_case(self):
+        from app.archive_export import _suffix_duplicate_stems
+        self.assertEqual(
+            _suffix_duplicate_stems([
+                ("Exam 1", self.ASG1),
+                ("exam 1", self.ASG2),
+                ("Quiz 3", "33333333-cccc-cccc-cccc-cccccccccccc"),
+            ]),
+            ["Exam 1__11111111", "exam 1__22222222", "Quiz 3"],
+        )
+        self.assertEqual(
+            _suffix_duplicate_stems([("Lee, Ana", self.S1), ("Lee, Ana", self.S2)]),
+            ["Lee, Ana__aaaaaaaa", "Lee, Ana__bbbbbbbb"],
+        )
+
+    def test_an_entry_name_cannot_be_written_twice(self):
+        import zipfile
+        from app.archive_export import ArchiveManifestError, _write_entry
+        used = set()
+        with zipfile.ZipFile(io.BytesIO(), "w") as archive:
+            _write_entry(archive, "students/Lee, Ana_gradesheet.pdf", b"a", used)
+            with self.assertRaises(ArchiveManifestError):
+                _write_entry(archive, "students/LEE, ANA_gradesheet.pdf", b"b", used)
+
+    def test_manifest_check_catches_a_missing_file_and_a_count_mismatch(self):
+        import zipfile
+        from app.archive_export import ArchiveManifestError, check_archive_manifest
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("assignments/Exam 1_gradesheet.csv", "a")
+            archive.writestr("students/Estes, Brody_gradesheet.pdf", "b")
+            archive.writestr("learning_objectives.csv", "c")
+        zip_bytes = buffer.getvalue()
+        manifest = {
+            "source_assignments": 1,
+            "source_students": 2,
+            "assignment_entries": ["assignments/Exam 1_gradesheet.csv"],
+            "student_entries": [
+                "students/Estes, Brody_gradesheet.pdf",
+                "students/Lee, Ana_gradesheet.pdf",
+            ],
+            "objectives_entry": "learning_objectives.csv",
+        }
+        with self.assertRaisesRegex(ArchiveManifestError, "Lee, Ana_gradesheet.pdf"):
+            check_archive_manifest(manifest, zip_bytes)
+        complete = dict(
+            manifest,
+            source_students=1,
+            student_entries=["students/Estes, Brody_gradesheet.pdf"],
+        )
+        check_archive_manifest(complete, zip_bytes)
+        with self.assertRaisesRegex(ArchiveManifestError, "student PDFs"):
+            check_archive_manifest(dict(complete, source_students=2), zip_bytes)
+
+    def _client(self):
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        return client
+
+    def test_non_owner_gets_no_zip(self):
+        client = self._client()
+        with unittest.mock.patch("app.routes._instructor_owns_class", return_value=False), \
+                unittest.mock.patch("app.archive_export.build_class_archive_zip") as build:
+            response = client.get("/class/c-archive/export-archive")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/instructor/dashboard", response.headers["Location"])
+        self.assertFalse(response.data.startswith(b"PK"))
+        build.assert_not_called()
+
+    def test_owner_download_names_the_zip_and_deletes_nothing(self):
+        from werkzeug.utils import secure_filename
+        client = self._client()
+        manifest = {"class_name": "Alg II"}
+        with unittest.mock.patch("app.routes._instructor_owns_class", return_value=True), \
+                unittest.mock.patch(
+                    "app.archive_export.build_class_archive_zip",
+                    return_value=(b"PK\x03\x04archive", manifest),
+                ), \
+                unittest.mock.patch("app.routes.supabase_admin") as admin:
+            admin.table.side_effect = AssertionError("export must not touch the database")
+            response = client.get("/class/c-archive/export-archive")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"PK\x03\x04archive")
+        filename = f"{secure_filename('Alg II') or 'class'}_archive.zip"
+        self.assertIn(f'filename="{filename}"', response.headers["Content-Disposition"])
+
+        empty = dict(manifest)
+        empty["class_name"] = ""
+        with unittest.mock.patch("app.routes._instructor_owns_class", return_value=True), \
+                unittest.mock.patch(
+                    "app.archive_export.build_class_archive_zip",
+                    return_value=(b"PK\x03\x04archive", empty),
+                ):
+            fallback = client.get("/class/c-archive/export-archive")
+        self.assertIn('filename="class_archive.zip"', fallback.headers["Content-Disposition"])
 
 
 if __name__ == '__main__':

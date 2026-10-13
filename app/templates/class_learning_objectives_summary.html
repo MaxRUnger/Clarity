@@ -39,17 +39,14 @@
             <td title="{{ cell.text }}" class="px-3 py-2 text-center font-mono min-w-[3ch] {% if cell.status == 'passed' %}text-green-700 dark:text-green-400{% elif cell.status == 'close' %}text-yellow-700 dark:text-yellow-300{% else %}text-red-700 dark:text-red-400{% endif %}">
               {% if cell.status == 'passed' %}
               <span class="sr-only">passed</span>
-              <span aria-hidden="true">✓</span>
+              <span aria-hidden="true">{{ cell.display }}</span>
               {% else %}
-              {{ cell.text }}
+              {{ cell.display }}
               {% endif %}
             </td>
             {% endfor %}
             <td class="px-3 py-2 text-center font-mono text-slate-900 dark:text-white whitespace-nowrap">
-              {% set los = student.learning_objectives or [] %}
-              {% set passed = los|selectattr('is_passed')|list|length %}
-              {% set total = student.objective_total %}
-              {{ passed }}/{{ total }}
+              {{ student.progress_text }}
             </td>
           </tr>
           {% else %}

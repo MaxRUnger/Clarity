@@ -81,13 +81,12 @@ class Course:
     def get_learning_objectives(class_id):
         """Return learning objectives for a class."""
         try:
-            resp = (
+            rows = fetch_all_rows(
                 supabase_admin.table("learning_objectives")
                 .select("id, name, vendor_code, description, required_ms")
                 .eq("class_id", class_id)
-                .execute()
+                .order("id")
             )
-            rows = list(resp.data or [])
             rows.sort(key=lo_sort_key)
             return rows
         except Exception as e:
@@ -125,10 +124,11 @@ class Course:
                 if lo.get("id")
             }
 
-            enrollments_resp = supabase_admin.table("enrollments").select(
-                "id, class_id, student_id, muted, profiles(id, full_name, role, email)"
-            ).eq("class_id", class_id).execute()
-            enrollments = enrollments_resp.data or []
+            enrollments = fetch_all_rows(
+                supabase_admin.table("enrollments").select(
+                    "id, class_id, student_id, muted, profiles(id, full_name, role, email)"
+                ).eq("class_id", class_id).order("id")
+            )
 
             # One in_() instead of one query per enrolled student. Grades are
             # limited to this class's learning objectives in the query below.
@@ -177,15 +177,17 @@ class Course:
         if not assignment_id:
             return []
         try:
-            ao_resp = (
+            # One assignment links each objective once, so this column is a
+            # unique page order for the filtered read.
+            ao_rows = fetch_all_rows(
                 supabase_admin.table("assignment_objectives")
                 .select("learning_objective_id")
                 .eq("assignment_id", assignment_id)
-                .execute()
+                .order("learning_objective_id")
             )
             return [
                 str(r["learning_objective_id"])
-                for r in (ao_resp.data or [])
+                for r in ao_rows
                 if r.get("learning_objective_id")
             ]
         except Exception as e:
@@ -688,24 +690,32 @@ class Homework:
                         hw_map[sid] = r.get(column)
 
             if hg:
-                sib = supabase_admin.table("assignments").select("id").eq(
-                    "class_id", class_id
-                ).eq("homework_group", hg).execute()
-                sib_ids = [r["id"] for r in (sib.data or [])]
+                sib_rows = fetch_all_rows(
+                    supabase_admin.table("assignments").select("id").eq(
+                        "class_id", class_id
+                    ).eq("homework_group", hg).order("id")
+                )
+                sib_ids = [r["id"] for r in sib_rows]
                 if sib_ids:
-                    leg = supabase_admin.table("homework_scores").select(
+                    leg = fetch_all_rows(
+                        supabase_admin.table("homework_scores").select(
+                            select_cols
+                        ).eq("class_id", class_id).in_("homework_group", sib_ids).order("id")
+                    )
+                    _merge(leg)
+                cur = fetch_all_rows(
+                    supabase_admin.table("homework_scores").select(
                         select_cols
-                    ).eq("class_id", class_id).in_("homework_group", sib_ids).execute()
-                    _merge(leg.data)
-                cur = supabase_admin.table("homework_scores").select(
-                    select_cols
-                ).eq("class_id", class_id).eq("homework_group", hg).execute()
-                _merge(cur.data)
+                    ).eq("class_id", class_id).eq("homework_group", hg).order("id")
+                )
+                _merge(cur)
             else:
-                single = supabase_admin.table("homework_scores").select(
-                    select_cols
-                ).eq("class_id", class_id).eq("homework_group", assignment_id).execute()
-                _merge(single.data)
+                single = fetch_all_rows(
+                    supabase_admin.table("homework_scores").select(
+                        select_cols
+                    ).eq("class_id", class_id).eq("homework_group", assignment_id).order("id")
+                )
+                _merge(single)
             return hw_map
         except Exception as e:
             logger.error(

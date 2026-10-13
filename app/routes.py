@@ -991,15 +991,15 @@ def _gradesheet_letter_map_for_assignment(
         chunk = 100
         for i in range(0, len(student_ids), chunk):
             batch = student_ids[i:i + chunk]
-            gresp = (
+            # One chunk of 100 students can still be more than 1000 grade rows.
+            grade_rows.extend(fetch_all_rows(
                 supabase_admin.table("grades")
-                .select("student_id, learning_objective_id, top_score")
+                .select("id, student_id, learning_objective_id, top_score")
                 .eq("assignment_id", assignment_id)
                 .in_("student_id", batch)
                 .in_("learning_objective_id", lo_ids)
-                .execute()
-            )
-            grade_rows.extend(gresp.data or [])
+                .order("id")
+            ))
         letter_map = _gradesheet_letter_map_from_rows(grade_rows)
     except Exception as e:
         logger.error(
@@ -1193,6 +1193,62 @@ def lo_cell_status(m_count, required):
     if m >= 1 and (r - m) == 1:
         return "close"
     return "behind"
+
+
+def learning_objective_column_name(lo: Dict[str, Any]) -> str:
+    """Header the Learning Objectives table shows for one objective."""
+    return lo.get("vendor_code") or lo.get("name") or "Objective"
+
+
+def learning_objective_cell_text(m_count, required) -> str:
+    """Visible cell: a check mark when passed, otherwise m/required."""
+    if lo_cell_status(m_count, required) == "passed":
+        return "✓"
+    return f"{m_count}/{required}"
+
+
+def learning_objective_progress_text(passed, total) -> str:
+    """Progress column: passed objectives over the attached total."""
+    return f"{passed}/{total}"
+
+
+def build_learning_objectives_grid(students, learning_objectives):
+    """Rows for the Learning Objectives table. Cell text comes from the helpers above."""
+    grid_rows = []
+    for student in students:
+        by_lo = {
+            str(slo.get("learning_objective_id") or ""): slo
+            for slo in (student.get("learning_objectives") or [])
+        }
+        cells = []
+        for row in learning_objectives:
+            matched = by_lo.get(row["id"])
+            if matched is None:
+                m_count = 0
+                required = row["required_ms"]
+            else:
+                m_count = int(matched.get("m_count") or 0)
+                required = matched.get("required_ms")
+                if required is None:
+                    required = row["required_ms"]
+            cells.append({
+                "text": f"{m_count}/{required}",
+                "status": lo_cell_status(m_count, required),
+                "display": learning_objective_cell_text(m_count, required),
+            })
+        student_los = student.get("learning_objectives") or []
+        passed = sum(1 for slo in student_los if slo.get("is_passed"))
+        objective_total = student.get("objective_total")
+        if objective_total is None:
+            objective_total = 0
+        grid_rows.append({
+            "name": display_name(student.get("full_name") or ""),
+            "cells": cells,
+            "learning_objectives": student_los,
+            "objective_total": objective_total,
+            "progress_text": learning_objective_progress_text(passed, objective_total),
+        })
+    return grid_rows
 
 
 def class_progress(raw_grades, lo_lookup):
@@ -1557,42 +1613,13 @@ def class_learning_objectives_summary(class_id):
                 passed_count += 1
         summary_rows.append({
             "id": lo_id,
-            "vendor_code": lo.get("vendor_code") or lo.get("name") or "Objective",
+            "vendor_code": learning_objective_column_name(lo),
             "name": lo.get("name") or lo.get("vendor_code") or "Objective",
             "required_ms": lo.get("required_ms", 2),
             "passed_count": passed_count,
         })
 
-    grid_rows = []
-    for student in students_for_template:
-        by_lo = {
-            str(slo.get("learning_objective_id") or ""): slo
-            for slo in (student.get("learning_objectives") or [])
-        }
-        cells = []
-        for row in summary_rows:
-            matched = by_lo.get(row["id"])
-            if matched is None:
-                m_count = 0
-                required = row["required_ms"]
-            else:
-                m_count = int(matched.get("m_count") or 0)
-                required = matched.get("required_ms")
-                if required is None:
-                    required = row["required_ms"]
-            cells.append({
-                "text": f"{m_count}/{required}",
-                "status": lo_cell_status(m_count, required),
-            })
-        objective_total = student.get("objective_total")
-        if objective_total is None:
-            objective_total = 0
-        grid_rows.append({
-            "name": display_name(student.get("full_name") or ""),
-            "cells": cells,
-            "learning_objectives": student.get("learning_objectives") or [],
-            "objective_total": objective_total,
-        })
+    grid_rows = build_learning_objectives_grid(students_for_template, summary_rows)
 
     return render_template(
         "class_learning_objectives_summary.html",
@@ -2649,6 +2676,31 @@ def export_assignment_csv(class_id, assignment_id):
     return Response(
         csv_text,
         mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@main_bp.route("/class/<class_id>/export-archive")
+@login_required
+def export_class_archive(class_id):
+    """Download a class archive zip. Does not delete the class or write a row."""
+    if not _instructor_owns_class(class_id):
+        return redirect(url_for("main.instructor_dashboard"))
+    from app.archive_export import (
+        ArchiveClassNotFound,
+        ArchiveManifestError,
+        build_class_archive_zip,
+    )
+    try:
+        zip_bytes, manifest = build_class_archive_zip(class_id)
+    except ArchiveClassNotFound:
+        return redirect(url_for("main.instructor_dashboard"))
+    except ArchiveManifestError as exc:
+        return _safe_api_error("Could not export archive", 500, log_detail=exc)
+    filename = f"{secure_filename(str(manifest.get('class_name') or '')) or 'class'}_archive.zip"
+    return Response(
+        zip_bytes,
+        mimetype="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
