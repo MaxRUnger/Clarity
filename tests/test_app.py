@@ -7196,6 +7196,50 @@ class TestClassArchiveExport(unittest.TestCase):
         self.assertNotIn("ZZZ", html)
         self.assertNotIn("Muted, Max", html)
 
+    def test_thirty_student_pdfs_open_with_name_progress_and_embedded_font(self):
+        import fitz
+        from app.archive_export import _student_pdf
+        from app.routes import _process_enrollments
+
+        objectives = [
+            {"id": "lo-1", "name": "D1", "vendor_code": "D1", "required_ms": 2},
+            {"id": "lo-2", "name": "D2", "vendor_code": "D2", "required_ms": 2},
+        ]
+        enrollments = []
+        for index in range(30):
+            grades = [
+                {"learning_objective_id": "lo-1", "top_score": "M", "counts_for_mastery": True}
+                for _count in range(index % 3)
+            ]
+            grades.append({"learning_objective_id": "lo-2", "top_score": "R", "counts_for_mastery": True})
+            enrollments.append({
+                "muted": index % 5 == 0,
+                "profiles": {
+                    "id": f"student-{index:02d}",
+                    "full_name": f"Student{index:02d}, Pat",
+                    "email": f"s{index}@example.edu",
+                    "grades": grades,
+                },
+            })
+        students = _process_enrollments({"learning_objectives": objectives, "enrollments": enrollments})[1]
+        self.assertEqual(len(students), 30)
+        for student in students:
+            document = fitz.open(stream=_student_pdf(student), filetype="pdf")
+            text = "".join(page.get_text() for page in document)
+            fonts = [font for page in document for font in page.get_fonts()]
+            document.close()
+            passed = sum(1 for lo in student["learning_objectives"] if lo["is_passed"])
+            self.assertIn(student["name"], text)
+            self.assertIn("Passed", text)
+            self.assertIn(f"{passed} / {student['objective_total']}", text)
+            for lo in student["learning_objectives"]:
+                self.assertIn(f"{lo['m_count']} / {lo['required_ms']} Ms", text)
+            self.assertNotIn("@", text)
+            self.assertTrue(fonts, student["name"])
+            for font in fonts:
+                self.assertIn("FiraGO", font[3])
+                self.assertNotEqual(font[1], "n/a")
+
     def test_entry_stem_keeps_plain_names_and_cleans_illegal_characters(self):
         from app.archive_export import archive_entry_stem
         self.assertEqual(archive_entry_stem("Exam 1", "assignment"), "Exam 1")

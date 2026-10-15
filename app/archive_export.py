@@ -140,20 +140,41 @@ def _student_pdf(student: Dict[str, Any]) -> bytes:
         total = 0
     name = student.get("name") or student.get("full_name") or "Unnamed student"
     font_buffer = fitz.Font("figo").buffer
+    font = fitz.Font(fontbuffer=font_buffer)
     doc = fitz.open()
-    page = doc.new_page(width=612, height=792)
-    page.insert_font(fontname=_FONT_NAME, fontbuffer=font_buffer)
+    shape = None
     y = 54
 
     def new_page():
-        nonlocal page, y
+        nonlocal shape, y
+        if shape is not None:
+            shape.commit()
         page = doc.new_page(width=612, height=792)
         page.insert_font(fontname=_FONT_NAME, fontbuffer=font_buffer)
+        shape = page.new_shape()
         y = 54
 
     def line(x, text, size, color="#0f172a"):
-        page.insert_text((x, y), text, fontname=_FONT_NAME, fontsize=size, color=_rgb(color))
+        shape.insert_text((x, y), text, fontname=_FONT_NAME, fontsize=size, color=_rgb(color))
 
+    def box(rect, fill, border=None, width=0):
+        shape.draw_rect(rect)
+        shape.finish(color=_rgb(border) if border else None, fill=_rgb(fill), width=width)
+
+    def shorten(text):
+        """Keep a label that fits before the pill. Longer labels end in one ellipsis."""
+        limit = 114.0
+        size = 9
+        if font.text_length(text, fontsize=size) <= limit:
+            return text
+        mark = "\u2026"
+        room = limit - font.text_length(mark, fontsize=size)
+        end = len(text)
+        while end and font.text_length(text[:end], fontsize=size) > room:
+            end -= 1
+        return text[:end] + mark
+
+    new_page()
     line(36, name, 14)
     y += 22
     line(36, "Passed", 9, "#334155")
@@ -163,14 +184,9 @@ def _student_pdf(student: Dict[str, Any]) -> bytes:
     line(260, f"{passed}/{total}", 9, "#334155")
     bar_top = y + 4
     width = 160.0 * (passed / total) if total else 0
-    page.draw_rect(fitz.Rect(260, bar_top, 420, bar_top + 4), color=None, fill=_rgb("#cbd5e1"), width=0)
+    box(fitz.Rect(260, bar_top, 420, bar_top + 4), "#cbd5e1")
     if width:
-        page.draw_rect(
-            fitz.Rect(260, bar_top, 260 + width, bar_top + 4),
-            color=None,
-            fill=_rgb("#16a34a"),
-            width=0,
-        )
+        box(fitz.Rect(260, bar_top, 260 + width, bar_top + 4), "#16a34a")
     y = bar_top + 22
 
     for lo in los:
@@ -188,18 +204,11 @@ def _student_pdf(student: Dict[str, Any]) -> bytes:
         ms_text = f"{m_count} / {required} Ms"
         if lo.get("mr_count"):
             ms_text += f" ({lo['mr_count']} MR)"
-        line(36, str(label), 9)
+        line(36, shorten(str(label)), 9)
         pill_x = 150
         pill_w = max(52, 6 * len(pill) + 8)
-        pill_rect = fitz.Rect(pill_x, y - 9, pill_x + pill_w, y + 2)
-        page.draw_rect(pill_rect, color=None, fill=_rgb(pill_fill), width=0)
-        page.insert_text(
-            (pill_x + 4, y),
-            pill,
-            fontname=_FONT_NAME,
-            fontsize=8,
-            color=_rgb(pill_color),
-        )
+        box(fitz.Rect(pill_x, y - 9, pill_x + pill_w, y + 2), pill_fill)
+        line(pill_x + 4, pill, 8, pill_color)
         x = pill_x + pill_w + 6
         meta_list = lo.get("grades_meta") or []
         for index, mark in enumerate(lo.get("grades_list") or []):
@@ -217,15 +226,15 @@ def _student_pdf(student: Dict[str, Any]) -> bytes:
             else:
                 fill, fg, border = _BADGE_COLORS.get(mark_text.lower(), _BADGE_COLORS["a"])
             badge_w = max(14, 7 * len(mark_text) + 6)
-            badge = fitz.Rect(x, y - 9, x + badge_w, y + 2)
-            page.draw_rect(badge, color=_rgb(border), fill=_rgb(fill), width=0.6)
-            page.insert_text((x + 3, y), mark_text, fontname=_FONT_NAME, fontsize=8, color=_rgb(fg))
+            box(fitz.Rect(x, y - 9, x + badge_w, y + 2), fill, border, 0.6)
+            line(x + 3, mark_text, 8, fg)
             x += badge_w + 3
-        page.insert_text((x + 4, y), ms_text, fontname=_FONT_NAME, fontsize=8, color=_rgb("#334155"))
+        line(x + 4, ms_text, 8, "#334155")
         y += 14
 
+    shape.commit()
     doc.subset_fonts()
-    payload = doc.tobytes()
+    payload = doc.tobytes(garbage=3, deflate=True)
     doc.close()
     return payload
 
