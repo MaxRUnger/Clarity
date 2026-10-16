@@ -128,7 +128,10 @@ def _objectives_for_assignment(pool: List[Dict[str, Any]], assignment_id: str) -
 
 def _rgb(hex_color: str) -> Tuple[float, float, float]:
     value = hex_color.lstrip("#")
-    return tuple(int(value[index:index + 2], 16) / 255 for index in (0, 2, 4))
+    red = int(value[0:2], 16) / 255
+    green = int(value[2:4], 16) / 255
+    blue = int(value[4:6], 16) / 255
+    return (red, green, blue)
 
 
 def _student_pdf(student: Dict[str, Any]) -> bytes:

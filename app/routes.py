@@ -2,11 +2,10 @@
 
 Deployment (production)
 -----------------------
-In-memory structures in this module — mobile upload handoff
-(``_pending_mobile_uploads``), request rate limits (``_rate_limit_events``), and
-one-time form tokens (``_used_form_tokens``) — are **not** shared across
-Gunicorn/Uvicorn workers. With multiple workers, QR phone uploads, rate limits,
-and token replay checks can appear broken or inconsistent.
+In-memory structures in this module — request rate limits
+(``_rate_limit_events``) and one-time form tokens (``_used_form_tokens``) —
+are **not** shared across Gunicorn/Uvicorn workers. With multiple workers,
+rate limits and token replay checks can appear broken or inconsistent.
 
 **Options:** run **one worker**; use a load balancer with **sticky sessions** to
 the same worker; or replace these stores with **Redis** (or equivalent) before
@@ -26,7 +25,6 @@ import re
 import secrets
 import requests
 from html import escape as html_escape
-import socket
 import threading
 import time
 from datetime import date
@@ -41,9 +39,7 @@ from flask import (  # type: ignore
     redirect,
     url_for,
     session,
-    abort,
     Response,
-    send_file,
     g,
 )
 from werkzeug.utils import secure_filename
@@ -78,12 +74,6 @@ main_bp = Blueprint('main', __name__, template_folder='templates')
 # the module docstring; the brief notes here are reminders for anyone editing
 # this file directly. See `create_app` for the MULTI_WORKER startup warning.
 
-# Bridge between phone uploads and the browser tab waiting for them. Keys are
-# short-lived tokens minted by the desktop page and embedded in the QR code.
-MOBILE_UPLOAD_TTL = 900  # 15 minutes
-_pending_mobile_uploads = {}
-_mobile_upload_lock = threading.Lock()
-
 # Single-use form tokens to block replay of state-changing POSTs that have
 # already been processed (e.g. double-click submit).
 FORM_TOKEN_TTL = 900  # 15 minutes
@@ -97,88 +87,16 @@ _rate_limit_lock = threading.Lock()
 _rate_limit_events = defaultdict(deque)
 
 
-def _get_lan_ipv4() -> Optional[str]:
-    """Best-effort primary LAN IPv4 for QR links when the dev server is opened via localhost."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.25)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        if ip and not ip.startswith("127."):
-            return ip
-    except OSError:
-        pass
-    try:
-        ip = socket.gethostbyname(socket.gethostname())
-        if ip and not ip.startswith("127."):
-            return ip
-    except OSError:
-        pass
-    return None
-
-
-def _request_host_is_loopback() -> bool:
-    host = (request.host or "").split(":")[0].lower()
-    if host in ("localhost", "127.0.0.1", "::1"):
-        return True
-    if host.startswith("127."):
-        return True
-    return False
-
-
 def _public_base_url():
-    """Base URL for QR / phone links. PUBLIC_BASE_URL wins (use for production, e.g. https://claritygrader.net)."""
+    """Return the base URL for links placed in emails.
+
+    PUBLIC_BASE_URL is used when it is set. Otherwise the scheme and host of
+    the current request are used.
+    """
     base = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
     if base:
         return base
-    if _request_host_is_loopback():
-        lan = _get_lan_ipv4()
-        if lan:
-            port = request.environ.get("SERVER_PORT", "5000")
-            try:
-                p = int(port)
-            except ValueError:
-                p = 5000
-            return f"http://{lan}:{p}"
     return request.host_url.rstrip("/")
-
-
-def _url_looks_like_loopback(url: str) -> bool:
-    if not url:
-        return False
-    u = url.lower()
-    return "localhost" in u or "127.0.0.1" in u or "::1" in u
-
-
-def _pending_put(token: str, class_id: str, user_id: str, upload_kind: str = "grades") -> None:
-    with _mobile_upload_lock:
-        _pending_mobile_uploads[token] = {
-            "class_id": class_id,
-            "user_id": user_id,
-            "upload_kind": upload_kind,
-            "created": time.time(),
-            "file": None,
-            "uploaded": False,
-            "filename": None,
-            "content_type": None,
-        }
-
-
-def _pending_get(token: str):
-    with _mobile_upload_lock:
-        p = _pending_mobile_uploads.get(token)
-        if not p:
-            return None
-        if time.time() - p["created"] > MOBILE_UPLOAD_TTL:
-            del _pending_mobile_uploads[token]
-            return None
-        return p
-
-
-def _pending_delete(token: str) -> None:
-    with _mobile_upload_lock:
-        _pending_mobile_uploads.pop(token, None)
 
 
 def _consume_one_time_form_token(namespace: str, token: str) -> bool:
@@ -493,7 +411,8 @@ def _class_instructor_id(class_id: str) -> Optional[str]:
     try:
         resp = supabase_admin.table("classes").select("instructor_id").eq("id", class_id).limit(1).execute()
         if resp.data:
-            val = resp.data[0].get("instructor_id")
+            raw = resp.data[0].get("instructor_id")
+            val = raw if isinstance(raw, str) else None
     except Exception as e:
         logger.error("_class_instructor_id: %s", e)
     cache[ck] = val
@@ -549,30 +468,6 @@ def _user_ids_equal(a: Any, b: Any) -> bool:
     if sa == sb:
         return True
     return sa.replace("-", "") == sb.replace("-", "")
-
-
-def build_lo_csv_mobile_upload_context(
-    class_id: str, user_id: Optional[str], role: Optional[str]
-) -> Dict[str, Any]:
-    """Token + URL for learning-objective CSV upload from phone (class owner only)."""
-    empty: Dict[str, Any] = {
-        "lo_mobile_upload_token": "",
-        "lo_mobile_upload_url": "",
-        "lo_mobile_upload_url_is_loopback": False,
-    }
-    if not user_id or (role or "").strip().lower() != "instructor":
-        return empty
-    owner_id = _class_instructor_id(class_id)
-    if not owner_id or not _user_ids_equal(owner_id, user_id):
-        return empty
-    token = str(uuid4())
-    _pending_put(token, class_id, user_id, upload_kind="lo_outcomes")
-    url = f"{_public_base_url()}/class/{class_id}/mobile-upload/{token}"
-    return {
-        "lo_mobile_upload_token": token,
-        "lo_mobile_upload_url": url,
-        "lo_mobile_upload_url_is_loopback": _url_looks_like_loopback(url),
-    }
 
 
 def _select_class_pool_learning_objectives(select_cols: str, class_id: str):
@@ -1602,13 +1497,6 @@ def class_detail(class_id):
         logger.error("Error loading LOs for dashboard %s: %s", class_id, e)
         all_los = []
 
-    lo_ctx = build_lo_csv_mobile_upload_context(
-        class_id, session.get("user_id"), session.get("role")
-    )
-    lo_ctx.setdefault("lo_mobile_upload_token", "")
-    lo_ctx.setdefault("lo_mobile_upload_url", "")
-    lo_ctx.setdefault("lo_mobile_upload_url_is_loopback", False)
-
     return render_template('class_detail.html', 
                             class_id=class_id, 
                             class_name=class_data.get('name'),
@@ -1619,8 +1507,7 @@ def class_detail(class_id):
                             learning_objectives=summary,
                             all_los=all_los,
                             assignments=assignments,
-                            overdue_revisions=overdue_revisions,
-                            **lo_ctx)
+                            overdue_revisions=overdue_revisions)
 
 
 @main_bp.route("/class/<class_id>/learning-objectives")
@@ -2679,13 +2566,6 @@ def class_assignments(class_id):
         if str(lo.get("id") or "") not in attached_ids
     )
 
-    lo_ctx = build_lo_csv_mobile_upload_context(
-        class_id, session.get("user_id"), session.get("role")
-    )
-    lo_ctx.setdefault("lo_mobile_upload_token", "")
-    lo_ctx.setdefault("lo_mobile_upload_url", "")
-    lo_ctx.setdefault("lo_mobile_upload_url_is_loopback", False)
-
     return render_template(
         "class_assignments.html",
         class_id=class_id,
@@ -2693,7 +2573,6 @@ def class_assignments(class_id):
         assignments=assignments,
         all_los=all_los,
         unattached_count=unattached_count,
-        **lo_ctx,
     )
 
 def _insert_assignment_objectives(ao_rows: List[Dict[str, Any]]) -> None:
@@ -3957,14 +3836,6 @@ def update_grade_handler(class_id):
         except Exception as e:
             logger.error("upload_grades: failed to load LOs for class %s: %s", class_id, e)
             template_kwargs["learning_objectives"] = []
-        mobile_upload_token = str(uuid4())
-        _pending_put(mobile_upload_token, class_id, session["user_id"])
-        mobile_upload_url = (
-            f"{_public_base_url()}/class/{class_id}/mobile-upload/{mobile_upload_token}"
-        )
-        template_kwargs["mobile_upload_token"] = mobile_upload_token
-        template_kwargs["mobile_upload_url"] = mobile_upload_url
-        template_kwargs["mobile_upload_url_is_loopback"] = _url_looks_like_loopback(mobile_upload_url)
 
     roster = []
     for enrollment in class_data.get("enrollments") or []:
@@ -3980,121 +3851,6 @@ def update_grade_handler(class_id):
     template_kwargs["roster"] = roster
 
     return render_template("update_grade.html", **template_kwargs)
-
-@main_bp.route("/class/<class_id>/mobile-upload/<token>")
-def mobile_upload_page(class_id, token):
-    """Phone-friendly page to photograph or pick a grade sheet (opened via QR)."""
-    p = _pending_get(token)
-    if not p or p["class_id"] != class_id:
-        return (
-            render_template("mobile_upload.html", error="This link is invalid or has expired.", upload_kind="grades"),
-            404,
-        )
-    upload_kind = p.get("upload_kind", "grades")
-    return render_template(
-        "mobile_upload.html",
-        class_id=class_id,
-        token=token,
-        error=None,
-        upload_kind=upload_kind,
-    )
-
-
-@main_bp.route("/api/mobile-upload/<token>", methods=["POST"])
-@rate_limited("mobile_upload_receive", limit=60, window_sec=300)
-def mobile_upload_receive(token):
-    """Receive file from phone; token proves intent (short-lived, unguessable)."""
-    p = _pending_get(token)
-    if not p:
-        return jsonify({"success": False, "error": "Invalid or expired link"}), 400
-    if p.get("uploaded"):
-        return jsonify({"success": False, "error": "This upload link has already been used"}), 409
-
-    if "file" not in request.files:
-        return jsonify({"success": False, "error": "No file uploaded"}), 400
-
-    f = request.files["file"]
-    if not f or not f.filename:
-        return jsonify({"success": False, "error": "No file selected"}), 400
-
-    upload_kind = p.get("upload_kind", "grades")
-    fn_lower = f.filename.lower()
-    if upload_kind == "lo_outcomes":
-        allowed_extensions = (".csv",)
-        if not fn_lower.endswith(allowed_extensions):
-            return jsonify({"success": False, "error": "Use a CSV file"}), 400
-        max_size = 5 * 1024 * 1024
-    else:
-        allowed_extensions = (".pdf", ".jpg", ".jpeg", ".png")
-        if not fn_lower.endswith(allowed_extensions):
-            return jsonify({"success": False, "error": "Use a PDF, JPG, or PNG"}), 400
-        max_size = 10 * 1024 * 1024
-
-    data = f.read()
-    if len(data) > max_size:
-        return jsonify({"success": False, "error": "File is too large"}), 400
-    if upload_kind == "grades":
-        if not _allowed_grade_upload_signature(data, f.filename):
-            return jsonify({"success": False, "error": "File contents do not match allowed format"}), 400
-    else:
-        try:
-            data.decode("utf-8")
-        except Exception:
-            return jsonify({"success": False, "error": "CSV must be UTF-8 text"}), 400
-
-    content_type = f.mimetype or "application/octet-stream"
-    with _mobile_upload_lock:
-        if token not in _pending_mobile_uploads:
-            return jsonify({"success": False, "error": "Link expired"}), 400
-        if _pending_mobile_uploads[token].get("uploaded"):
-            return jsonify({"success": False, "error": "This upload link has already been used"}), 409
-        _pending_mobile_uploads[token]["file"] = data
-        _pending_mobile_uploads[token]["filename"] = f.filename
-        _pending_mobile_uploads[token]["content_type"] = content_type
-        _pending_mobile_uploads[token]["uploaded"] = True
-
-    return jsonify({"success": True})
-
-
-@main_bp.route("/api/class/<class_id>/mobile-upload-status/<token>")
-@api_login_required
-def mobile_upload_status(class_id, token):
-    """Desktop polls until the phone has uploaded a file."""
-    p = _pending_get(token)
-    if not p or p["class_id"] != class_id or p["user_id"] != session["user_id"]:
-        return jsonify({"success": False, "error": "Not found"}), 404
-    ready = p["file"] is not None
-    return jsonify(
-        {
-            "success": True,
-            "ready": ready,
-            "filename": p["filename"] if ready else None,
-        }
-    )
-
-
-@main_bp.route("/api/class/<class_id>/mobile-upload-file/<token>")
-@api_login_required
-def mobile_upload_file(class_id, token):
-    """Return uploaded bytes once, then clear the handoff."""
-    p = _pending_get(token)
-    if not p or p["class_id"] != class_id or p["user_id"] != session["user_id"]:
-        abort(404)
-    if p["file"] is None:
-        return jsonify({"success": False, "error": "No file yet"}), 404
-
-    data = p["file"]
-    filename = p["filename"] or "upload.jpg"
-    content_type = p["content_type"] or "application/octet-stream"
-    _pending_delete(token)
-
-    safe_name = secure_filename(str(filename)) or "upload.bin"
-    return send_file(
-        io.BytesIO(data),
-        mimetype=content_type,
-        as_attachment=False,
-        download_name=safe_name,
-    )
 
 
 @main_bp.route("/class/<class_id>/create_learning_objective", methods=["GET", "POST"], endpoint='create_learning_objective')

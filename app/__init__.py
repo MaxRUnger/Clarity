@@ -47,7 +47,7 @@ def create_app(config_class=Config):
     app.register_blueprint(main_bp)
 
     # Loud warning at boot: several in-memory stores in `app.routes`
-    # (`_pending_mobile_uploads`, `_rate_limit_events`, `_used_form_tokens`)
+    # (`_rate_limit_events`, `_used_form_tokens`)
     # are per-process. Running multiple gunicorn workers without sticky
     # sessions silently breaks them, so we log this once at startup rather
     # than risk debugging it under load.
@@ -57,7 +57,7 @@ def create_app(config_class=Config):
         "yes",
     ):
         logging.getLogger(__name__).warning(
-            "MULTI_WORKER is set: in-memory mobile upload handoff, rate limits, and "
+            "MULTI_WORKER is set: in-memory rate limits and "
             "form-token replay tables in app.routes are not shared across workers. "
             "Use one worker, sticky sessions, or Redis. See module docstring in app.routes."
         )
@@ -87,16 +87,11 @@ def create_app(config_class=Config):
 
     @app.before_request
     def csrf_protect():
-        # CSRF is only enforced on state-changing methods for authenticated
-        # sessions. Unauthenticated POSTs (login/signup) and the mobile-upload
-        # endpoints use their own one-time-token schemes and would otherwise
-        # 403 before reaching their own validation logic.
+        # CSRF applies only to state-changing methods for authenticated sessions, since unauthenticated POSTs such as login and signup carry their own checks and would otherwise return 403 before those checks run.
         if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
             return None
         endpoint = (request.endpoint or "").strip()
         if endpoint in {"main.login", "main.signup"}:
-            return None
-        if request.path.startswith("/api/mobile-upload/"):
             return None
         if "user_id" not in session:
             return None

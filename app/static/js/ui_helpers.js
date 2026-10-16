@@ -56,51 +56,6 @@
     });
   }
 
-  // Poll the mobile-upload bridge until the phone has handed a file off, then
-  // hand it to the page via `config.onReady(file, statusData)`. The caller is
-  // responsible for ending the interval (via `config.stop`) once `onReady`
-  // fires; we keep the interval reference returned by `setInterval` so the
-  // caller can also `clearInterval` directly if they prefer.
-  function startMobileCsvPoll(config) {
-    const classId = String(config.classId || "").trim();
-    const token = String(config.token || "").trim();
-    const intervalMs = Number(config.intervalMs || 2000);
-    if (!classId || !token) return null;
-
-    return setInterval(async () => {
-      try {
-        const statusUrl =
-          "/api/class/" + encodeURIComponent(classId) + "/mobile-upload-status/" + encodeURIComponent(token);
-        const statusRes = await fetch(statusUrl, { credentials: "same-origin" });
-        if (!statusRes.ok) return;
-        const statusData = await statusRes.json().catch(() => ({}));
-        if (!statusData.success || !statusData.ready) return;
-
-        if (typeof config.stop === "function") config.stop();
-
-        const fileUrl =
-          "/api/class/" + encodeURIComponent(classId) + "/mobile-upload-file/" + encodeURIComponent(token);
-        const fileRes = await fetch(fileUrl, { credentials: "same-origin" });
-        if (!fileRes.ok) {
-          if (typeof config.onError === "function") {
-            config.onError("Could not retrieve the file from your phone. Try scanning the QR code again.");
-          }
-          return;
-        }
-
-        const blob = await fileRes.blob();
-        const name = statusData.filename || "outcomes.csv";
-        const file = new File([blob], name, { type: blob.type || "text/csv" });
-
-        if (typeof config.onReady === "function") {
-          await config.onReady(file, statusData);
-        }
-      } catch (err) {
-        if (typeof config.onCatch === "function") config.onCatch(err);
-      }
-    }, intervalMs);
-  }
-
   // Trailing-edge debounce. The wrapped fn fires only after the input stops
   // arriving for `waitMs`. We `try/catch` inside the timeout so a thrown
   // error from the user fn doesn't stop future timers from being scheduled.
@@ -137,15 +92,35 @@
     ].join("\n");
   }
 
+  let pageScrollLockCount = 0;
+
+  function lockPageScroll() {
+    pageScrollLockCount += 1;
+    if (pageScrollLockCount === 1) {
+      document.documentElement.classList.add("overflow-hidden");
+      document.body.classList.add("overflow-hidden");
+    }
+  }
+
+  function unlockPageScroll() {
+    if (pageScrollLockCount === 0) return;
+    pageScrollLockCount -= 1;
+    if (pageScrollLockCount === 0) {
+      document.documentElement.classList.remove("overflow-hidden");
+      document.body.classList.remove("overflow-hidden");
+    }
+  }
+
   window.ClarityUI = {
     escapeHtml,
     apiRequest,
     handleSessionExpired,
     applyInstructorModeVisibility,
-    startMobileCsvPoll,
     debounce,
     studentGreetingName,
     reportEmailFooter,
+    lockPageScroll,
+    unlockPageScroll,
   };
 })();
 

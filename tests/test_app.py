@@ -565,6 +565,20 @@ class TestRequestCacheMemoization(unittest.TestCase):
                 self.assertEqual(b, "u1")
                 self.assertEqual(calls["total"], 1)
 
+    def test_class_instructor_id_non_string_is_not_owner(self):
+        from app import routes as r
+        from flask import session
+
+        for raw in (7, None):
+            sa, _calls = self._patch_supabase_admin({
+                "classes": [{"instructor_id": raw}],
+            })
+            with self.app.test_request_context("/"):
+                with unittest.mock.patch.object(r, "supabase_admin", sa):
+                    session["user_id"] = "u1"
+                    self.assertIsNone(r._class_instructor_id("c1"))
+                    self.assertFalse(r._instructor_owns_class("c1"))
+
     def test_assignment_belongs_to_class_memoized(self):
         from app import routes as r
         sa, calls = self._patch_supabase_admin({
@@ -1830,8 +1844,12 @@ class TestGradesheetExportPrefill(unittest.TestCase):
                 if self.start is None:
                     data = matched[:1000]
                 else:
-                    data = matched[self.start:self.end + 1]
-                    pages.append((len(self.batch), self.start, self.end, len(matched)))
+                    end = self.end
+                    if end is None:
+                        data = []
+                    else:
+                        data = matched[self.start:end + 1]
+                        pages.append((len(self.batch), self.start, end, len(matched)))
                 return unittest.mock.MagicMock(data=data)
 
         class _Admin:
@@ -8340,6 +8358,188 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertIn(f'data-archive-id="{self.ARCHIVE_ID}"', buttons[0])
         self.assertIn('datetime="2026-10-15T18:04:00+00:00"', page)
         self.assertIn("This permanently deletes the saved zip. It cannot be undone.", page)
+
+
+class TestSignupEmailRedirect(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+        self.payload = {
+            "name": "Ada Lovelace",
+            "email": "ada@example.com",
+            "password": "correct-horse",
+            "invite_code": "",
+        }
+
+    def _redirect(self, *, base_url, public_base=None, headers=None):
+        from app.authentication import supabase
+        supabase.auth.sign_up.return_value = unittest.mock.MagicMock(user=None)
+        supabase.auth.sign_up.reset_mock()
+        env = {"PUBLIC_BASE_URL": "" if public_base is None else public_base}
+        with unittest.mock.patch("config.Config.SIGNUP_INVITE_CODE", ""), \
+                unittest.mock.patch.dict(os.environ, env, clear=False):
+            self.client.post(
+                "/api/signup",
+                json=self.payload,
+                base_url=base_url,
+                headers=headers or {},
+            )
+        kwargs = supabase.auth.sign_up.call_args.args[0]
+        return kwargs["options"]["email_redirect_to"]
+
+    def test_https_proxy_host_when_public_base_unset(self):
+        url = self._redirect(
+            base_url="http://grader.example.com",
+            headers={"X-Forwarded-Proto": "https"},
+        )
+        self.assertEqual(url, "https://grader.example.com/login")
+
+    def test_public_base_url_wins(self):
+        url = self._redirect(
+            base_url="http://grader.example.com",
+            public_base="https://clarity.example/",
+            headers={"X-Forwarded-Proto": "https"},
+        )
+        self.assertEqual(url, "https://clarity.example/login")
+
+    def test_localhost_uses_request_host(self):
+        url = self._redirect(base_url="http://localhost:5000")
+        self.assertEqual(url, "http://localhost:5000/login")
+
+
+class TestMobileUploadRoutesGone(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+
+    def test_page_status_and_file_are_404(self):
+        self.assertEqual(
+            self.client.get("/class/class-a/mobile-upload/tok").status_code, 404
+        )
+        self.assertEqual(
+            self.client.get("/api/class/class-a/mobile-upload-status/tok").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get("/api/class/class-a/mobile-upload-file/tok").status_code,
+            404,
+        )
+
+    def test_post_with_csrf_is_404(self):
+        rv = self.client.post(
+            "/api/mobile-upload/tok",
+            data={"file": (io.BytesIO(b"a,b"), "outcomes.csv")},
+            content_type="multipart/form-data",
+            headers={"X-CSRF-Token": "test-csrf"},
+        )
+        self.assertEqual(rv.status_code, 404)
+
+
+class TestMobileUploadMarkupGone(unittest.TestCase):
+    def _read(self, name):
+        path = os.path.join(os.path.dirname(__file__), "..", "app", "templates", name)
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def test_upload_and_assignments_have_csv_and_no_qr(self):
+        upload = self._read("update_grade.html")
+        assignments = self._read("class_assignments.html")
+        for src in (upload, assignments):
+            self.assertNotIn("qrcodejs", src)
+            self.assertNotIn("qrCanvas", src)
+            self.assertNotIn("loQrCanvas", src)
+        self.assertIn('id="pdfInput"', upload)
+        self.assertIn('accept=".csv,.pdf,.jpg,.jpeg,.png"', upload)
+        self.assertIn('id="loCsvInput"', assignments)
+        self.assertIn('id="loCsvChooseBtn"', assignments)
+        self.assertIn('id="loCsvTemplateCount"', assignments)
+        self.assertIn("downloadLoCsvTemplate()", assignments)
+
+
+class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
+    def _read(self, *parts):
+        path = os.path.join(os.path.dirname(__file__), "..", *parts)
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def _opening_tag(self, html, element_id):
+        match = re.search(
+            r'<div\s+id="' + re.escape(element_id) + r'"[^>]*>',
+            html,
+        )
+        self.assertIsNotNone(match, element_id)
+        return match.group(0)
+
+    def test_lo_preview_overlay_has_no_onclick(self):
+        src = self._read("app", "templates", "class_assignments.html")
+        tag = self._opening_tag(src, "loCsvPreviewModal")
+        self.assertNotIn("onclick", tag.lower())
+
+    def test_assignments_calls_shared_scroll_helpers(self):
+        src = self._read("app", "templates", "class_assignments.html")
+        self.assertIn("ClarityUI.lockPageScroll()", src)
+        self.assertIn("ClarityUI.unlockPageScroll()", src)
+
+    def test_ui_helpers_defines_and_exports_scroll_helpers(self):
+        src = self._read("app", "static", "js", "ui_helpers.js")
+        self.assertIn("function lockPageScroll()", src)
+        self.assertIn("function unlockPageScroll()", src)
+        self.assertIn("lockPageScroll,", src)
+        self.assertIn("unlockPageScroll,", src)
+
+    def test_student_upload_overlays_have_no_onclick(self):
+        src = self._read("app", "templates", "class_detail.html")
+        for element_id in ("uploadStudentsModal", "studentUploadPreviewModal"):
+            tag = self._opening_tag(src, element_id)
+            self.assertNotIn("onclick", tag.lower())
+        self.assertIn("ClarityUI.lockPageScroll()", src)
+        self.assertIn("ClarityUI.unlockPageScroll()", src)
+        self.assertNotIn("setPageScrollLocked", src)
+
+    def test_class_detail_lo_csv_preview_code_is_gone(self):
+        src = self._read("app", "templates", "class_detail.html")
+        for token in (
+            "loCsvPreviewModal",
+            "loCsvConfig",
+            "downloadLoCsvTemplate",
+            "closeLoCsvPreviewModal",
+            "LO_CLASS_ID",
+        ):
+            self.assertNotIn(token, src)
+
+    def test_both_pages_load_ui_helpers(self):
+        for name in ("class_assignments.html", "class_detail.html"):
+            src = self._read("app", "templates", name)
+            self.assertIn('{% extends "app_base.html" %}', src)
+        base = self._read("app", "templates", "app_base.html")
+        self.assertIn("js/ui_helpers.js", base)
+
+    def test_scroll_lock_count_changes_overflow_only_on_transitions(self):
+        src = self._read("app", "static", "js", "ui_helpers.js")
+        lock = src.split("function lockPageScroll()", 1)[1].split("function unlockPageScroll()", 1)[0]
+        unlock = src.split("function unlockPageScroll()", 1)[1].split("window.ClarityUI", 1)[0]
+        self.assertIn("pageScrollLockCount += 1", lock)
+        gate = lock.find("if (pageScrollLockCount === 1)")
+        add_at = lock.find('classList.add("overflow-hidden")')
+        self.assertGreater(gate, -1)
+        self.assertGreater(add_at, gate)
+        self.assertEqual(lock.count('classList.add("overflow-hidden")'), 2)
+        self.assertNotIn('classList.remove("overflow-hidden")', lock)
+        self.assertIn("if (pageScrollLockCount === 0) return", unlock)
+        dec = unlock.find("pageScrollLockCount -= 1")
+        gate0 = unlock.find("if (pageScrollLockCount === 0)", dec)
+        remove_at = unlock.find('classList.remove("overflow-hidden")')
+        self.assertGreater(dec, -1)
+        self.assertGreater(gate0, dec)
+        self.assertGreater(remove_at, gate0)
+        self.assertEqual(unlock.count('classList.remove("overflow-hidden")'), 2)
+        self.assertNotIn('classList.add("overflow-hidden")', unlock)
 
 
 if __name__ == '__main__':

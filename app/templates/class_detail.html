@@ -461,16 +461,13 @@
   </div>
 </div>
 
-<div id="uploadStudentsModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onclick="if(event.target===this) closeUploadStudentsModal()">
-  <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-xl w-full" onclick="event.stopPropagation()">
-    <div class="p-6 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+<div id="uploadStudentsModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-xl w-full">
+    <div class="p-6 border-b border-slate-200 dark:border-slate-700">
       <div>
         <h2 class="font-semibold text-slate-900 dark:text-white">Upload Students CSV</h2>
         <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">Columns are Student Name and email. Put the name in quotes, like "Doe, Jane". Email is required.</p>
       </div>
-      <button type="button" onclick="closeUploadStudentsModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
-        <svg class="w-5 h-5 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-      </button>
     </div>
     <div class="p-6 space-y-4">
       <input type="file" id="uploadStudentsInput" accept=".csv,text/csv,application/csv" class="block w-full text-sm text-slate-700 dark:text-slate-200 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 dark:file:bg-slate-700 file:px-3 file:py-2 file:text-sm file:font-medium hover:file:bg-slate-200 dark:hover:file:bg-slate-600">
@@ -492,17 +489,13 @@
 </div>
 
 <div id="studentUploadPreviewModal" class="hidden fixed inset-0 z-[61] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
-     role="dialog" aria-modal="true"
-     onclick="if (event.target === this) closeStudentUploadPreviewModal()">
-  <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
-    <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-start justify-between gap-3 shrink-0">
+     role="dialog" aria-modal="true">
+  <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
       <div>
         <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Confirm student import</h3>
         <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Review each row before saving. Nothing is imported until you confirm.</p>
       </div>
-      <button type="button" onclick="closeStudentUploadPreviewModal()" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shrink-0" aria-label="Close">
-        <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-      </button>
     </div>
     <div class="flex-1 min-h-0 overflow-auto p-4">
       <table class="w-full text-sm text-left border-collapse">
@@ -518,7 +511,7 @@
     </div>
     <div id="studentUploadPreviewError" class="hidden px-5 py-2 text-sm text-red-600 dark:text-red-400 border-t border-red-100 dark:border-red-900/40 whitespace-pre-wrap"></div>
     <div class="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-2 justify-end shrink-0 bg-slate-50/90 dark:bg-slate-900/50">
-      <button type="button" onclick="closeStudentUploadPreviewModal(); openUploadStudentsModal();" class="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">Back</button>
+      <button type="button" onclick="openUploadStudentsModal(); closeStudentUploadPreviewModal();" class="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">Back</button>
       <button type="button" id="studentUploadPreviewConfirm" onclick="confirmStudentUploadImport()" class="px-4 py-2 text-sm font-medium rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Import confirmed rows</button>
     </div>
   </div>
@@ -646,22 +639,23 @@ function maybeOpenManageStudentsModalFromQuery() {
   window.history.replaceState({}, '', currentUrl.toString());
 }
 
-function setPageScrollLocked(locked) {
-  document.documentElement.classList.toggle('overflow-hidden', locked);
-  document.body.classList.toggle('overflow-hidden', locked);
-}
-
 function openOverdueRevisionsModal() {
   var modal = document.getElementById('overdueRevisionsModal');
   if (!modal) return;
+  if (!modal.classList.contains('hidden')) return;
   modal.classList.remove('hidden');
-  setPageScrollLocked(true);
+  if (window.ClarityUI && typeof window.ClarityUI.lockPageScroll === 'function') {
+    window.ClarityUI.lockPageScroll();
+  }
 }
 
 function closeOverdueRevisionsModal() {
   var modal = document.getElementById('overdueRevisionsModal');
+  var wasOpen = !!(modal && !modal.classList.contains('hidden'));
   if (modal) modal.classList.add('hidden');
-  setPageScrollLocked(false);
+  if (wasOpen && window.ClarityUI && typeof window.ClarityUI.unlockPageScroll === 'function') {
+    window.ClarityUI.unlockPageScroll();
+  }
 }
 
 maybeOpenManageStudentsModalFromQuery();
@@ -963,15 +957,6 @@ function downloadStudentsCsvTemplate() {
   for (let i = 0; i < n; i++) rows.push(['', '']);
   triggerCsvDownload('students_import_template.csv', csvTextFromRows(rows));
 }
-function downloadLoCsvTemplate() {
-  const inp = document.getElementById('loCsvTemplateCount');
-  const n = clampCsvTemplateRows(inp && inp.value, 10, 500);
-  if (inp) inp.value = String(n);
-  const rows = [['title', 'description', 'calculation_int']];
-  for (let i = 0; i < n; i++) rows.push(['', '', '']);
-  triggerCsvDownload('learning_objectives_import_template.csv', csvTextFromRows(rows));
-}
-
 function openUploadStudentsModal() {
   const modal = document.getElementById('uploadStudentsModal');
   if (!modal) return;
@@ -980,13 +965,20 @@ function openUploadStudentsModal() {
     err.classList.add('hidden');
     err.textContent = '';
   }
+  if (!modal.classList.contains('hidden')) return;
   modal.classList.remove('hidden');
+  if (window.ClarityUI && typeof window.ClarityUI.lockPageScroll === 'function') {
+    window.ClarityUI.lockPageScroll();
+  }
 }
 
 function closeUploadStudentsModal(clearFile = true) {
   const modal = document.getElementById('uploadStudentsModal');
-  if (!modal) return;
-  modal.classList.add('hidden');
+  const wasOpen = !!(modal && !modal.classList.contains('hidden'));
+  if (modal) modal.classList.add('hidden');
+  if (wasOpen && window.ClarityUI && typeof window.ClarityUI.unlockPageScroll === 'function') {
+    window.ClarityUI.unlockPageScroll();
+  }
   const fileInput = document.getElementById('uploadStudentsInput');
   if (clearFile && fileInput) fileInput.value = '';
   const err = document.getElementById('uploadStudentsError');
@@ -1025,12 +1017,20 @@ function renderStudentUploadPreviewTable(rows) {
 
 function openStudentUploadPreviewModal() {
   const m = document.getElementById('studentUploadPreviewModal');
-  if (m) m.classList.remove('hidden');
+  if (!m || !m.classList.contains('hidden')) return;
+  m.classList.remove('hidden');
+  if (window.ClarityUI && typeof window.ClarityUI.lockPageScroll === 'function') {
+    window.ClarityUI.lockPageScroll();
+  }
 }
 
 function closeStudentUploadPreviewModal() {
   const m = document.getElementById('studentUploadPreviewModal');
+  const wasOpen = !!(m && !m.classList.contains('hidden'));
   if (m) m.classList.add('hidden');
+  if (wasOpen && window.ClarityUI && typeof window.ClarityUI.unlockPageScroll === 'function') {
+    window.ClarityUI.unlockPageScroll();
+  }
   const err = document.getElementById('studentUploadPreviewError');
   if (err) {
     err.classList.add('hidden');
@@ -1094,8 +1094,8 @@ function submitUploadStudents() {
 
       renderStudentUploadPreviewTable(data.rows || []);
 
-      closeUploadStudentsModal(false);
       openStudentUploadPreviewModal();
+      closeUploadStudentsModal(false);
     })
     .catch(() => {
       if (errorEl) {
@@ -1121,8 +1121,8 @@ function confirmStudentUploadImport() {
       errorEl.textContent = 'Please re-select your CSV file.';
       errorEl.classList.remove('hidden');
     }
-    closeStudentUploadPreviewModal();
     openUploadStudentsModal();
+    closeStudentUploadPreviewModal();
     return;
   }
 
@@ -1159,6 +1159,7 @@ function confirmStudentUploadImport() {
         return;
       }
       alert('Student upload complete.');
+      closeStudentUploadPreviewModal();
       const nextUrl = new URL(window.location.href);
       nextUrl.searchParams.set('manage_students', '1');
       window.location.assign(nextUrl.toString());
@@ -1357,287 +1358,6 @@ function addStudent(event) {
     alert('Error: ' + error);
   });
 }
-</script>
-<script src="{{ url_for('static', filename='js/qrcodejs.min.js') }}"></script>
-<div id="loCsvConfig"
-     class="hidden"
-     data-class-id="{{ class_id }}"
-     data-mobile-token="{{ lo_mobile_upload_token|default('') }}"
-     data-mobile-url="{{ lo_mobile_upload_url|default('') }}"></div>
-<script>
-var loCsvConfigEl = document.getElementById('loCsvConfig');
-window.LO_CLASS_ID = loCsvConfigEl ? (loCsvConfigEl.dataset.classId || '') : '';
-window.LO_MOBILE_UPLOAD_TOKEN = loCsvConfigEl ? (loCsvConfigEl.dataset.mobileToken || '') : '';
-window.LO_MOBILE_UPLOAD_URL = loCsvConfigEl ? (loCsvConfigEl.dataset.mobileUrl || '') : '';
-
-var loCsvMobilePollInterval = null;
-var loCsvPendingRows = null;
-var loQrAssignmentsInited = false;
-
-function stopLoCsvMobilePoll() {
-  if (loCsvMobilePollInterval) {
-    clearInterval(loCsvMobilePollInterval);
-    loCsvMobilePollInterval = null;
-  }
-}
-
-function maybeInitAssignmentsLoQr() {
-  if (loQrAssignmentsInited) return;
-  var el = document.getElementById('loQrCanvas');
-  var url = window.LO_MOBILE_UPLOAD_URL;
-  if (el && url && typeof QRCode !== 'undefined') {
-    try {
-      new QRCode(el, { text: url, width: 140, height: 140, colorDark: '#0f172a', colorLight: '#ffffff' });
-      loQrAssignmentsInited = true;
-    } catch (e) {
-      console.error(e);
-    }
-  }
-}
-
-function closeLoCsvPreviewModal() {
-  var m = document.getElementById('loCsvPreviewModal');
-  if (m) m.classList.add('hidden');
-  loCsvPendingRows = null;
-  var inp = document.getElementById('loCsvInput');
-  if (inp) inp.value = '';
-  var w = document.getElementById('loCsvPreviewWarnings');
-  if (w) {
-    w.classList.add('hidden');
-    w.textContent = '';
-  }
-  var cbtn = document.getElementById('loCsvPreviewConfirm');
-  if (cbtn) {
-    cbtn.disabled = false;
-    cbtn.textContent = 'Import confirmed rows';
-  }
-  var st = document.getElementById('loCsvMobileStatus');
-  if (st) {
-    st.classList.add('hidden');
-    st.textContent = '';
-  }
-}
-
-function renderLoCsvPreviewTable(rows) {
-  var tbody = document.getElementById('loCsvPreviewTbody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
-  (rows || []).forEach(function (r) {
-    var dup = !!r.duplicate;
-    var tr = document.createElement('tr');
-    if (dup) tr.setAttribute('data-duplicate', '1');
-    if (dup) tr.className = 'bg-slate-50/90 dark:bg-slate-800/40';
-    var codeTd = document.createElement('td');
-    codeTd.className = 'px-2 py-2 align-top break-all max-w-[140px]';
-    codeTd.textContent = String(r.vendor_code || '');
-    tr.appendChild(codeTd);
-    var descTd = document.createElement('td');
-    descTd.className = 'px-2 py-2 align-top break-words';
-    descTd.textContent = String(r.description || '');
-    tr.appendChild(descTd);
-    var msTd = document.createElement('td');
-    msTd.className = 'px-2 py-2 align-top';
-    if (dup) {
-      var msSpan = document.createElement('span');
-      msSpan.className = 'text-xs text-slate-500 dark:text-slate-400 tabular-nums';
-      msSpan.textContent = r.required_ms != null ? String(r.required_ms) : '—';
-      msTd.appendChild(msSpan);
-    } else {
-      var v = r.required_ms != null ? parseInt(r.required_ms, 10) : NaN;
-      if (isNaN(v) || v < 1 || v > 5) v = 2;
-      var inp = document.createElement('input');
-      inp.type = 'number';
-      inp.min = '1';
-      inp.max = '5';
-      inp.step = '1';
-      inp.value = String(v);
-      inp.className =
-        'lo-csv-ms-input w-full max-w-[4.5rem] rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-sm text-center text-slate-900 dark:text-slate-100';
-      inp.setAttribute('aria-label', 'Required Ms for ' + String(r.vendor_code || ''));
-      msTd.appendChild(inp);
-    }
-    tr.appendChild(msTd);
-    var stTd = document.createElement('td');
-    stTd.className = 'px-2 py-2 align-top text-xs font-medium';
-    if (dup) {
-      stTd.className += ' text-slate-500 dark:text-slate-400';
-      stTd.textContent = 'Already in class';
-    } else {
-      stTd.className += ' text-green-700 dark:text-green-400';
-      stTd.textContent = 'Will import';
-    }
-    tr.appendChild(stTd);
-    tbody.appendChild(tr);
-  });
-}
-
-function openLoCsvPreviewModal(rows, warnings) {
-  loCsvPendingRows = rows;
-  renderLoCsvPreviewTable(rows);
-  var warnEl = document.getElementById('loCsvPreviewWarnings');
-  if (warnEl) {
-    if (warnings && warnings.length) {
-      warnEl.textContent = warnings.join('\n');
-      warnEl.classList.remove('hidden');
-    } else {
-      warnEl.classList.add('hidden');
-      warnEl.textContent = '';
-    }
-  }
-  var newCount = (rows || []).filter(function (r) { return !r.duplicate; }).length;
-  var cbtn = document.getElementById('loCsvPreviewConfirm');
-  if (cbtn) {
-    cbtn.disabled = newCount === 0;
-    cbtn.title = newCount === 0 ? 'No new objectives to import' : '';
-  }
-  var modal = document.getElementById('loCsvPreviewModal');
-  if (modal) modal.classList.remove('hidden');
-}
-
-async function assignmentsPreviewLoCsv(file) {
-  if (!file || !file.name.toLowerCase().endsWith('.csv')) {
-    alert('Please choose a .csv file.');
-    return;
-  }
-  var fd = new FormData();
-  fd.append('file', file);
-  var btn = document.getElementById('loCsvChooseBtn');
-  var prevLabel = '';
-  if (btn) {
-    prevLabel = btn.textContent;
-    btn.disabled = true;
-    btn.classList.add('opacity-60', 'cursor-not-allowed');
-    btn.textContent = 'Reading file…';
-  }
-  try {
-    var r = await fetch(
-      '/api/class/' + encodeURIComponent(window.LO_CLASS_ID) + '/preview-learning-objectives',
-      { method: 'POST', body: fd, credentials: 'same-origin' }
-    );
-    var j = await r.json().catch(function () { return {}; });
-    if (!j.success) {
-      alert(j.error || 'Could not read that CSV.');
-      return;
-    }
-    openLoCsvPreviewModal(j.rows || [], j.warnings || []);
-  } catch (e) {
-    alert('Preview failed: ' + (e && e.message ? e.message : String(e)));
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.classList.remove('opacity-60', 'cursor-not-allowed');
-      btn.textContent = prevLabel || 'Choose CSV from computer';
-    }
-    var inp = document.getElementById('loCsvInput');
-    if (inp) inp.value = '';
-  }
-}
-
-async function assignmentsConfirmLoCsvImport() {
-  var tbody = document.getElementById('loCsvPreviewTbody');
-  if (!tbody) return;
-  var toSend = [];
-  tbody.querySelectorAll('tr').forEach(function (tr) {
-    if (tr.getAttribute('data-duplicate') === '1') return;
-    var msInp = tr.querySelector('input.lo-csv-ms-input');
-    if (!msInp) return;
-    var cells = tr.cells;
-    if (!cells || cells.length < 2) return;
-    var vendor_code = String(cells[0].textContent || '').trim();
-    if (!vendor_code) return;
-    var description = String(cells[1].textContent || '').trim();
-    var ms = parseInt(msInp.value, 10);
-    if (isNaN(ms) || ms < 1 || ms > 5) ms = 2;
-    toSend.push({ vendor_code: vendor_code, description: (description || null), required_ms: ms });
-  });
-  if (!toSend.length) {
-    alert('No new objectives to import — every code in this file already exists in the class.');
-    return;
-  }
-  var cbtn = document.getElementById('loCsvPreviewConfirm');
-  if (cbtn) {
-    cbtn.disabled = true;
-    cbtn.textContent = 'Importing…';
-  }
-  try {
-    var r = await fetch(
-      '/api/class/' + encodeURIComponent(window.LO_CLASS_ID) + '/import-learning-objectives',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ rows: toSend })
-      }
-    );
-    var j = await r.json().catch(function () { return {}; });
-    if (!j.success) {
-      alert(j.error || 'Import failed');
-      if (cbtn) {
-        cbtn.disabled = false;
-        cbtn.textContent = 'Import confirmed rows';
-      }
-      return;
-    }
-    var msg = 'Imported ' + (j.inserted || 0) + ' objective(s).';
-    if (j.skipped) msg += ' Skipped ' + j.skipped + ' duplicate code(s).';
-    alert(msg);
-    closeLoCsvPreviewModal();
-    location.reload();
-  } catch (e) {
-    alert('Import failed: ' + (e && e.message ? e.message : String(e)));
-    if (cbtn) {
-      cbtn.disabled = false;
-      cbtn.textContent = 'Import confirmed rows';
-    }
-  }
-}
-
-document.getElementById('loCsvToggleBtn')?.addEventListener('click', function () {
-  var p = document.getElementById('loCsvUploadPanel');
-  if (!p) return;
-  p.classList.remove('hidden');
-  maybeInitAssignmentsLoQr();
-});
-
-document.getElementById('loCsvPanelCloseBtn')?.addEventListener('click', function () {
-  var p = document.getElementById('loCsvUploadPanel');
-  if (p) p.classList.add('hidden');
-});
-
-document.getElementById('loCsvInput')?.addEventListener('change', function () {
-  var f = this.files && this.files[0];
-  if (f) assignmentsPreviewLoCsv(f);
-});
-
-document.getElementById('loCsvPreviewConfirm')?.addEventListener('click', assignmentsConfirmLoCsvImport);
-
-function startLoCsvMobilePoll() {
-  if (!window.LO_MOBILE_UPLOAD_TOKEN || !window.LO_CLASS_ID) return;
-  stopLoCsvMobilePoll();
-  if (window.ClarityUI && typeof window.ClarityUI.startMobileCsvPoll === 'function') {
-    loCsvMobilePollInterval = window.ClarityUI.startMobileCsvPoll({
-      classId: window.LO_CLASS_ID,
-      token: window.LO_MOBILE_UPLOAD_TOKEN,
-      intervalMs: 2000,
-      stop: stopLoCsvMobilePoll,
-      onReady: async function (file) {
-        var st = document.getElementById('loCsvMobileStatus');
-        if (st) {
-          st.textContent = 'CSV received from phone — review the import preview.';
-          st.classList.remove('hidden');
-        }
-        await assignmentsPreviewLoCsv(file);
-      },
-      onError: function (msg) {
-        alert(msg);
-      },
-      onCatch: function (e) {
-        console.error('LO CSV mobile poll:', e);
-      }
-    });
-  }
-}
-
 </script>
 <script>
 if (window.ClarityUI && typeof window.ClarityUI.applyInstructorModeVisibility === 'function') {

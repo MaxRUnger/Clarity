@@ -172,7 +172,7 @@
         <p class="text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">Upload a filled blank CSV, or a PDF/JPG/PNG grade sheet. CSV is read on our servers. PDF and images are extracted with Gemini AI.</p>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 md:gap-8 gap-8 items-stretch">
+      <div class="w-full">
         <div class="text-center flex flex-col min-h-0">
           <label class="block cursor-pointer flex-1 flex flex-col min-h-[220px]" id="dropZone">
             <div class="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl p-8 md:p-10 flex-1 flex flex-col items-center justify-center text-center hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all" id="dropArea">
@@ -186,22 +186,6 @@
           </label>
           <p id="selectedFileName" class="text-sm text-slate-500 dark:text-slate-400 mt-3 hidden"></p>
           <p id="uploadParseError" class="hidden mt-3 text-sm text-red-600 dark:text-red-400" role="alert"></p>
-        </div>
-
-        <div class="rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/40 p-6 text-center flex flex-col h-full min-h-[220px]">
-          <p class="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-1">Use your phone</p>
-          <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Scan the QR code to open the camera uploader on your phone. The file appears here when the upload finishes.</p>
-          {% if mobile_upload_url_is_loopback %}
-          <div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-100">
-            <p class="font-medium">Phone cannot open &ldquo;localhost&rdquo;</p>
-            <p class="mt-1 text-amber-800 dark:text-amber-200">Set <code class="rounded bg-white/80 px-0.5 dark:bg-slate-800">PUBLIC_BASE_URL</code> in your <code class="rounded bg-white/80 px-0.5 dark:bg-slate-800">.env</code> to a URL your phone can reach, for example <code class="rounded bg-white/80 px-0.5 dark:bg-slate-800">https://claritygrader.net</code> on the server, or <code class="rounded bg-white/80 px-0.5 dark:bg-slate-800">http://YOUR_LAN_IP:5000</code> on your Mac (same Wi‑Fi as the phone).</p>
-          </div>
-          {% endif %}
-          <div class="flex flex-1 w-full min-h-[200px] items-center justify-center mb-3">
-            <div id="qrCanvas" class="rounded-lg bg-white p-2 shadow-sm max-w-full inline-block" aria-label="QR code for mobile upload"></div>
-          </div>
-          <p id="qrFallback" class="hidden text-xs text-amber-700 dark:text-amber-300 break-all mt-2"></p>
-          <p id="mobileUploadStatus" class="text-sm text-green-600 dark:text-green-400 hidden font-medium mt-auto pt-2"></p>
         </div>
       </div>
 
@@ -387,69 +371,12 @@
 
 </form>
 
-<div id="pageServerData"
-     data-mobile-upload-token="{{ mobile_upload_token|e }}"
-     data-mobile-upload-url="{{ mobile_upload_url|e }}"
-     style="display:none"></div>
 <script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>
 <script>
   window.CLASS_ID = "{{ class_id }}";
   // Pass assignment LO data from server to JS
   window.ASSIGNMENTS_DATA = JSON.parse('{{ assignments | tojson }}');
   window.CLASS_LOS = JSON.parse('{{ learning_objectives | default([]) | tojson }}');
-  (function () {
-    var el = document.getElementById('pageServerData');
-    window.MOBILE_UPLOAD_TOKEN = el.getAttribute('data-mobile-upload-token');
-    window.MOBILE_UPLOAD_URL = el.getAttribute('data-mobile-upload-url');
-  })();
-</script>
-<script src="{{ url_for('static', filename='js/qrcodejs.min.js') }}"></script>
-<script>
-  // Local copy of the escape helper instead of relying on `ClarityUI.escapeHtml`:
-  // this script must run even if `ui_helpers.js` fails to load, otherwise the
-  // QR fallback link below would be unescaped and could break out of the
-  // surrounding href attribute if the mobile-upload URL ever changed shape.
-  function clarityEscapeHtml(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-  function clarityQrFallbackLinkHtml(url) {
-    var u = String(url || '');
-    return ' <a href="' + clarityEscapeHtml(u) + '" class="underline font-medium">' + clarityEscapeHtml(u) + '</a>';
-  }
-  document.addEventListener('DOMContentLoaded', function () {
-    var el = document.getElementById('qrCanvas');
-    var fallback = document.getElementById('qrFallback');
-    var url = window.MOBILE_UPLOAD_URL;
-    if (!el || !url) return;
-    if (typeof QRCode === 'undefined') {
-      if (fallback) {
-        fallback.innerHTML = 'QR could not load. Open this link on your phone:' + clarityQrFallbackLinkHtml(url);
-        fallback.classList.remove('hidden');
-      }
-      return;
-    }
-    try {
-      new QRCode(el, {
-        text: url,
-        width: 200,
-        height: 200,
-        colorDark: '#0f172a',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M
-      });
-    } catch (e) {
-      console.error(e);
-      if (fallback) {
-        fallback.innerHTML = 'Open this link on your phone:' + clarityQrFallbackLinkHtml(url);
-        fallback.classList.remove('hidden');
-      }
-    }
-  });
 </script>
 <script src="{{ url_for('static', filename='js/pdf_analyzer.js') }}?v=19"></script>
 {% endif %}

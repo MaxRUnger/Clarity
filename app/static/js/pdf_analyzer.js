@@ -4,7 +4,7 @@
  * Features: speed-grader keyboard shortcuts, LO comparison, dark mode support
  *
  * Important constraints:
- * - Module-level state (uploadedPDFData, mobilePollInterval) is intentionally
+ * - Module-level state (uploadedPDFData) is intentionally
  *   global because the wizard spans multiple step transitions inside the same
  *   page. Resetting state happens only when the user explicitly starts over.
  * - All `.grade-cell` keyboard handling is *delegated* on the table container
@@ -13,7 +13,6 @@
  */
 
 let uploadedPDFData = null;
-let mobilePollInterval = null;
 let classRoster = [];
 
 (function loadClassRoster() {
@@ -26,54 +25,6 @@ let classRoster = [];
     classRoster = [];
   }
 })();
-
-function stopMobileUploadPoll() {
-  if (mobilePollInterval) {
-    clearInterval(mobilePollInterval);
-    mobilePollInterval = null;
-  }
-}
-
-/** Poll until phone uploads via QR handoff, then attach file to #pdfInput */
-function startMobileUploadPoll() {
-  if (!window.MOBILE_UPLOAD_TOKEN || !window.CLASS_ID) return;
-  stopMobileUploadPoll();
-  mobilePollInterval = setInterval(async () => {
-    try {
-      const r = await fetch(
-        `/api/class/${window.CLASS_ID}/mobile-upload-status/${window.MOBILE_UPLOAD_TOKEN}`,
-        { credentials: 'same-origin' }
-      );
-      if (!r.ok) return;
-      const j = await r.json();
-      if (!j.success || !j.ready) return;
-      stopMobileUploadPoll();
-      const fr = await fetch(
-        `/api/class/${window.CLASS_ID}/mobile-upload-file/${window.MOBILE_UPLOAD_TOKEN}`,
-        { credentials: 'same-origin' }
-      );
-      if (!fr.ok) {
-        alert('Could not retrieve the file from your phone. Try scanning the QR code again.');
-        return;
-      }
-      const blob = await fr.blob();
-      const name = j.filename || 'photo.jpg';
-      const pdfInput = document.getElementById('pdfInput');
-      if (!pdfInput) return;
-      const dt = new DataTransfer();
-      dt.items.add(new File([blob], name, { type: blob.type || 'application/octet-stream' }));
-      pdfInput.files = dt.files;
-      handleFileSelect(pdfInput);
-      const statusEl = document.getElementById('mobileUploadStatus');
-      if (statusEl) {
-        statusEl.textContent = 'Received from phone: ' + name;
-        statusEl.classList.remove('hidden');
-      }
-    } catch (e) {
-      console.error('Mobile upload poll:', e);
-    }
-  }, 2000);
-}
 
 // Speed-grader state
 const gradeHistory = [];
@@ -179,7 +130,6 @@ function handleFileSelect(input) {
   fileName.classList.remove('hidden');
 
   uploadedPDFData = null;
-  stopMobileUploadPoll();
 
   const nextBtn = document.getElementById('nextBtn1');
   nextBtn.disabled = false;
@@ -215,8 +165,6 @@ document.addEventListener('DOMContentLoaded', function () {
   if (gradeForm) {
     gradeForm.addEventListener('submit', handleFormSubmit);
   }
-
-  startMobileUploadPoll();
 
   // Global Ctrl+Z undo
   document.addEventListener('keydown', (e) => {
