@@ -5781,13 +5781,14 @@ class TestClassHeaderTitle(unittest.TestCase):
 
 
 class _RemovalQuery:
-    def __init__(self, log, table, rows, fail_delete, fail_insert=None, fail_update=None):
+    def __init__(self, log, table, rows, fail_delete, fail_insert=None, fail_update=None, fail_select=None):
         self.log = log
         self.table = table
         self.rows = list(rows)
         self.fail_delete = fail_delete
         self.fail_insert = fail_insert
         self.fail_update = fail_update
+        self.fail_select = fail_select
         self.op = None
         self.filters = []
 
@@ -5852,6 +5853,13 @@ class _RemovalQuery:
                 "filters": list(self.filters),
             })
             raise RuntimeError("delete failed")
+        if self.op == "select" and self.fail_select == self.table:
+            self.log.append({
+                "table": self.table,
+                "op": "select-failed",
+                "filters": list(self.filters),
+            })
+            raise RuntimeError("select failed")
         entry = {
             "table": self.table,
             "op": self.op,
@@ -6206,7 +6214,7 @@ class TestClassDeleteRoutes(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
         return client
 
-    def _post(self, path, rows_for, owns=True, lo_ids=None):
+    def _post(self, path, rows_for, owns=True):
         from app import routes as r
         log = []
 
@@ -6215,16 +6223,29 @@ class TestClassDeleteRoutes(unittest.TestCase):
 
         client = self._client()
         with unittest.mock.patch.object(r, "supabase_admin") as sa, \
-                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
-                unittest.mock.patch.object(
-                    r.Course, "get_all_lo_ids_for_class", return_value=lo_ids or []
-                ):
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns):
             sa.table.side_effect = table
             rv = client.post(path, headers={"X-CSRF-Token": "test-csrf"})
         return rv, log
 
+    def _run_rows(self, rows_for, fail_delete=None, fail_select=None):
+        from app import routes as r
+        log = []
+        self._log = log
+
+        def table(name):
+            return _RemovalQuery(
+                log, name, rows_for.get(name, []), fail_delete, fail_select=fail_select
+            )
+
+        sa = unittest.mock.MagicMock()
+        sa.table.side_effect = table
+        with unittest.mock.patch.object(r, "supabase_admin", sa):
+            r.delete_class_rows("c1", "inst1")
+        return log
+
     def test_delete_class_rejects_a_non_owner_before_any_delete(self):
-        rv, log = self._post("/class/c1/delete", {}, owns=False, lo_ids=["lo-1"])
+        rv, log = self._post("/class/c1/delete", {}, owns=False)
         self.assertEqual(rv.status_code, 403)
         self.assertEqual(rv.get_json()["error"], "Forbidden")
         self.assertEqual(log, [])
@@ -6233,7 +6254,10 @@ class TestClassDeleteRoutes(unittest.TestCase):
         rv, log = self._post(
             "/class/c1/delete",
             {
+                "learning_objectives": [{"id": "lo-1"}],
+                "assignments": [{"id": "a1"}],
                 "grades": [{
+                    "id": "g1",
                     "student_id": "stu-1",
                     "learning_objective_id": "lo-1",
                     "assignment_id": "a1",
@@ -6242,19 +6266,100 @@ class TestClassDeleteRoutes(unittest.TestCase):
                     "counts_for_mastery": True,
                 }],
             },
-            lo_ids=["lo-1"],
         )
         self.assertEqual(rv.status_code, 302)
         self.assertTrue(rv.headers["Location"].endswith("/instructor/dashboard"))
-        deleted = [entry["table"] for entry in log if entry["op"] == "delete"]
-        self.assertEqual(deleted, [
-            "assignment_objectives",
+        deletes = [entry for entry in log if entry["op"] == "delete"]
+        self.assertEqual([entry["table"] for entry in deletes], [
             "grades",
-            "learning_objectives",
+            "grades",
+            "homework_scores",
+            "free_passes",
+            "assignment_objectives",
+            "assignment_objectives",
             "assignments",
+            "learning_objectives",
             "enrollments",
             "classes",
         ])
+        self.assertIn(("in", "assignment_id", ["a1"]), deletes[0]["filters"])
+        self.assertIn(("in", "learning_objective_id", ["lo-1"]), deletes[1]["filters"])
+        self.assertIn(("eq", "class_id", "c1"), deletes[2]["filters"])
+        self.assertIn(("eq", "class_id", "c1"), deletes[3]["filters"])
+        self.assertIn(("in", "assignment_id", ["a1"]), deletes[4]["filters"])
+        self.assertIn(("in", "learning_objective_id", ["lo-1"]), deletes[5]["filters"])
+        self.assertIn(("eq", "class_id", "c1"), deletes[6]["filters"])
+        self.assertIn(("eq", "class_id", "c1"), deletes[7]["filters"])
+        self.assertIn(("eq", "class_id", "c1"), deletes[8]["filters"])
+        self.assertIn(("eq", "id", "c1"), deletes[9]["filters"])
+        self.assertTrue(any(
+            entry["table"] == "grade_change_log" and entry["op"] == "insert" for entry in log
+        ))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] in ("grade_change_log", "profiles")
+            for entry in log
+        ))
+
+    def test_grades_are_deleted_by_assignment_and_objective_ids(self):
+        log = self._run_rows({
+            "learning_objectives": [{"id": "lo-1"}],
+            "assignments": [{"id": "a1"}],
+            "grades": [{"id": "g1", "student_id": "stu-1", "top_score": "M"}],
+        })
+        grade_deletes = [entry for entry in log if entry["op"] == "delete" and entry["table"] == "grades"]
+        self.assertEqual(len(grade_deletes), 2)
+        self.assertIn(("in", "assignment_id", ["a1"]), grade_deletes[0]["filters"])
+        self.assertIn(("in", "learning_objective_id", ["lo-1"]), grade_deletes[1]["filters"])
+        for table in ("homework_scores", "free_passes"):
+            filters = next(
+                entry["filters"] for entry in log if entry["op"] == "delete" and entry["table"] == table
+            )
+            self.assertIn(("eq", "class_id", "c1"), filters)
+
+    def test_failing_id_lookup_raises_and_deletes_nothing(self):
+        for table in ("learning_objectives", "assignments"):
+            with self.assertRaises(RuntimeError):
+                self._run_rows(
+                    {"learning_objectives": [{"id": "lo-1"}], "assignments": [{"id": "a1"}]},
+                    fail_select=table,
+                )
+            self.assertEqual([entry for entry in self._log if entry["op"] == "delete"], [])
+
+    def test_assignment_delete_failure_stops_before_the_remaining_rows(self):
+        with self.assertRaises(RuntimeError):
+            self._run_rows(
+                {"learning_objectives": [{"id": "lo-1"}], "assignments": [{"id": "a1"}]},
+                fail_delete="assignments",
+            )
+        deleted = [entry["table"] for entry in self._log if entry["op"] == "delete"]
+        self.assertNotIn("learning_objectives", deleted)
+        self.assertNotIn("enrollments", deleted)
+        self.assertNotIn("classes", deleted)
+
+    def test_id_lists_longer_than_100_are_split(self):
+        log = self._run_rows({
+            "learning_objectives": [{"id": f"lo-{index}"} for index in range(101)],
+            "assignments": [{"id": f"a-{index}"} for index in range(101)],
+        })
+        in_lists = [
+            value
+            for entry in log
+            for kind, _column, value in entry["filters"]
+            if kind == "in"
+        ]
+        self.assertTrue(in_lists)
+        self.assertTrue(all(len(values) <= 100 for values in in_lists))
+        self.assertIn(100, {len(values) for values in in_lists})
+        self.assertIn(1, {len(values) for values in in_lists})
+
+    def test_classes_row_is_the_last_delete(self):
+        log = self._run_rows({
+            "learning_objectives": [{"id": "lo-1"}],
+            "assignments": [{"id": "a1"}],
+        })
+        deletes = [entry for entry in log if entry["op"] == "delete"]
+        self.assertEqual(deletes[-1]["table"], "classes")
+        self.assertIn(("eq", "id", "c1"), deletes[-1]["filters"])
 
     def test_delete_lo_from_another_class_returns_404_with_no_delete(self):
         rv, log = self._post("/class/c1/delete_lo/lo-other", {"learning_objectives": []})
@@ -7349,6 +7454,446 @@ class TestClassArchiveExport(unittest.TestCase):
                 ):
             fallback = client.get("/class/c-archive/export-archive")
         self.assertIn('filename="class_archive.zip"', fallback.headers["Content-Disposition"])
+
+
+class _ArchiveBucket:
+    def __init__(self, fail=None, download_bytes=None):
+        self.calls = []
+        self.events = []
+        self.fail = fail
+        self.payload = None
+        self.download_bytes = download_bytes
+        self.built = 0
+
+    def upload(self, path, data, options):
+        self.events.append("upload")
+        self.calls.append(("upload", path, data, options))
+        if self.fail == "upload":
+            raise RuntimeError("upload failed")
+        self.payload = data
+
+    def download(self, path):
+        self.events.append("download")
+        self.calls.append(("download", path))
+        if self.fail == "download":
+            raise RuntimeError("download failed")
+        if self.download_bytes is not None:
+            return self.download_bytes
+        return self.payload
+
+    def remove(self, paths):
+        self.events.append("remove")
+        self.calls.append(("remove", list(paths)))
+        if self.fail == "remove":
+            raise RuntimeError("remove failed")
+
+
+class TestClassArchiveRoute(unittest.TestCase):
+    ARCHIVE_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    CLASS_ROW = {
+        "id": "c1",
+        "name": "Archive Class",
+        "semester": "Fall 2026",
+        "days": "MW",
+        "section_number": "01",
+        "instructor_id": "inst1",
+    }
+    KEPT = (
+        "The class was archived, but it was not fully removed. "
+        "The archive is saved under Archived Classes. "
+        "Delete the class to finish removing it."
+    )
+    CHANGED = (
+        "The archive took too long, or the class changed. Nothing was removed. Try again."
+    )
+
+    def _zip(self, students=1, assignments=1, body=b"csv"):
+        import zipfile
+        student_entries = [f"students/S{index}_gradesheet.pdf" for index in range(students)]
+        assignment_entries = [f"assignments/A{index}_gradesheet.csv" for index in range(assignments)]
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for name in assignment_entries:
+                archive.writestr(name, body)
+            for name in student_entries:
+                archive.writestr(name, b"pdf")
+            archive.writestr("learning_objectives.csv", "lo")
+        manifest = {
+            "assignment_entries": assignment_entries,
+            "student_entries": student_entries,
+            "objectives_entry": "learning_objectives.csv",
+            "source_assignments": assignments,
+            "source_students": students,
+            "class_name": "Archive Class",
+        }
+        return buffer.getvalue(), manifest
+
+    def _post(
+        self,
+        data=None,
+        send_csrf=True,
+        role="instructor",
+        class_rows=None,
+        fail_insert=None,
+        bucket_fail=None,
+        download_bytes=None,
+        built=None,
+        build_error=None,
+        vanish_on=None,
+        monotonic=None,
+        delete_error=False,
+        owned=None,
+        include_confirm=True,
+    ):
+        from uuid import UUID
+        from app import routes as r
+        import app.archive_storage as storage
+
+        log = []
+        deleted = []
+        selects = {"n": 0}
+        bucket = _ArchiveBucket(fail=bucket_fail, download_bytes=download_bytes)
+        if class_rows is None:
+            class_rows = [dict(self.CLASS_ROW)]
+        rows_for = {"classes": class_rows}
+
+        def table(name):
+            query = _RemovalQuery(log, name, rows_for.get(name, []), None, fail_insert=fail_insert)
+            real_execute = query.execute
+
+            def execute():
+                if name == "classes" and query.op == "select" and vanish_on is not None:
+                    selects["n"] += 1
+                    if selects["n"] >= vanish_on:
+                        query.rows = []
+                result = real_execute()
+                if name == "archived_classes" and query.op == "insert":
+                    bucket.events.append("insert")
+                return result
+
+            query.execute = execute
+            return query
+
+        admin = unittest.mock.MagicMock()
+        admin.table.side_effect = table
+        admin.storage.from_.return_value = bucket
+        zip_bytes, manifest = self._zip()
+        if built is not None:
+            zip_bytes, manifest = built
+
+        def build_zip(_class_id):
+            bucket.built += 1
+            if build_error is not None:
+                raise build_error
+            return zip_bytes, manifest
+
+        def delete_rows(*_args):
+            bucket.events.append("delete_class_rows")
+            deleted.append("delete_class_rows")
+            if delete_error:
+                raise RuntimeError("delete failed")
+
+        client = create_app().test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = role
+            sess["csrf_token"] = "test-csrf"
+        if data is None and include_confirm:
+            data = {"confirm_name": "Archive Class"}
+        elif data is None:
+            data = {}
+        headers = {"X-CSRF-Token": "test-csrf"} if send_csrf else {}
+        patches = [
+            unittest.mock.patch.object(r, "supabase_admin", admin),
+            unittest.mock.patch.object(storage, "supabase_admin", admin),
+            unittest.mock.patch("app.archive_export.build_class_archive_zip", side_effect=build_zip),
+            unittest.mock.patch.object(r, "uuid4", return_value=UUID(self.ARCHIVE_ID)),
+            unittest.mock.patch.object(r, "delete_class_rows", side_effect=delete_rows),
+        ]
+        if owned is not None:
+            patches.append(unittest.mock.patch.object(r, "_owned_class_row", side_effect=owned))
+        if monotonic is not None:
+            patches.append(unittest.mock.patch.object(r.time, "monotonic", side_effect=monotonic))
+        for item in patches:
+            item.start()
+        try:
+            response = client.post("/class/c1/archive", data=data, headers=headers)
+        finally:
+            for item in patches:
+                item.stop()
+        return response, log, bucket, deleted
+
+    def test_non_instructor_and_missing_class_do_not_touch_storage(self):
+        denied, denied_log, denied_bucket, _deleted = self._post(role="student")
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(denied_bucket.calls, [])
+        self.assertEqual(denied_log, [])
+        missing, log, bucket, deleted = self._post(class_rows=[])
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(
+            missing.get_json()["error"],
+            "This class was not found. It may already be archived.",
+        )
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(deleted, [])
+        selects = [entry for entry in log if entry["op"] == "select"]
+        self.assertEqual(len(selects), 1)
+        self.assertIn(("eq", "id", "c1"), selects[0]["filters"])
+        self.assertIn(("eq", "instructor_id", "inst1"), selects[0]["filters"])
+
+    def test_wrong_typed_name_is_400_and_does_not_build(self):
+        for typed in ("archive class", "Archive Class "):
+            response, _log, bucket, deleted = self._post(data={"confirm_name": typed})
+            self.assertEqual(response.status_code, 400, typed)
+            self.assertEqual(
+                response.get_json()["error"],
+                "Type the class name exactly to archive it.",
+            )
+            self.assertEqual(bucket.built, 0)
+            self.assertEqual(bucket.calls, [])
+            self.assertEqual(deleted, [])
+
+    def test_missing_confirm_name_is_the_same_400(self):
+        response, _log, bucket, _deleted = self._post(include_confirm=False)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["success"], False)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Type the class name exactly to archive it.",
+        )
+        self.assertEqual(bucket.built, 0)
+        self.assertEqual(bucket.calls, [])
+
+    def test_missing_csrf_token_is_403(self):
+        response, _log, bucket, _deleted = self._post(send_csrf=False)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"], "Invalid CSRF token")
+        self.assertEqual(bucket.calls, [])
+
+    def test_build_or_manifest_failure_does_not_upload(self):
+        failed, _log, bucket, _deleted = self._post(build_error=RuntimeError("build failed"))
+        self.assertEqual(failed.status_code, 500)
+        self.assertEqual(
+            failed.get_json()["error"],
+            "Could not build the archive. Nothing was changed.",
+        )
+        self.assertEqual(bucket.calls, [])
+        bad_zip, manifest = self._zip()
+        manifest = dict(manifest)
+        manifest["source_students"] = 9
+        mismatched, _log, mismatch_bucket, _deleted = self._post(built=(bad_zip, manifest))
+        self.assertEqual(mismatched.status_code, 500)
+        self.assertEqual(
+            mismatched.get_json()["error"],
+            "Could not build the archive. Nothing was changed.",
+        )
+        self.assertEqual(mismatch_bucket.calls, [])
+
+    def test_oversized_zip_is_413_and_does_not_upload(self):
+        import zipfile
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("assignments/A0_gradesheet.csv", b"x" * 51_000_000)
+            archive.writestr("students/S0_gradesheet.pdf", b"pdf")
+            archive.writestr("learning_objectives.csv", "lo")
+        payload = buffer.getvalue()
+        self.assertGreater(len(payload), 50_000_000)
+        manifest = {
+            "assignment_entries": ["assignments/A0_gradesheet.csv"],
+            "student_entries": ["students/S0_gradesheet.pdf"],
+            "objectives_entry": "learning_objectives.csv",
+            "source_assignments": 1,
+            "source_students": 1,
+        }
+        response, _log, bucket, deleted = self._post(built=(payload, manifest))
+        self.assertEqual(response.status_code, 413)
+        megabytes = f"{len(payload) / 1_000_000:.1f}"
+        self.assertEqual(
+            response.get_json()["error"],
+            f"This archive is {megabytes} MB, over the 50 MB limit. Nothing was changed.",
+        )
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(deleted, [])
+
+    def test_upload_error_removes_and_does_not_insert_or_delete(self):
+        response, log, bucket, deleted = self._post(bucket_fail="upload")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Could not save the archive. The class was not changed.",
+        )
+        self.assertEqual(bucket.calls[-1][0], "remove")
+        self.assertEqual(bucket.calls[-1][1], [f"inst1/{self.ARCHIVE_ID}.zip"])
+        self.assertFalse(any(entry["table"] == "archived_classes" for entry in log))
+        self.assertEqual(deleted, [])
+
+    def test_download_mismatch_or_bad_manifest_removes_without_insert(self):
+        other, _manifest = self._zip(body=b"other")
+        empty = io.BytesIO()
+        import zipfile
+        with zipfile.ZipFile(empty, "w") as archive:
+            archive.writestr("learning_objectives.csv", "lo")
+        cases = (
+            {"bucket_fail": "download"},
+            {"download_bytes": other},
+            {"download_bytes": empty.getvalue()},
+        )
+        for case in cases:
+            response, log, bucket, deleted = self._post(**case)
+            self.assertEqual(response.status_code, 500)
+            self.assertEqual(
+                response.get_json()["error"],
+                "The saved archive did not verify and was removed. The class was not changed.",
+            )
+            self.assertEqual(bucket.calls[-1][0], "remove")
+            self.assertFalse(any(entry["op"] == "insert" for entry in log))
+            self.assertEqual(deleted, [])
+
+    def test_missing_class_or_spent_budget_removes_without_insert(self):
+        missing, missing_log, missing_bucket, _deleted = self._post(vanish_on=2)
+        self.assertEqual(missing.status_code, 500)
+        self.assertEqual(missing.get_json()["error"], self.CHANGED)
+        self.assertEqual(missing_bucket.calls[-1][0], "remove")
+        self.assertFalse(any(entry["op"] == "insert" for entry in missing_log))
+        late, late_log, late_bucket, _deleted = self._post(monotonic=[0, 201])
+        self.assertEqual(late.status_code, 500)
+        self.assertEqual(late.get_json()["error"], self.CHANGED)
+        self.assertEqual(late_bucket.calls[-1][0], "remove")
+        self.assertFalse(any(entry["op"] == "insert" for entry in late_log))
+
+    def test_second_ownership_check_error_removes_without_insert(self):
+        calls = {"n": 0}
+
+        def owned(_class_id, _instructor_id):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("lookup failed")
+            return dict(self.CLASS_ROW)
+
+        response, log, bucket, deleted = self._post(owned=owned)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json()["error"], self.CHANGED)
+        self.assertEqual([call[0] for call in bucket.calls], ["upload", "download", "remove"])
+        self.assertFalse(any(entry["op"] == "insert" for entry in log))
+        self.assertEqual(deleted, [])
+
+    def test_insert_error_deletes_the_row_then_removes_the_object(self):
+        response, log, bucket, deleted = self._post(fail_insert="archived_classes")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Could not record the archive. The class was not changed.",
+        )
+        self.assertEqual(
+            [entry["op"] for entry in log if entry["table"] == "archived_classes"],
+            ["insert-failed", "delete"],
+        )
+        deleted_row = next(
+            entry for entry in log
+            if entry["table"] == "archived_classes" and entry["op"] == "delete"
+        )
+        self.assertIn(("eq", "id", self.ARCHIVE_ID), deleted_row["filters"])
+        self.assertEqual(bucket.calls[-1][0], "remove")
+        self.assertEqual(deleted, [])
+
+    def test_missing_class_after_insert_keeps_the_archive(self):
+        response, log, bucket, deleted = self._post(vanish_on=3)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["redirect"].endswith("/instructor/dashboard"))
+        self.assertTrue(any(
+            entry["table"] == "archived_classes" and entry["op"] == "insert" for entry in log
+        ))
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        self.assertEqual(deleted, [])
+
+    def test_third_ownership_check_error_keeps_the_archive(self):
+        calls = {"n": 0}
+
+        def owned(_class_id, _instructor_id):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise RuntimeError("lookup failed")
+            return dict(self.CLASS_ROW)
+
+        response, log, bucket, deleted = self._post(owned=owned)
+        self.assertEqual(response.status_code, 500)
+        body = response.get_json()
+        self.assertEqual(body["success"], False)
+        self.assertEqual(body["archived"], True)
+        self.assertEqual(body["error"], self.KEPT)
+        self.assertTrue(any(
+            entry["table"] == "archived_classes" and entry["op"] == "insert" for entry in log
+        ))
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        self.assertEqual(deleted, [])
+
+    def test_delete_failure_keeps_the_row_and_object(self):
+        response, log, bucket, deleted = self._post(delete_error=True)
+        self.assertEqual(response.status_code, 500)
+        body = response.get_json()
+        self.assertEqual(body["success"], False)
+        self.assertEqual(body["archived"], True)
+        self.assertEqual(body["error"], self.KEPT)
+        self.assertEqual(deleted, ["delete_class_rows"])
+        self.assertTrue(any(
+            entry["table"] == "archived_classes" and entry["op"] == "insert" for entry in log
+        ))
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+
+    def test_happy_path_uploads_records_and_deletes_in_order(self):
+        zip_bytes, manifest = self._zip(students=2, assignments=1)
+        response, log, bucket, deleted = self._post(built=(zip_bytes, manifest))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["success"], True)
+        self.assertTrue(response.get_json()["redirect"].endswith("/instructor/dashboard"))
+        self.assertEqual(
+            bucket.events,
+            ["upload", "download", "insert", "delete_class_rows"],
+        )
+        self.assertEqual([call[0] for call in bucket.calls], ["upload", "download"])
+        path = f"inst1/{self.ARCHIVE_ID}.zip"
+        self.assertEqual(bucket.calls[0][1], path)
+        self.assertEqual(bucket.calls[0][2], zip_bytes)
+        self.assertEqual(bucket.calls[0][3], {"content-type": "application/zip", "upsert": "false"})
+        inserted = next(
+            entry for entry in log
+            if entry["table"] == "archived_classes" and entry["op"] == "insert"
+        )
+        self.assertEqual(inserted["rows"]["storage_path"], path)
+        self.assertEqual(inserted["rows"]["student_count"], 2)
+        self.assertEqual(inserted["rows"]["assignment_count"], 1)
+        self.assertEqual(inserted["rows"]["class_name"], "Archive Class")
+        self.assertEqual(inserted["rows"]["semester"], "Fall 2026")
+        self.assertEqual(inserted["rows"]["days"], "MW")
+        self.assertEqual(inserted["rows"]["section_number"], "01")
+        self.assertEqual(inserted["rows"]["size_bytes"], len(zip_bytes))
+        self.assertEqual(deleted, ["delete_class_rows"])
+
+    def test_student_count_stores_the_enrolled_total_including_muted(self):
+        _zip_bytes, manifest = self._zip(students=2)
+        response, log, _bucket, _deleted = self._post(built=(_zip_bytes, manifest))
+        self.assertEqual(response.status_code, 200)
+        inserted = next(
+            entry["rows"] for entry in log
+            if entry["table"] == "archived_classes" and entry["op"] == "insert"
+        )
+        self.assertEqual(inserted["student_count"], manifest["source_students"])
+        self.assertEqual(inserted["student_count"], 2)
+
+    def test_each_upload_gets_its_own_options_dict(self):
+        from app.archive_storage import upload_archive
+        import app.archive_storage as storage
+        bucket = _ArchiveBucket()
+        admin = unittest.mock.MagicMock()
+        admin.storage.from_.return_value = bucket
+        with unittest.mock.patch.object(storage, "supabase_admin", admin):
+            upload_archive("one.zip", b"a")
+            upload_archive("two.zip", b"b")
+        self.assertEqual(bucket.calls[0][3], {"content-type": "application/zip", "upsert": "false"})
+        self.assertEqual(bucket.calls[0][3], bucket.calls[1][3])
+        self.assertIsNot(bucket.calls[0][3], bucket.calls[1][3])
+        self.assertEqual(bucket.calls[0][1], "one.zip")
+        self.assertEqual(admin.storage.from_.call_args.args[0], "class-archives")
 
 
 if __name__ == '__main__':

@@ -500,6 +500,20 @@ def _class_instructor_id(class_id: str) -> Optional[str]:
     return val
 
 
+def _owned_class_row(class_id, instructor_id):
+    """The class row for this instructor, read fresh on every call."""
+    resp = (
+        supabase_admin.table("classes")
+        .select("id, name, semester, days, section_number, instructor_id")
+        .eq("id", class_id)
+        .eq("instructor_id", instructor_id)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    return rows[0] if rows else None
+
+
 def _user_ids_equal(a: Any, b: Any) -> bool:
     """Compare auth user ids / FK ids from Supabase (string case and whitespace tolerant)."""
     if a is None or b is None:
@@ -1747,6 +1761,61 @@ def class_student_removal_filters(class_id, student_id):
     return filters
 
 
+def delete_class_rows(class_id: str, changed_by: Optional[str]) -> None:
+    """Delete one class and its rows. The classes row is always last.
+
+    Raises on any lookup or delete error. The grade audit log stays best effort.
+    """
+    def id_list(table: str) -> List[str]:
+        rows = fetch_all_rows(
+            supabase_admin.table(table).select("id").eq("class_id", class_id).order("id")
+        )
+        return [str(row["id"]) for row in rows if row.get("id")]
+
+    def chunks(values: List[str]) -> List[List[str]]:
+        return [values[index:index + 100] for index in range(0, len(values), 100)]
+
+    def delete_in(table: str, column: str, values: List[str]) -> None:
+        for group in chunks(values):
+            supabase_admin.table(table).delete().in_(column, group).execute()
+
+    objective_ids = id_list("learning_objectives")
+    assignment_ids = id_list("assignments")
+    grade_columns = (
+        "id, student_id, learning_objective_id, assignment_id, "
+        "top_score, second_score, counts_for_mastery"
+    )
+    found: List[Dict[str, Any]] = []
+    for column, values in (
+        ("assignment_id", assignment_ids),
+        ("learning_objective_id", objective_ids),
+    ):
+        for group in chunks(values):
+            found.extend(fetch_all_rows(
+                supabase_admin.table("grades").select(grade_columns).in_(column, group).order("id")
+            ))
+    seen = set()
+    grades = []
+    for row in found:
+        grade_id = row.get("id")
+        if grade_id in seen:
+            continue
+        if grade_id is not None:
+            seen.add(grade_id)
+        grades.append(row)
+    _log_grade_deletions(grades, class_id, changed_by)
+    delete_in("grades", "assignment_id", assignment_ids)
+    delete_in("grades", "learning_objective_id", objective_ids)
+    supabase_admin.table("homework_scores").delete().eq("class_id", class_id).execute()
+    supabase_admin.table("free_passes").delete().eq("class_id", class_id).execute()
+    delete_in("assignment_objectives", "assignment_id", assignment_ids)
+    delete_in("assignment_objectives", "learning_objective_id", objective_ids)
+    supabase_admin.table("assignments").delete().eq("class_id", class_id).execute()
+    supabase_admin.table("learning_objectives").delete().eq("class_id", class_id).execute()
+    supabase_admin.table("enrollments").delete().eq("class_id", class_id).execute()
+    supabase_admin.table("classes").delete().eq("id", class_id).execute()
+
+
 def class_student_removal_counts(class_id, student_id):
     filters = class_student_removal_filters(class_id, student_id)
     counts = {"grades": 0, "homework_scores": 0, "free_passes": 0, "enrollments": 0}
@@ -2138,31 +2207,139 @@ def delete_class(class_id):
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
     try:
-        lo_ids = Course.get_all_lo_ids_for_class(class_id)
-
-        if lo_ids:
-            supabase_admin.table("assignment_objectives").delete().in_("learning_objective_id", lo_ids).execute()
-            try:
-                existing = fetch_all_rows(
-                    supabase_admin.table("grades").select(
-                        "student_id, learning_objective_id, assignment_id, top_score, second_score, counts_for_mastery"
-                    ).in_("learning_objective_id", lo_ids).order("id")
-                )
-                _log_grade_deletions(existing, class_id, session['user_id'])
-            except Exception as e:
-                logger.warning("Could not audit-log grade deletions for class %s: %s", class_id, e)
-            supabase_admin.table("grades").delete().in_("learning_objective_id", lo_ids).execute()
-            supabase_admin.table("learning_objectives").delete().in_("id", lo_ids).execute()
-
-        # Remove assignments, enrollments, and the class itself
-        supabase_admin.table("assignments").delete().eq("class_id", class_id).execute()
-        supabase_admin.table("enrollments").delete().eq("class_id", class_id).execute()
-        supabase_admin.table("classes").delete().eq("id", class_id).execute()
-
-        return redirect(url_for('main.instructor_dashboard'))
+        delete_class_rows(class_id, session["user_id"])
+        return redirect(url_for("main.instructor_dashboard"))
     except Exception as e:
         logger.error("Error deleting class %s: %s", class_id, e)
         return _safe_api_error("Could not delete class", 500, log_detail=e)
+
+
+@main_bp.route("/class/<class_id>/archive", methods=["POST"])
+@api_instructor_required
+def archive_class(class_id):
+    from app.archive_export import build_class_archive_zip, check_archive_manifest
+    from app.archive_storage import download_archive, remove_archive, upload_archive
+
+    kept_error = (
+        "The class was archived, but it was not fully removed. "
+        "The archive is saved under Archived Classes. "
+        "Delete the class to finish removing it."
+    )
+    instructor_id = session["user_id"]
+    class_row = _owned_class_row(class_id, instructor_id)
+    if class_row is None:
+        return jsonify({
+            "success": False,
+            "error": "This class was not found. It may already be archived.",
+        }), 404
+    if request.form.get("confirm_name") != class_row.get("name"):
+        return jsonify({
+            "success": False,
+            "error": "Type the class name exactly to archive it.",
+        }), 400
+
+    archive_id = str(uuid4())
+    path = f"{instructor_id}/{archive_id}.zip"
+    start = time.monotonic()
+
+    def discard(message):
+        try:
+            remove_archive(path)
+        except Exception:
+            logger.error("Could not remove archive at %s", path)
+        return jsonify({"success": False, "error": message}), 500
+
+    try:
+        zip_bytes, manifest = build_class_archive_zip(class_id)
+        check_archive_manifest(manifest, zip_bytes)
+    except Exception as exc:
+        logger.error("Could not build archive for class %s: %s", class_id, exc)
+        return jsonify({
+            "success": False,
+            "error": "Could not build the archive. Nothing was changed.",
+        }), 500
+    if len(zip_bytes) > 50_000_000:
+        megabytes = f"{len(zip_bytes) / 1_000_000:.1f}"
+        return jsonify({
+            "success": False,
+            "error": (
+                f"This archive is {megabytes} MB, over the 50 MB limit. "
+                "Nothing was changed."
+            ),
+        }), 413
+    try:
+        upload_archive(path, zip_bytes)
+    except Exception as exc:
+        logger.error("Could not upload archive %s: %s", path, exc)
+        return discard("Could not save the archive. The class was not changed.")
+    try:
+        saved = download_archive(path)
+        mismatch = saved != zip_bytes
+        check_archive_manifest(manifest, saved)
+        if mismatch:
+            raise ValueError("downloaded archive bytes do not match the upload")
+    except Exception as exc:
+        logger.error("Archive %s failed verification: %s", path, exc)
+        return discard(
+            "The saved archive did not verify and was removed. The class was not changed."
+        )
+    try:
+        again = _owned_class_row(class_id, instructor_id)
+    except Exception as exc:
+        logger.error("Could not re-check class %s before recording the archive: %s", class_id, exc)
+        return discard(
+            "The archive took too long, or the class changed. Nothing was removed. Try again."
+        )
+    if again is None or time.monotonic() - start > 200:
+        return discard(
+            "The archive took too long, or the class changed. Nothing was removed. Try again."
+        )
+    record = {
+        "id": archive_id,
+        "instructor_id": instructor_id,
+        "class_name": again.get("name"),
+        "semester": again.get("semester"),
+        "days": again.get("days"),
+        "section_number": again.get("section_number"),
+        "student_count": manifest.get("source_students"),
+        "assignment_count": manifest.get("source_assignments"),
+        "storage_path": path,
+        "size_bytes": len(zip_bytes),
+    }
+    try:
+        supabase_admin.table("archived_classes").insert(record).execute()
+    except Exception as exc:
+        logger.error("Could not record archive %s: %s", archive_id, exc)
+        try:
+            supabase_admin.table("archived_classes").delete().eq("id", archive_id).execute()
+        except Exception as delete_exc:
+            logger.error("Could not delete archive row %s: %s", archive_id, delete_exc)
+        return discard("Could not record the archive. The class was not changed.")
+    try:
+        still_owned = _owned_class_row(class_id, instructor_id)
+    except Exception as exc:
+        logger.error(
+            "Could not re-check class %s after recording archive %s: %s",
+            class_id, archive_id, exc,
+        )
+        return jsonify({"success": False, "archived": True, "error": kept_error}), 500
+    if still_owned is None:
+        return jsonify({
+            "success": True,
+            "redirect": url_for("main.instructor_dashboard"),
+        })
+    try:
+        delete_class_rows(class_id, instructor_id)
+    except Exception as exc:
+        logger.error(
+            "Archive %s saved but class %s was not fully removed: %s",
+            archive_id, class_id, exc,
+        )
+        return jsonify({"success": False, "archived": True, "error": kept_error}), 500
+    return jsonify({
+        "success": True,
+        "redirect": url_for("main.instructor_dashboard"),
+    })
 
 
 @main_bp.route("/class/<class_id>/update", methods=["POST"])
