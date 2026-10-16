@@ -7501,13 +7501,16 @@ class TestClassArchiveExport(unittest.TestCase):
 
 
 class _ArchiveBucket:
-    def __init__(self, fail=None, download_bytes=None):
+    def __init__(self, fail=None, download_bytes=None, missing_after=None, remove_error=None):
         self.calls = []
         self.events = []
         self.fail = fail
         self.payload = None
         self.download_bytes = download_bytes
         self.built = 0
+        self.missing_after = missing_after
+        self.remove_error = remove_error
+        self.remove_count = 0
 
     def upload(self, path, data, options):
         self.events.append("upload")
@@ -7528,8 +7531,14 @@ class _ArchiveBucket:
     def remove(self, paths):
         self.events.append("remove")
         self.calls.append(("remove", list(paths)))
+        self.remove_count += 1
+        if self.remove_error is not None:
+            raise self.remove_error
         if self.fail == "remove":
             raise RuntimeError("remove failed")
+        if self.missing_after is not None and self.remove_count > self.missing_after:
+            from storage3.exceptions import StorageApiError
+            raise StorageApiError("Object not found", "not_found", 404)
 
 
 class TestClassArchiveRoute(unittest.TestCase):
@@ -7938,6 +7947,399 @@ class TestClassArchiveRoute(unittest.TestCase):
         self.assertIsNot(bucket.calls[0][3], bucket.calls[1][3])
         self.assertEqual(bucket.calls[0][1], "one.zip")
         self.assertEqual(admin.storage.from_.call_args.args[0], "class-archives")
+
+
+class TestArchivedClasses(unittest.TestCase):
+    ARCHIVE_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    OTHER_ID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+    MISSING_ID = "cccccccc-dddd-eeee-ffff-000000000000"
+
+    def _row(self, archive_id, instructor_id, name="Algebra"):
+        return {
+            "id": archive_id,
+            "instructor_id": instructor_id,
+            "class_name": name,
+            "semester": "Fall 2026",
+            "days": "MW",
+            "section_number": "01",
+            "student_count": 2,
+            "assignment_count": 1,
+            "size_bytes": 1500,
+            "archived_at": "2026-10-15T18:04:00+00:00",
+            "storage_path": f"{instructor_id}/{archive_id}.zip",
+        }
+
+    def _request(
+        self,
+        method,
+        path,
+        rows,
+        data=None,
+        send_csrf=True,
+        role="instructor",
+        user_id="inst-a",
+        bucket=None,
+        fail_first_row_delete=False,
+        shared=None,
+    ):
+        from app import routes as r
+        import app.archive_storage as storage
+
+        log = []
+        seen = {"columns": "", "orders": []}
+        shared = shared if shared is not None else {"row_deletes": 0}
+        bucket = bucket or _ArchiveBucket(download_bytes=b"PK\x03\x04archive")
+
+        def table(name):
+            query = _RemovalQuery(log, name, rows, None)
+            real_select = query.select
+            real_order = query.order
+            real_execute = query.execute
+
+            def select(*args, **kwargs):
+                if args:
+                    seen["columns"] = args[0]
+                return real_select(*args, **kwargs)
+
+            def order(*args, **kwargs):
+                seen["orders"].append((args, kwargs))
+                return real_order(*args, **kwargs)
+
+            def execute():
+                if query.op == "select":
+                    kept = []
+                    for row in query.rows:
+                        matched = True
+                        for kind, column, value in query.filters:
+                            if kind == "eq" and str(row.get(column)) != str(value):
+                                matched = False
+                        if matched:
+                            kept.append(row)
+                    query.rows = kept
+                if (
+                    fail_first_row_delete
+                    and query.op == "delete"
+                    and name == "archived_classes"
+                    and shared["row_deletes"] == 0
+                ):
+                    shared["row_deletes"] += 1
+                    raise RuntimeError("row delete failed")
+                return real_execute()
+
+            query.select = select
+            query.order = order
+            query.execute = execute
+            return query
+
+        admin = unittest.mock.MagicMock()
+        admin.table.side_effect = table
+        admin.storage.from_.return_value = bucket
+        client = create_app().test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = user_id
+            sess["role"] = role
+            sess["csrf_token"] = "test-csrf"
+        headers = {"X-CSRF-Token": "test-csrf"} if send_csrf and method != "GET" else {}
+        with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch.object(storage, "supabase_admin", admin):
+            if method == "GET":
+                response = client.get(path)
+            else:
+                response = client.post(path, data=data or {}, headers=headers)
+        return response, log, bucket, seen
+
+    def test_list_is_limited_to_the_signed_in_instructor_and_uses_archived_at(self):
+        rows = [
+            self._row(self.ARCHIVE_ID, "inst-a", "Algebra"),
+            self._row(self.OTHER_ID, "inst-b", "Secret Class"),
+        ]
+        response, _log, bucket, seen = self._request("GET", "/archived-classes", rows)
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+        self.assertIn("Algebra", page)
+        self.assertNotIn("Secret Class", page)
+        self.assertIn("archived_at", seen["columns"])
+        self.assertNotIn("created_at", seen["columns"])
+        self.assertEqual(seen["orders"][0][0], ("archived_at",))
+        self.assertTrue(seen["orders"][0][1].get("desc"))
+        self.assertEqual(seen["orders"][1][0], ("id",))
+        self.assertEqual(bucket.calls, [])
+
+    def test_another_instructor_or_a_missing_id_cannot_download_or_delete(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a"), self._row(self.OTHER_ID, "inst-b", "Secret Class")]
+        download, _log, bucket, _seen = self._request(
+            "GET", f"/archived-classes/{self.OTHER_ID}/download", rows
+        )
+        self.assertEqual(download.status_code, 404)
+        self.assertEqual(download.get_json()["error"], "This archive was not found.")
+        self.assertEqual(bucket.calls, [])
+        deleted, delete_log, delete_bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.OTHER_ID}/delete",
+            rows,
+            data={"confirm_name": "Secret Class"},
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.get_json()["success"], True)
+        self.assertTrue(deleted.get_json()["redirect"].endswith("/archived-classes"))
+        self.assertEqual(delete_bucket.calls, [])
+        self.assertFalse(any(entry["op"] == "delete" for entry in delete_log))
+        missing, _log, missing_bucket, _seen = self._request(
+            "GET", f"/archived-classes/{self.MISSING_ID}/download", rows
+        )
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(missing.get_json()["error"], "This archive was not found.")
+        self.assertEqual(missing_bucket.calls, [])
+
+    def test_a_missing_row_delete_returns_success_with_a_redirect(self):
+        first, _log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.MISSING_ID}/delete",
+            [],
+            data={"confirm_name": "Algebra"},
+        )
+        second, second_log, second_bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.MISSING_ID}/delete",
+            [],
+            data={"confirm_name": "Algebra"},
+        )
+        for response in (first, second):
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["success"], True)
+            self.assertTrue(response.get_json()["redirect"].endswith("/archived-classes"))
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(second_bucket.calls, [])
+        self.assertFalse(any(entry["op"] == "delete" for entry in second_log))
+
+    def test_an_invalid_uuid_is_404(self):
+        response, log, bucket, _seen = self._request(
+            "GET", "/archived-classes/not-a-uuid/download", []
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()["error"], "This archive was not found.")
+        deleted, _log, _bucket, _seen = self._request(
+            "POST", "/archived-classes/not-a-uuid/delete", [], data={"confirm_name": "Algebra"}
+        )
+        self.assertEqual(deleted.status_code, 404)
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(log, [])
+
+    def test_a_trailing_newline_is_not_a_valid_download_id(self):
+        response, log, bucket, _seen = self._request(
+            "GET",
+            f"/archived-classes/{self.ARCHIVE_ID}%0A/download",
+            [self._row(self.ARCHIVE_ID, "inst-a")],
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()["error"], "This archive was not found.")
+        self.assertEqual(log, [])
+        self.assertEqual(bucket.calls, [])
+
+    def test_download_returns_the_zip_without_a_csrf_token(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        response, _log, _bucket, _seen = self._request(
+            "GET", f"/archived-classes/{self.ARCHIVE_ID}/download", rows, send_csrf=False
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"PK\x03\x04archive")
+        self.assertEqual(response.mimetype, "application/zip")
+        self.assertIn('filename="Algebra_archive.zip"', response.headers["Content-Disposition"])
+
+    def test_wrong_typed_name_removes_nothing(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        response, log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "algebra"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Type the class name exactly to delete this archive.",
+        )
+        self.assertEqual(bucket.calls, [])
+        self.assertFalse(any(entry["op"] == "delete" for entry in log))
+
+    def test_delete_removes_the_object_before_the_row(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        response, log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "Algebra"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(bucket.events[0], "remove")
+        self.assertEqual(bucket.calls[0][1], [f"inst-a/{self.ARCHIVE_ID}.zip"])
+        deleted = [entry for entry in log if entry["op"] == "delete"]
+        self.assertEqual(len(deleted), 1)
+        self.assertEqual(deleted[0]["table"], "archived_classes")
+        self.assertIn(("eq", "id", self.ARCHIVE_ID), deleted[0]["filters"])
+        self.assertIn(("eq", "instructor_id", "inst-a"), deleted[0]["filters"])
+
+    def test_a_missing_storage_object_still_deletes_the_row(self):
+        from storage3.exceptions import StorageApiError
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        response, log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "Algebra"},
+            bucket=_ArchiveBucket(remove_error=StorageApiError("Object not found", "not_found", 404)),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["success"], True)
+        self.assertTrue(response.get_json()["redirect"].endswith("/archived-classes"))
+        self.assertEqual(bucket.events, ["remove"])
+        self.assertTrue(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_a_storage_500_keeps_the_row(self):
+        from storage3.exceptions import StorageApiError
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        response, log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "Algebra"},
+            bucket=_ArchiveBucket(remove_error=StorageApiError("storage failed", "404", 500)),
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Could not delete the archive file. The record was kept.",
+        )
+        self.assertFalse(any(entry["op"] == "delete" for entry in log))
+        self.assertEqual(bucket.events, ["remove"])
+
+    def test_a_network_error_keeps_the_row(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        response, log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "Algebra"},
+            bucket=_ArchiveBucket(remove_error=ConnectionError("network down")),
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Could not delete the archive file. The record was kept.",
+        )
+        self.assertFalse(any(entry["op"] == "delete" for entry in log))
+        self.assertEqual(bucket.events, ["remove"])
+
+    def test_a_failed_file_removal_keeps_the_row(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        response, log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "Algebra"},
+            bucket=_ArchiveBucket(fail="remove"),
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Could not delete the archive file. The record was kept.",
+        )
+        self.assertFalse(any(entry["op"] == "delete" for entry in log))
+        self.assertEqual(bucket.events, ["remove"])
+
+    def test_a_failed_row_delete_can_be_retried_after_the_file_is_gone(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        shared = {"row_deletes": 0}
+        bucket = _ArchiveBucket(missing_after=1)
+        first, first_log, _bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "Algebra"},
+            bucket=bucket,
+            fail_first_row_delete=True,
+            shared=shared,
+        )
+        self.assertEqual(first.status_code, 500)
+        self.assertEqual(
+            first.get_json()["error"],
+            "The file was deleted but the record could not be removed. Try again.",
+        )
+        self.assertFalse(any(entry["op"] == "delete" for entry in first_log))
+        second, second_log, _bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "Algebra"},
+            bucket=bucket,
+            fail_first_row_delete=True,
+            shared=shared,
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.get_json()["success"], True)
+        self.assertTrue(second.get_json()["redirect"].endswith("/archived-classes"))
+        self.assertEqual(bucket.remove_count, 2)
+        self.assertTrue(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in second_log
+        ))
+
+    def test_delete_without_csrf_does_nothing(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        response, log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            rows,
+            data={"confirm_name": "Algebra"},
+            send_csrf=False,
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"], "Invalid CSRF token")
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(log, [])
+
+    def test_empty_state_renders(self):
+        response, _log, _bucket, _seen = self._request("GET", "/archived-classes", [])
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No archived classes yet.", response.get_data(as_text=True))
+
+    def test_the_selection_page_has_the_blue_button(self):
+        from flask import render_template, session
+        from app.routes import CLASS_DAYS
+        app = create_app()
+        with app.test_request_context("/instructor/dashboard"):
+            session["role"] = "instructor"
+            html = render_template(
+                "instructor_select_class.html",
+                classes=[],
+                create_class_token="t",
+                copy_class_token="c",
+                class_days=CLASS_DAYS,
+            )
+        self.assertIn('id="archivedClassesLink"', html)
+        self.assertIn("bg-blue-600", html)
+        self.assertIn("Archived Classes", html)
+        self.assertIn("/archived-classes", html)
+        self.assertIn("archivedClassesLink", html)
+
+    def test_archived_page_escapes_the_class_name_in_the_data_attribute(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", 'Algebra "A" <b>')]
+        response, _log, _bucket, _seen = self._request("GET", "/archived-classes", rows)
+        page = response.get_data(as_text=True)
+        buttons = [
+            line.strip()
+            for line in page.splitlines()
+            if "<button" in line and "delete-archive-btn" in line
+        ]
+        self.assertEqual(len(buttons), 1)
+        escaped = 'data-class-name="Algebra &#34;A&#34; &lt;b&gt;"'
+        self.assertIn(escaped, buttons[0])
+        self.assertNotIn("<b>", buttons[0])
+        self.assertNotIn('data-class-name="Algebra "', buttons[0])
+        self.assertIn(f'data-archive-id="{self.ARCHIVE_ID}"', buttons[0])
+        self.assertIn('datetime="2026-10-15T18:04:00+00:00"', page)
+        self.assertIn("This permanently deletes the saved zip. It cannot be undone.", page)
 
 
 if __name__ == '__main__':

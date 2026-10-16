@@ -1,0 +1,192 @@
+{% extends "auth_base.html" %}
+
+{% block title %}Archived Classes{% endblock %}
+
+{% block content %}
+<div class="flex-1 flex flex-col">
+  <div class="flex-1 flex items-center justify-center p-8">
+    <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-8 w-full max-w-4xl">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">Archived Classes</h1>
+          <p class="text-slate-500 dark:text-slate-400 mt-1">Download a saved class, or delete the zip.</p>
+        </div>
+        <a href="{{ url_for('main.instructor_dashboard') }}" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-700 dark:text-slate-300">Back to classes</a>
+      </div>
+
+      {% if not archives %}
+      <p class="text-slate-500 dark:text-slate-400">No archived classes yet.</p>
+      {% else %}
+      <div class="space-y-3">
+        {% for archive in archives %}
+        <div class="p-5 rounded-xl border border-slate-200 dark:border-slate-700">
+          <h2 class="font-semibold text-slate-900 dark:text-white">{{ archive.class_name }}</h2>
+          {% if archive.detail %}
+          <p class="text-sm text-slate-600 dark:text-slate-400 mt-1">{{ archive.detail }}</p>
+          {% endif %}
+          <p class="text-sm text-slate-600 dark:text-slate-400 mt-1">{{ archive.student_count }} students, {{ archive.assignment_count }} assignments</p>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+            <time class="archived-at" datetime="{{ archive.archived_at }}">{{ archive.archived_at }}</time>
+            {% if archive.size_label %} · {{ archive.size_label }}{% endif %}
+          </p>
+          <div class="mt-4 flex gap-2">
+            <a href="{{ url_for('main.download_archived_class', archive_id=archive.id) }}" class="inline-flex h-8 items-center justify-center px-3 text-xs font-semibold text-blue-700 bg-blue-100 dark:bg-blue-900/40 dark:text-blue-200 rounded-md hover:bg-blue-200">Download</a>
+            <button type="button" class="delete-archive-btn inline-flex h-8 items-center justify-center px-3 text-xs font-semibold text-red-700 bg-red-100 rounded-md hover:bg-red-200" data-archive-id="{{ archive.id }}" data-class-name="{{ archive.class_name }}">Delete</button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div id="deleteArchiveModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60" aria-modal="true" role="dialog">
+  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-lg max-w-md w-full p-6 border border-slate-200 dark:border-slate-600">
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Delete archive</h2>
+    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">This permanently deletes the saved zip. It cannot be undone.</p>
+    <p id="deleteArchiveNameLabel" class="mt-4 text-sm font-medium text-slate-900 dark:text-white"></p>
+    <p id="deleteArchiveError" class="hidden mt-3 text-sm text-red-700 dark:text-red-300"></p>
+    <form id="deleteArchiveForm" class="mt-5 space-y-4" onsubmit="return false;">
+      <div>
+        <label for="deleteArchiveNameInput" class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Type the class name to confirm</label>
+        <input id="deleteArchiveNameInput" name="confirm_name" type="text" autocomplete="off" class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-slate-900 dark:text-white" />
+      </div>
+      <div class="flex gap-3 pt-2">
+        <button type="button" id="deleteArchiveModalCancel" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white">Cancel</button>
+        <button type="button" id="deleteArchiveSubmitBtn" disabled class="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium disabled:opacity-60 disabled:cursor-not-allowed">Delete archive</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('time.archived-at').forEach((node) => {
+  const raw = node.getAttribute('datetime') || '';
+  const parsed = new Date(raw);
+  if (!raw || Number.isNaN(parsed.getTime())) return;
+  node.textContent = parsed.toLocaleDateString();
+});
+
+const deleteArchiveModal = document.getElementById('deleteArchiveModal');
+const deleteArchiveInput = document.getElementById('deleteArchiveNameInput');
+const deleteArchiveSubmit = document.getElementById('deleteArchiveSubmitBtn');
+const deleteArchiveCancel = document.getElementById('deleteArchiveModalCancel');
+const deleteArchiveError = document.getElementById('deleteArchiveError');
+const deleteArchiveLabel = document.getElementById('deleteArchiveNameLabel');
+const deleteArchiveSlowReply = 'The server took too long or stopped responding. Check Archived Classes before trying again.';
+let deleteArchiveBusy = false;
+let deleteArchiveId = '';
+let deleteArchiveName = '';
+
+function deleteArchiveNameMatches() {
+  return !!deleteArchiveInput && deleteArchiveInput.value === deleteArchiveName;
+}
+
+function refreshDeleteArchiveSubmit() {
+  if (!deleteArchiveSubmit) return;
+  deleteArchiveSubmit.disabled = deleteArchiveBusy || !deleteArchiveNameMatches();
+  deleteArchiveSubmit.textContent = deleteArchiveBusy ? 'Deleting...' : 'Delete archive';
+}
+
+function showDeleteArchiveError(message) {
+  if (!deleteArchiveError) return;
+  deleteArchiveError.textContent = message;
+  deleteArchiveError.classList.remove('hidden');
+}
+
+function releaseDeleteArchiveSubmit() {
+  deleteArchiveBusy = false;
+  if (deleteArchiveInput) deleteArchiveInput.disabled = false;
+  if (deleteArchiveCancel) deleteArchiveCancel.disabled = false;
+  refreshDeleteArchiveSubmit();
+}
+
+function resetDeleteArchiveModal() {
+  deleteArchiveBusy = false;
+  deleteArchiveId = '';
+  deleteArchiveName = '';
+  if (deleteArchiveInput) {
+    deleteArchiveInput.value = '';
+    deleteArchiveInput.disabled = false;
+  }
+  if (deleteArchiveCancel) deleteArchiveCancel.disabled = false;
+  if (deleteArchiveError) {
+    deleteArchiveError.textContent = '';
+    deleteArchiveError.classList.add('hidden');
+  }
+  if (deleteArchiveLabel) deleteArchiveLabel.textContent = '';
+  refreshDeleteArchiveSubmit();
+}
+
+function closeDeleteArchiveModal() {
+  if (deleteArchiveBusy || !deleteArchiveModal) return;
+  deleteArchiveModal.classList.add('hidden');
+  resetDeleteArchiveModal();
+}
+
+function openDeleteArchiveModal(archiveId, className) {
+  if (!deleteArchiveModal) return;
+  resetDeleteArchiveModal();
+  deleteArchiveId = archiveId;
+  deleteArchiveName = className;
+  if (deleteArchiveLabel) deleteArchiveLabel.textContent = className;
+  deleteArchiveModal.classList.remove('hidden');
+  if (deleteArchiveInput) deleteArchiveInput.focus();
+  refreshDeleteArchiveSubmit();
+}
+
+document.querySelectorAll('.delete-archive-btn').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const archiveId = btn.getAttribute('data-archive-id') || '';
+    const className = btn.getAttribute('data-class-name') || '';
+    if (archiveId) openDeleteArchiveModal(archiveId, className);
+  });
+});
+
+deleteArchiveInput?.addEventListener('input', refreshDeleteArchiveSubmit);
+deleteArchiveCancel?.addEventListener('click', closeDeleteArchiveModal);
+deleteArchiveModal?.addEventListener('click', (e) => {
+  if (e.target === deleteArchiveModal) closeDeleteArchiveModal();
+});
+
+deleteArchiveSubmit?.addEventListener('click', async () => {
+  if (deleteArchiveBusy || !deleteArchiveNameMatches() || !deleteArchiveId) return;
+  deleteArchiveBusy = true;
+  if (deleteArchiveInput) deleteArchiveInput.disabled = true;
+  if (deleteArchiveCancel) deleteArchiveCancel.disabled = true;
+  if (deleteArchiveError) deleteArchiveError.classList.add('hidden');
+  refreshDeleteArchiveSubmit();
+  let response;
+  try {
+    response = await fetch('/archived-classes/' + encodeURIComponent(deleteArchiveId) + '/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ confirm_name: deleteArchiveInput.value }),
+    });
+  } catch (networkError) {
+    showDeleteArchiveError(deleteArchiveSlowReply);
+    releaseDeleteArchiveSubmit();
+    return;
+  }
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (parseError) {
+    showDeleteArchiveError(deleteArchiveSlowReply);
+    releaseDeleteArchiveSubmit();
+    return;
+  }
+  if (payload && payload.success && payload.redirect) {
+    window.location.assign(payload.redirect);
+    return;
+  }
+  showDeleteArchiveError((payload && payload.error) || deleteArchiveSlowReply);
+  releaseDeleteArchiveSubmit();
+});
+</script>
+{% endblock %}

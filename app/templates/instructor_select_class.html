@@ -21,7 +21,7 @@
               Shelbi
             </button>
           </div>
-          <button type="button" onclick="document.getElementById('createClassForm').classList.remove('hidden'); document.getElementById('classList').classList.add('hidden'); document.getElementById('selectClassHeader').classList.add('hidden');" class="h-[42px] px-6 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2">
+          <button type="button" onclick="document.getElementById('createClassForm').classList.remove('hidden'); document.getElementById('classList').classList.add('hidden'); document.getElementById('selectClassHeader').classList.add('hidden'); document.getElementById('archivedClassesLink').classList.add('hidden');" class="h-[42px] px-6 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
             New Class
           </button>
@@ -86,6 +86,8 @@
         </div>
         {% endfor %}
       </div>
+
+      <a id="archivedClassesLink" href="{{ url_for('main.archived_classes') }}" class="mt-4 flex w-full h-[42px] items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">Archived Classes</a>
 
       <div id="copyClassModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60" aria-modal="true" role="dialog">
         <div class="bg-white dark:bg-slate-800 rounded-xl shadow-lg max-w-md w-full p-6 border border-slate-200 dark:border-slate-600">
@@ -157,7 +159,7 @@
           <input type="hidden" name="create_class_token" value="{{ create_class_token }}" />
           {{ class_form_fields(days_options=class_days) }}
           <div class="flex gap-3 pt-4">
-            <button type="button" onclick="document.getElementById('createClassForm').classList.add('hidden'); document.getElementById('classList').classList.remove('hidden'); document.getElementById('selectClassHeader').classList.remove('hidden');" class="px-6 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors font-medium text-slate-900 dark:text-white">Cancel</button>
+            <button type="button" onclick="document.getElementById('createClassForm').classList.add('hidden'); document.getElementById('classList').classList.remove('hidden'); document.getElementById('selectClassHeader').classList.remove('hidden'); document.getElementById('archivedClassesLink').classList.remove('hidden');" class="px-6 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors font-medium text-slate-900 dark:text-white">Cancel</button>
             <button id="createClassSubmitBtn" type="submit" class="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">Create Class</button>
           </div>
         </form>

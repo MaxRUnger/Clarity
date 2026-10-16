@@ -514,6 +514,32 @@ def _owned_class_row(class_id, instructor_id):
     return rows[0] if rows else None
 
 
+_ARCHIVE_ID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _owned_archive_row(archive_id, instructor_id):
+    """The archive row for this instructor. An id that is not a UUID is missing."""
+    if _ARCHIVE_ID.fullmatch(str(archive_id or "")) is None:
+        return None
+    resp = (
+        supabase_admin.table("archived_classes")
+        .select("id, class_name, storage_path, instructor_id")
+        .eq("id", archive_id)
+        .eq("instructor_id", instructor_id)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    return rows[0] if rows else None
+
+
+def _removed_archive_is_already_gone(exc: BaseException) -> bool:
+    from storage3.exceptions import StorageApiError
+    return isinstance(exc, StorageApiError) and str(exc.status) == "404"
+
+
 def _user_ids_equal(a: Any, b: Any) -> bool:
     """Compare auth user ids / FK ids from Supabase (string case and whitespace tolerant)."""
     if a is None or b is None:
@@ -2339,6 +2365,116 @@ def archive_class(class_id):
     return jsonify({
         "success": True,
         "redirect": url_for("main.instructor_dashboard"),
+    })
+
+
+def _archive_size_label(size_bytes) -> str:
+    try:
+        size = int(size_bytes)
+    except (TypeError, ValueError):
+        return ""
+    if size >= 1_000_000:
+        return f"{size / 1_000_000:.1f} MB"
+    return f"{max(size, 0) / 1_000:.1f} KB"
+
+
+@main_bp.route("/archived-classes")
+@login_required
+def archived_classes():
+    if session.get("role") != "instructor":
+        return redirect(url_for("main.login_page"))
+    instructor_id = session["user_id"]
+    rows = fetch_all_rows(
+        supabase_admin.table("archived_classes")
+        .select(
+            "id, class_name, semester, days, section_number, "
+            "student_count, assignment_count, size_bytes, archived_at"
+        )
+        .eq("instructor_id", instructor_id)
+        .order("archived_at", desc=True)
+        .order("id", desc=True)
+    )
+    archives = []
+    for row in rows:
+        parts = [row.get("semester"), row.get("days"), row.get("section_number")]
+        archives.append({
+            "id": row.get("id"),
+            "class_name": row.get("class_name") or "",
+            "detail": " · ".join(str(part) for part in parts if part),
+            "student_count": row.get("student_count") or 0,
+            "assignment_count": row.get("assignment_count") or 0,
+            "archived_at": row.get("archived_at") or "",
+            "size_label": _archive_size_label(row.get("size_bytes")),
+        })
+    return render_template("archived_classes.html", archives=archives)
+
+
+@main_bp.route("/archived-classes/<archive_id>/download")
+@login_required
+def download_archived_class(archive_id):
+    if session.get("role") != "instructor":
+        return redirect(url_for("main.login_page"))
+    from app.archive_storage import download_archive
+    row = _owned_archive_row(archive_id, session["user_id"])
+    if row is None:
+        return jsonify({"success": False, "error": "This archive was not found."}), 404
+    try:
+        payload = download_archive(row.get("storage_path") or "")
+    except Exception as exc:
+        logger.error("Could not download archive %s: %s", archive_id, exc)
+        return _safe_api_error("Could not download the archive", 500, log_detail=exc)
+    filename = f"{secure_filename(str(row.get('class_name') or '')) or 'class'}_archive.zip"
+    return Response(
+        payload,
+        mimetype="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@main_bp.route("/archived-classes/<archive_id>/delete", methods=["POST"])
+@api_instructor_required
+def delete_archived_class(archive_id):
+    from app.archive_storage import remove_archive
+    if _ARCHIVE_ID.fullmatch(str(archive_id or "")) is None:
+        return jsonify({"success": False, "error": "This archive was not found."}), 404
+    instructor_id = session["user_id"]
+    row = _owned_archive_row(archive_id, instructor_id)
+    if row is None:
+        return jsonify({
+            "success": True,
+            "redirect": url_for("main.archived_classes"),
+        })
+    if request.form.get("confirm_name") != row.get("class_name"):
+        return jsonify({
+            "success": False,
+            "error": "Type the class name exactly to delete this archive.",
+        }), 400
+    try:
+        remove_archive(row.get("storage_path") or "")
+    except Exception as exc:
+        if not _removed_archive_is_already_gone(exc):
+            logger.error("Could not remove archive %s: %s", archive_id, exc)
+            return jsonify({
+                "success": False,
+                "error": "Could not delete the archive file. The record was kept.",
+            }), 500
+        logger.error("Archive file %s was already gone: %s", archive_id, exc)
+    try:
+        supabase_admin.table("archived_classes").delete().eq("id", archive_id).eq(
+            "instructor_id", instructor_id
+        ).execute()
+    except Exception as exc:
+        logger.error(
+            "Could not delete archive row %s after the file was removed: %s",
+            archive_id, exc,
+        )
+        return jsonify({
+            "success": False,
+            "error": "The file was deleted but the record could not be removed. Try again.",
+        }), 500
+    return jsonify({
+        "success": True,
+        "redirect": url_for("main.archived_classes"),
     })
 
 
