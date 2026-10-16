@@ -74,6 +74,7 @@
           <div class="absolute right-6 bottom-3 z-10 flex flex-wrap items-center justify-end gap-2">
             <button type="button" class="edit-class-btn inline-flex h-6 min-w-[3.25rem] items-center justify-center px-2 text-[10px] font-semibold leading-none text-slate-700 bg-slate-100 dark:bg-slate-700 dark:text-slate-200 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600">Edit</button>
             <button type="button" class="copy-class-btn inline-flex h-6 min-w-[3.25rem] items-center justify-center px-2 text-[10px] font-semibold leading-none text-blue-700 bg-blue-100 dark:bg-blue-900/40 dark:text-blue-200 rounded-md hover:bg-blue-200 dark:hover:bg-blue-900/60" data-class-id="{{ class.id }}" data-class-days="{{ class.days or '' }}">Copy</button>
+            <button type="button" class="archive-class-btn inline-flex h-6 min-w-[3.25rem] items-center justify-center px-2 text-[10px] font-semibold leading-none text-amber-800 bg-amber-100 dark:bg-amber-900/40 dark:text-amber-200 rounded-md hover:bg-amber-200 dark:hover:bg-amber-900/60" data-class-id="{{ class.id }}" data-class-name="{{ class.name or '' }}">Archive</button>
             <form action="{{ url_for('main.delete_class', class_id=class.id) }}" method="post" class="inline-flex">
               <button type="submit" onclick="event.stopPropagation(); return confirm('⚠️ You are about to permanently delete this class and all related data (students, assignments, grades, objectives). Continue?');" class="inline-flex h-6 min-w-[3.25rem] items-center justify-center px-2 text-[10px] font-semibold leading-none text-red-700 bg-red-100 rounded-md hover:bg-red-200">Delete</button>
             </form>
@@ -108,6 +109,25 @@
             <div class="flex gap-3 pt-2">
               <button type="button" id="copyClassModalCancel" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white">Cancel</button>
               <button type="submit" id="copyClassSubmitBtn" class="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Copy class</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div id="archiveClassModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60" aria-modal="true" role="dialog">
+        <div class="bg-white dark:bg-slate-800 rounded-xl shadow-lg max-w-md w-full p-6 border border-slate-200 dark:border-slate-600">
+          <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Archive class</h2>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">This saves the class to a downloadable zip, then removes the class from Clarity. Don't edit this class while it archives. Large classes can take a minute or two.</p>
+          <p id="archiveClassNameLabel" class="mt-4 text-sm font-medium text-slate-900 dark:text-white"></p>
+          <p id="archiveClassError" class="hidden mt-3 text-sm text-red-700 dark:text-red-300"></p>
+          <form id="archiveClassForm" class="mt-5 space-y-4" onsubmit="return false;">
+            <div>
+              <label for="archiveClassNameInput" class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Type the class name to confirm</label>
+              <input id="archiveClassNameInput" name="confirm_name" type="text" autocomplete="off" class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white" />
+            </div>
+            <div class="flex gap-3 pt-2">
+              <button type="button" id="archiveClassModalCancel" class="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white">Cancel</button>
+              <button type="button" id="archiveClassSubmitBtn" disabled class="flex-1 px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium disabled:opacity-60 disabled:cursor-not-allowed">Archive class</button>
             </div>
           </form>
         </div>
@@ -277,6 +297,125 @@ editClassForm?.addEventListener('submit', () => {
   submitBtn.disabled = true;
   submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
   submitBtn.textContent = 'Saving...';
+});
+
+const archiveClassModal = document.getElementById('archiveClassModal');
+const archiveNameInput = document.getElementById('archiveClassNameInput');
+const archiveSubmitBtn = document.getElementById('archiveClassSubmitBtn');
+const archiveCancelBtn = document.getElementById('archiveClassModalCancel');
+const archiveError = document.getElementById('archiveClassError');
+const archiveNameLabel = document.getElementById('archiveClassNameLabel');
+const archiveSlowReply = 'The server took too long or stopped responding. Check Archived Classes before trying again.';
+let archiveBusy = false;
+let archiveClassId = '';
+let archiveClassName = '';
+
+function archiveNameMatches() {
+  return !!archiveNameInput && archiveNameInput.value === archiveClassName;
+}
+
+function refreshArchiveSubmit() {
+  if (!archiveSubmitBtn) return;
+  archiveSubmitBtn.disabled = archiveBusy || !archiveNameMatches();
+  archiveSubmitBtn.textContent = archiveBusy ? 'Archiving...' : 'Archive class';
+}
+
+function showArchiveError(message) {
+  if (!archiveError) return;
+  archiveError.textContent = message;
+  archiveError.classList.remove('hidden');
+}
+
+function releaseArchiveSubmit() {
+  archiveBusy = false;
+  if (archiveNameInput) archiveNameInput.disabled = false;
+  if (archiveCancelBtn) archiveCancelBtn.disabled = false;
+  refreshArchiveSubmit();
+}
+
+function resetArchiveModal() {
+  archiveBusy = false;
+  archiveClassId = '';
+  archiveClassName = '';
+  if (archiveNameInput) {
+    archiveNameInput.value = '';
+    archiveNameInput.disabled = false;
+  }
+  if (archiveCancelBtn) archiveCancelBtn.disabled = false;
+  if (archiveError) {
+    archiveError.textContent = '';
+    archiveError.classList.add('hidden');
+  }
+  if (archiveNameLabel) archiveNameLabel.textContent = '';
+  refreshArchiveSubmit();
+}
+
+function closeArchiveModal() {
+  if (archiveBusy || !archiveClassModal) return;
+  archiveClassModal.classList.add('hidden');
+  resetArchiveModal();
+}
+
+function openArchiveModal(classId, className) {
+  if (!archiveClassModal) return;
+  resetArchiveModal();
+  archiveClassId = classId;
+  archiveClassName = className;
+  if (archiveNameLabel) archiveNameLabel.textContent = className;
+  archiveClassModal.classList.remove('hidden');
+  if (archiveNameInput) archiveNameInput.focus();
+  refreshArchiveSubmit();
+}
+
+document.querySelectorAll('.archive-class-btn').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const classId = btn.getAttribute('data-class-id') || '';
+    const className = btn.getAttribute('data-class-name') || '';
+    if (classId) openArchiveModal(classId, className);
+  });
+});
+
+archiveNameInput?.addEventListener('input', refreshArchiveSubmit);
+archiveCancelBtn?.addEventListener('click', closeArchiveModal);
+archiveClassModal?.addEventListener('click', (e) => {
+  if (e.target === archiveClassModal) closeArchiveModal();
+});
+
+archiveSubmitBtn?.addEventListener('click', async () => {
+  if (archiveBusy || !archiveNameMatches() || !archiveClassId) return;
+  archiveBusy = true;
+  if (archiveNameInput) archiveNameInput.disabled = true;
+  if (archiveCancelBtn) archiveCancelBtn.disabled = true;
+  if (archiveError) archiveError.classList.add('hidden');
+  refreshArchiveSubmit();
+  let response;
+  try {
+    response = await fetch('/class/' + encodeURIComponent(archiveClassId) + '/archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ confirm_name: archiveNameInput.value }),
+    });
+  } catch (networkError) {
+    showArchiveError(archiveSlowReply);
+    releaseArchiveSubmit();
+    return;
+  }
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (parseError) {
+    showArchiveError(archiveSlowReply);
+    releaseArchiveSubmit();
+    return;
+  }
+  if (payload && payload.success && payload.redirect) {
+    window.location.assign(payload.redirect);
+    return;
+  }
+  showArchiveError((payload && payload.error) || archiveSlowReply);
+  releaseArchiveSubmit();
 });
 
 document.getElementById('copyClassModalCancel')?.addEventListener('click', closeCopyClassModal);

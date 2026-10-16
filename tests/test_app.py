@@ -5341,6 +5341,50 @@ class TestClassDisplayTitle(unittest.TestCase):
         from app.routes import class_display_title
         self.assertEqual(class_display_title("  Test Upload  ", "", None), "Test Upload")
 
+    def test_archive_button_carries_the_escaped_raw_name(self):
+        from flask import render_template, session
+        from app.routes import CLASS_DAYS
+        app = create_app()
+        with app.test_request_context("/instructor/dashboard"):
+            session["role"] = "instructor"
+            html = render_template(
+                "instructor_select_class.html",
+                classes=[
+                    {
+                        "id": "c1",
+                        "name": 'Algebra "A" <b>',
+                        "days": "MW",
+                        "section_number": "1",
+                        "semester": "Fall 2026",
+                        "is_online": False,
+                    },
+                    {
+                        "id": "c2",
+                        "name": "Geometry",
+                        "days": "TTH",
+                        "section_number": "2",
+                        "semester": "Fall 2026",
+                        "is_online": False,
+                    },
+                ],
+                create_class_token="t",
+                copy_class_token="c",
+                class_days=CLASS_DAYS,
+            )
+        buttons = [
+            line.strip()
+            for line in html.splitlines()
+            if "<button" in line and "archive-class-btn" in line
+        ]
+        self.assertEqual(len(buttons), 2)
+        self.assertIn('data-class-id="c1"', buttons[0])
+        self.assertIn('data-class-id="c2"', buttons[1])
+        self.assertIn('data-class-name="Geometry"', buttons[1])
+        escaped = 'data-class-name="Algebra &#34;A&#34; &lt;b&gt;"'
+        self.assertIn(escaped, buttons[0])
+        self.assertNotIn("<b>", buttons[0])
+        self.assertNotIn('data-class-name="Algebra "', buttons[0])
+
 
 class TestClassUpdate(unittest.TestCase):
     def _form(self, **overrides):
