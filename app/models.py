@@ -451,7 +451,7 @@ class Homework:
     def is_import_sheet_hw_column(name) -> bool:
         """True for sheet headers that represent homework / assignment percentage, not a mastery LO.
 
-        Used by Gemini import and the grade-import API so a column like "HW" or "Homework %"
+        Used by the grade-import API so a column like "HW" or "Homework %"
         is stored in homework_scores instead of learning-objective grades.
         """
         if not name or not str(name).strip():
@@ -475,51 +475,6 @@ class Homework:
         if re.match(r"^HW\d{1,3}$", n):
             return True
         return False
-
-    @staticmethod
-    def canonicalize_import_sheet_header(name) -> str:
-        """Map common header synonyms to codes recognized by import rules (EX1, FEX, LO1, …).
-
-        Used for Gemini JSON and local PDF table extraction so columns route to HW / exam / LO
-        consistently. Returns a non-empty string; unknown headers are returned with normalized
-        whitespace only (no semantic change beyond spacing).
-
-        Conservative on purpose: a header we cannot confidently recognize is
-        left mostly intact so a misclassified column at least imports as a
-        named LO instead of silently being routed to HW or exam storage.
-        """
-        if name is None:
-            return ""
-        raw = str(name).strip()
-        if not raw:
-            return ""
-        t = re.sub(r"[\u2013\u2014\u2212]+", "-", raw)
-        t = re.sub(r"\s+", " ", t).strip()
-        u = t.upper()
-        compact = re.sub(r"\s+", "", u)
-        # Final exam — conservative synonyms only
-        if compact == "FEX" or compact.startswith("FINALEX") or compact == "FINAL":
-            return "FEX"
-        # Exam score columns
-        m = re.match(r"^EX(\d{1,3})$", compact)
-        if m:
-            return f"EX{int(m.group(1))}"
-        m = re.match(r"^EXAM(\d{1,3})$", compact)
-        if m:
-            return f"EX{int(m.group(1))}"
-        # Learning objective numeric codes like LO1, LO12
-        m = re.match(r"^LO(\d{1,4})$", compact, flags=re.I)
-        if m:
-            return f"LO{int(m.group(1))}"
-        # Letter + digits (e.g. A 7 -> A7, M1 stays M1) — skip if starts with EX/HW
-        m = re.match(r"^([A-Z]{1,4})(\d{1,4})$", compact)
-        if m:
-            letters, digits = m.group(1), m.group(2)
-            if letters in ("EX", "HW"):
-                pass
-            else:
-                return f"{letters}{int(digits)}"
-        return t
 
     @staticmethod
     def parse_import_hw_pct(value) -> Optional[int]:

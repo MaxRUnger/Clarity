@@ -137,7 +137,7 @@ class TestGradeGetPriority(unittest.TestCase):
 
 
 class TestHomeworkImportSheetColumn(unittest.TestCase):
-    """Homework % columns on scanned sheets are not learning objectives."""
+    """Homework % columns on uploaded sheets are not learning objectives."""
 
     def test_is_import_sheet_hw_column(self):
         self.assertTrue(Homework.is_import_sheet_hw_column("HW"))
@@ -1683,7 +1683,7 @@ class TestParseBlankGradesheetCsv(unittest.TestCase):
     def test_rejects_wrong_header_shape(self):
         payload, err = parse_blank_gradesheet_csv_text("Name,Score\nAda,M\n", self.VENDORS)
         self.assertIsNone(payload)
-        self.assertIn("gradesheet format", err)
+        self.assertIn("not a Clarity gradesheet export", err)
 
     def test_rejects_unknown_lo_header(self):
         text = (
@@ -2624,7 +2624,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
             src,
         )
-        self.assertIn("pdf_analyzer.js') }}?v=19", src)
+        self.assertIn("csv_wizard.js') }}?v=20", src)
 
     def test_speed_grader_autosave_runs_when_the_tab_hides(self):
         path = os.path.join(
@@ -2671,9 +2671,9 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertNotIn("visible", handler)
         self.assertNotIn("performSave", handler)
 
-    def test_pdf_analyzer_posts_ignored_names_without_preview(self):
+    def test_csv_wizard_posts_ignored_names_without_preview(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
+            os.path.dirname(__file__), "..", "app", "static", "js", "csv_wizard.js",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
@@ -2681,9 +2681,55 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertNotIn("name_resolutions", src)
         self.assertIn("ignored_names", src)
 
+    def test_csv_match_wizard_keeps_single_match_on_step_3(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "csv_wizard.js",
+        )
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        analyze = src[src.find("async function analyzeCsv"):src.find("function displayExtractedLOs")]
+        self.assertIn("goToStep(3)", analyze)
+        self.assertIn("clearCsvAssignmentMatch()", analyze)
+        self.assertIn("clearCsvAssignmentMatch()", src[src.find("function resetUploadChooser"):src.find("function handleFileSelect")])
+        self.assertIn("csvMatchedAssignmentLine", src)
+        self.assertIn("textContent", src[src.find("function syncCsvMatchedAssignmentLine"):src.find("function resetUploadChooser")])
+        note = src[src.find("function syncCsvAssignmentMatchNote"):src.find("function syncCsvMatchedAssignmentLine")]
+        self.assertIn("Matched from your file:", note)
+        self.assertIn("matches more than one assignment", note)
+        self.assertIn("textContent", note)
+        err = src[src.find("function showUploadParseError"):src.find("function clearUploadParseError")]
+        self.assertIn("textContent", err)
+        self.assertNotIn("innerHTML", err)
+
+    def test_csv_wizard_does_not_create_assignments(self):
+        names = (
+            os.path.join("templates", "update_grade.html"),
+            os.path.join("static", "js", "csv_wizard.js"),
+        )
+        forbidden = ("mapModeCreate", "prefillCreateAssignmentFromCsv", "create_assignment")
+        for name in names:
+            path = os.path.join(os.path.dirname(__file__), "..", "app", name)
+            with open(path, encoding="utf-8") as fh:
+                src = fh.read()
+            for token in forbidden:
+                self.assertNotIn(token, src, name)
+
+    def test_csv_wizard_replaces_pdf_analyzer_script(self):
+        root = os.path.join(os.path.dirname(__file__), "..", "app")
+        with open(os.path.join(root, "templates", "update_grade.html"), encoding="utf-8") as fh:
+            template = fh.read()
+        with open(os.path.join(root, "static", "js", "csv_wizard.js"), encoding="utf-8") as fh:
+            script = fh.read()
+        self.assertIn("js/csv_wizard.js') }}?v=20", template)
+        self.assertFalse(os.path.exists(os.path.join(root, "static", "js", "pdf_analyzer.js")))
+        for src in (template, script):
+            self.assertNotIn("pdfInput", src)
+            self.assertNotIn("uploadedPDFData", src)
+            self.assertNotIn("analyzePDF", src)
+
     def test_add_student_flag_inputs_are_not_native_constraints(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
+            os.path.dirname(__file__), "..", "app", "static", "js", "csv_wizard.js",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
@@ -2706,9 +2752,9 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertNotIn(".required = true", body)
         self.assertNotIn("type = 'email'", body)
 
-    def test_pdf_analyzer_has_no_add_student_notices(self):
+    def test_csv_wizard_has_no_add_student_notices(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
+            os.path.dirname(__file__), "..", "app", "static", "js", "csv_wizard.js",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
@@ -2748,7 +2794,6 @@ class TestParseGradeCsvRoute(unittest.TestCase):
 
     def test_valid_csv_does_not_call_gemini_and_can_match_assignment(self):
         from app import routes as r
-        gemini = unittest.mock.MagicMock()
         csv_text = (
             "Assignment,Quiz 1\n"
             "Date,2026-08-20\n"
@@ -2772,8 +2817,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
                     r.Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
-                ), \
-                unittest.mock.patch.object(r, "get_gemini_analyzer", gemini):
+                ):
             rv = self.client.post(
                 "/api/class/c1/parse-grade-csv",
                 data={"file": (io.BytesIO(csv_text.encode("utf-8")), "quiz.csv")},
@@ -2785,11 +2829,9 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         self.assertEqual(body.get("matched_assignment_id"), "asg-1")
         self.assertEqual(body["data"]["extraction_path"], "csv")
         self.assertEqual(body["data"]["students"][0]["grades"], {"D1": "M"})
-        gemini.assert_not_called()
 
     def test_three_metadata_row_csv_parses_header_and_students(self):
         from app import routes as r
-        gemini = unittest.mock.MagicMock()
         csv_text = (
             "Assignment,Quiz 1\n"
             "Date,2026-08-20\n"
@@ -2816,8 +2858,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
                     r.Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
-                ), \
-                unittest.mock.patch.object(r, "get_gemini_analyzer", gemini):
+                ):
             rv = self.client.post(
                 "/api/class/c1/parse-grade-csv",
                 data={"file": (io.BytesIO(csv_text.encode("utf-8")), "quiz.csv")},
@@ -2837,11 +2878,9 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         self.assertEqual(students[1]["grades"], {"D1": ""})
         self.assertEqual(students[1]["homework_pct"], "0")
         self.assertFalse(any("NOTE" in (s.get("name") or "").upper() for s in students))
-        gemini.assert_not_called()
 
     def test_malformed_csv_400_without_gemini(self):
         from app import routes as r
-        gemini = unittest.mock.MagicMock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
             sess["role"] = "instructor"
@@ -2849,15 +2888,117 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
                     r.Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
-                ), \
-                unittest.mock.patch.object(r, "get_gemini_analyzer", gemini):
+                ):
             rv = self.client.post(
                 "/api/class/c1/parse-grade-csv",
                 data={"file": (io.BytesIO(b"nope"), "bad.csv")},
                 headers={"X-CSRF-Token": "test-csrf"},
             )
         self.assertEqual(rv.status_code, 400)
-        gemini.assert_not_called()
+        self.assertIn("not a Clarity gradesheet export", rv.get_json().get("error") or "")
+
+    def _post_grade_csv(self, csv_text, assignment_rows, owns=True):
+        from app import routes as r
+        sa = MagicMock()
+        q = MagicMock()
+        q.select.return_value = q
+        q.eq.return_value = q
+        q.execute.return_value = MagicMock(data=assignment_rows)
+        sa.table.return_value = q
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
+                unittest.mock.patch.object(
+                    r.Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
+                ):
+            return self.client.post(
+                "/api/class/c1/parse-grade-csv",
+                data={"file": (io.BytesIO(csv_text.encode("utf-8")), "quiz.csv")},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+
+    def test_spaced_title_matches_stored_name(self):
+        csv_text = (
+            "Assignment,quiz   1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1\n"
+            "Ada Lovelace,90,M\n"
+        )
+        rv = self._post_grade_csv(csv_text, [{"id": "asg-1", "name": "Quiz 1"}])
+        self.assertEqual(rv.status_code, 200)
+        body = rv.get_json()
+        self.assertEqual(body.get("matched_assignment_id"), "asg-1")
+        self.assertEqual(body.get("matched_assignment_title"), "Quiz 1")
+        self.assertEqual(body.get("assignment_match"), "matched")
+
+    def test_unknown_title_400_names_the_file_title(self):
+        csv_text = (
+            "Assignment,Test\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1\n"
+            "Ada Lovelace,90,M\n"
+        )
+        rv = self._post_grade_csv(csv_text, [])
+        self.assertEqual(rv.status_code, 400)
+        body = rv.get_json()
+        self.assertEqual(body.get("error"), "No assignment named 'Test' in this class.")
+        self.assertNotIn("students", body)
+
+    def test_unknown_title_with_markup_and_quote_is_plain_text(self):
+        title = 'Quiz <b>x</b> "1"'
+        csv_text = (
+            f"Assignment,{title}\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1\n"
+            "Ada Lovelace,90,M\n"
+        )
+        rv = self._post_grade_csv(csv_text, [])
+        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(
+            rv.get_json().get("error"),
+            "No assignment named 'Quiz <b>x</b> \"1\"' in this class.",
+        )
+
+    def test_duplicate_normalized_titles_are_ambiguous(self):
+        csv_text = (
+            "Assignment,Quiz 1\n"
+            "Date,2026-08-20\n"
+            "\n"
+            "Student Name,HW,D1\n"
+            "Ada Lovelace,90,M\n"
+        )
+        rv = self._post_grade_csv(csv_text, [
+            {"id": "asg-1", "name": "Quiz 1"},
+            {"id": "asg-2", "name": "quiz  1"},
+        ])
+        self.assertEqual(rv.status_code, 200)
+        body = rv.get_json()
+        self.assertIsNone(body.get("matched_assignment_id"))
+        self.assertEqual(body.get("assignment_match"), "ambiguous")
+        self.assertEqual(body["data"]["students"][0]["grades"], {"D1": "M"})
+
+    def test_short_missing_empty_and_undated_files_use_export_message(self):
+        sheets = [
+            "Name,Score\nAda,M\n",
+            "Student Name,HW,D1\nAda,90,M\n\n\n",
+            "Assignment,\nDate,2026-08-20\n\nStudent Name,HW,D1\nAda,90,M\n",
+            "Assignment,Quiz 1\nWhen,2026-08-20\n\nStudent Name,HW,D1\nAda,90,M\n",
+        ]
+        for sheet in sheets:
+            rv = self._post_grade_csv(sheet, [{"id": "asg-1", "name": "Quiz 1"}])
+            self.assertEqual(rv.status_code, 400)
+            self.assertIn("not a Clarity gradesheet export", rv.get_json().get("error") or "")
+            self.assertNotIn("students", rv.get_json())
+
+    def test_unowned_class_403(self):
+        rv = self._post_grade_csv("Assignment,Quiz 1\n", [], owns=False)
+        self.assertEqual(rv.status_code, 403)
 
 
 class TestAllowedLoIdsAssignmentScoping(unittest.TestCase):
@@ -3886,9 +4027,9 @@ class TestStudentEmailMatch(unittest.TestCase):
         self.assertEqual(classes.eq_calls, [("instructor_id", "inst1")])
         self.assertFalse(profiles.selected)
 
-    def test_pdf_analyzer_pushes_the_stored_name(self):
+    def test_csv_wizard_pushes_the_stored_name(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "static", "js", "pdf_analyzer.js",
+            os.path.dirname(__file__), "..", "app", "static", "js", "csv_wizard.js",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
@@ -8454,8 +8595,8 @@ class TestMobileUploadMarkupGone(unittest.TestCase):
             self.assertNotIn("qrcodejs", src)
             self.assertNotIn("qrCanvas", src)
             self.assertNotIn("loQrCanvas", src)
-        self.assertIn('id="pdfInput"', upload)
-        self.assertIn('accept=".csv,.pdf,.jpg,.jpeg,.png"', upload)
+        self.assertIn('id="csvInput"', upload)
+        self.assertIn('accept=".csv"', upload)
         self.assertIn('id="loCsvInput"', assignments)
         self.assertIn('id="loCsvChooseBtn"', assignments)
         self.assertIn('id="loCsvTemplateCount"', assignments)
@@ -8540,6 +8681,45 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         self.assertGreater(remove_at, gate0)
         self.assertEqual(unlock.count('classList.remove("overflow-hidden")'), 2)
         self.assertNotIn('classList.add("overflow-hidden")', unlock)
+
+
+class TestAnalyzeGradePdfGone(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+
+    def test_logged_in_instructor_post_is_404(self):
+        rv = self.client.post(
+            "/api/analyze-grade-pdf",
+            data={"pdf": (io.BytesIO(b"%PDF"), "sheet.pdf")},
+            content_type="multipart/form-data",
+            headers={"X-CSRF-Token": "test-csrf"},
+        )
+        self.assertEqual(rv.status_code, 404)
+
+
+class TestGeminiDependencyGone(unittest.TestCase):
+    def test_requirements_and_app_have_no_genai(self):
+        root = os.path.join(os.path.dirname(__file__), "..")
+        req_path = os.path.join(root, "requirements.txt")
+        with open(req_path, encoding="utf-8") as f:
+            requirements = f.read()
+        self.assertNotIn("google-genai", requirements.lower())
+        app_dir = os.path.join(root, "app")
+        for dirpath, _, files in os.walk(app_dir):
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(dirpath, name)
+                with open(path, encoding="utf-8") as f:
+                    text = f.read()
+                self.assertNotIn("google.genai", text)
+                self.assertNotIn("GEMINI_", text)
 
 
 if __name__ == '__main__':

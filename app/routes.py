@@ -53,7 +53,6 @@ from app.models import (
     Homework,
     ASSIGNMENT_TYPES,
 )
-from app.dao.gemini_analyzer import get_gemini_analyzer
 from app.student_names import (
     COMMA_REQUIRED,
     display_name,
@@ -270,17 +269,6 @@ def parse_learning_objectives_csv_text(text: str) -> Tuple[List[Dict[str, Any]],
     if not rows_out:
         return [], ["No data rows with a non-empty title"]
     return rows_out, warnings
-
-
-def _allowed_grade_upload_signature(file_bytes: bytes, filename: str) -> bool:
-    fn = str(filename or "").strip().lower()
-    if fn.endswith(".pdf"):
-        return file_bytes.startswith(b"%PDF")
-    if fn.endswith(".png"):
-        return file_bytes.startswith(b"\x89PNG\r\n\x1a\n")
-    if fn.endswith(".jpg") or fn.endswith(".jpeg"):
-        return file_bytes.startswith(b"\xff\xd8")
-    return False
 
 
 def _request_cache() -> Dict[str, Any]:
@@ -2916,6 +2904,19 @@ _GRADESHEET_HEADER_ERROR = (
     "The header row must start with Student Name,HW followed by learning-objective codes."
 )
 
+_NOT_GRADESHEET_EXPORT = (
+    "This file is not a Clarity gradesheet export. "
+    "Download a blank gradesheet for an assignment and fill that in."
+)
+
+
+def _collapse_assignment_title(value) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _normalize_assignment_title(value) -> str:
+    return _collapse_assignment_title(value).casefold()
+
 
 def parse_blank_gradesheet_csv_text(
     text: str,
@@ -2932,18 +2933,19 @@ def parse_blank_gradesheet_csv_text(
 
     rows = list(csv.reader(io.StringIO(raw)))
     if len(rows) < 4:
-        return None, (
-            "CSV does not match the gradesheet format. "
-            "Expected Assignment, Date, optional note rows, a blank separator, "
-            "then a Student Name,HW,<LO codes> header."
-        )
+        return None, _NOT_GRADESHEET_EXPORT
 
     r0 = _csv_row_cells(rows[0])
     r1 = _csv_row_cells(rows[1])
-    if len(r0) < 2 or r0[0].lower() != "assignment" or not r0[1]:
-        return None, "Row 1 must be Assignment,<assignment name>."
-    if len(r1) < 1 or r1[0].lower() != "date":
-        return None, "Row 2 must be Date,<date>."
+    assignment_name = _collapse_assignment_title(r0[1] if len(r0) > 1 else "")
+    if (
+        not r0
+        or r0[0].lower() != "assignment"
+        or not _normalize_assignment_title(assignment_name)
+    ):
+        return None, _NOT_GRADESHEET_EXPORT
+    if not r1 or r1[0].lower() != "date":
+        return None, _NOT_GRADESHEET_EXPORT
 
     # Metadata (Assignment, Date, NOTE, extra note lines) may grow. Do not
     # assume a fixed header index. Skip every non-blank row after Date until
@@ -3042,7 +3044,7 @@ def parse_blank_gradesheet_csv_text(
             return None, f"CSV has too many student rows (max {MAX_IMPORT_ROWS})."
 
     return {
-        "assignment_name": r0[1],
+        "assignment_name": assignment_name,
         "date_value": r1[1] if len(r1) > 1 else "",
         "learning_objectives": lo_headers,
         "homework_column": "HW",
@@ -3830,12 +3832,6 @@ def update_grade_handler(class_id):
         "class_name": class_data.get("name"),
         "assignments": assignments,
     }
-    if assignments:
-        try:
-            template_kwargs["learning_objectives"] = Course.get_learning_objectives(class_id) or []
-        except Exception as e:
-            logger.error("upload_grades: failed to load LOs for class %s: %s", class_id, e)
-            template_kwargs["learning_objectives"] = []
 
     roster = []
     for enrollment in class_data.get("enrollments") or []:
@@ -4878,88 +4874,11 @@ def api_import_grades():
     }), 200
 
 
-@main_bp.route("/api/analyze-grade-pdf", methods=["POST"])
-@api_instructor_required
-@rate_limited("analyze_grade_pdf", limit=30, window_sec=900)
-def analyze_grade_pdf():
-    """
-    Analyze a grade sheet (PDF or JPG) using Gemini Vision.
-    Returns extracted student data and learning objectives.
-    Works with both printed and handwritten grade sheets.
-    
-    Returns:
-        JSON with:
-        - success: bool
-        - data: {students, learning_objectives, raw_text}
-        - error: str (if failed)
-    """
-    try:
-        # Check if file is in request
-        if 'pdf' not in request.files:
-            return jsonify({
-                "success": False,
-                "error": "No file provided"
-            }), 400
-        
-        pdf_file = request.files['pdf']
-        
-        if pdf_file.filename == '':
-            return jsonify({
-                "success": False,
-                "error": "No file selected"
-            }), 400
-        
-        # Allow PDF and image files
-        allowed_extensions = ('.pdf', '.jpg', '.jpeg', '.png')
-        if not pdf_file.filename.lower().endswith(allowed_extensions):
-            return jsonify({
-                "success": False,
-                "error": "File must be a PDF, JPG, or PNG"
-            }), 400
-        
-        # Initialize Gemini Analyzer
-        logger.info("Getting Gemini analyzer...")
-        analyzer = get_gemini_analyzer()
-        logger.info("Analyzer ready: %s", analyzer is not None)
-        
-        if analyzer is None:
-            logger.error(
-                "Grade sheet analysis unavailable: GEMINI_API_KEY not configured or google-genai not installed"
-            )
-            return jsonify({
-                "success": False,
-                "error": "Grade sheet analysis is not configured."
-            }), 500
-        
-        # Read file content and enforce server-side size/signature checks.
-        pdf_content = pdf_file.read()
-        if len(pdf_content) > 10 * 1024 * 1024:
-            return jsonify({"success": False, "error": "File is too large"}), 400
-        if not _allowed_grade_upload_signature(pdf_content, pdf_file.filename):
-            return jsonify({"success": False, "error": "File contents do not match an allowed format"}), 400
-        
-        # Analyze PDF with Gemini
-        extracted_data = analyzer.analyze_pdf(pdf_content)
-        
-        return jsonify({
-            "success": True,
-            "data": {
-                "students": extracted_data.get('students', []),
-                "learning_objectives": extracted_data.get('learning_objectives', []),
-                "raw_text": extracted_data.get('raw_text', ''),
-                "extraction_path": extracted_data.get('extraction_path', 'vision'),
-            }
-        }), 200
-        
-    except Exception as e:
-        return _safe_api_error("Failed to analyze uploaded file", 500, log_detail=e)
-
-
 @main_bp.route("/api/class/<class_id>/parse-grade-csv", methods=["POST"])
 @api_instructor_required
 @rate_limited("parse_grade_csv", limit=30, window_sec=900)
 def api_parse_grade_csv(class_id):
-    """Parse a Download Blank CSV gradesheet locally. Does not call Gemini."""
+    """Parse a Download Blank CSV gradesheet locally."""
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
 
@@ -4992,24 +4911,34 @@ def api_parse_grade_csv(class_id):
         return jsonify({"success": False, "error": err}), 400
 
     assignment_name = payload.get("assignment_name") or ""
-    matched_id = None
+    needle = _normalize_assignment_title(assignment_name)
     try:
         asg_resp = (
             supabase_admin.table("assignments")
             .select("id, name")
             .eq("class_id", class_id)
-            .eq("name", assignment_name)
             .execute()
         )
-        matches = asg_resp.data or []
-        if len(matches) == 1:
-            matched_id = matches[0].get("id")
+        matches = [
+            row for row in (asg_resp.data or [])
+            if _normalize_assignment_title(row.get("name")) == needle
+        ]
     except Exception as e:
-        logger.error("parse-grade-csv assignment lookup failed: %s", e)
+        return _safe_api_error("Could not match the assignment", 500, log_detail=e)
 
+    if not matches:
+        return jsonify({
+            "success": False,
+            "error": f"No assignment named '{assignment_name}' in this class.",
+        }), 400
+
+    ambiguous = len(matches) > 1
+    matched = matches[0] if not ambiguous else {}
     return jsonify({
         "success": True,
-        "matched_assignment_id": matched_id,
+        "matched_assignment_id": None if ambiguous else matched.get("id"),
+        "matched_assignment_title": None if ambiguous else matched.get("name"),
+        "assignment_match": "ambiguous" if ambiguous else "matched",
         "data": {
             "students": payload.get("students") or [],
             "learning_objectives": payload.get("learning_objectives") or [],

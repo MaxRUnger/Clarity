@@ -1,10 +1,10 @@
 /**
- * Grade Sheet PDF Upload and Gemini Analysis
+ * Grade Sheet CSV Upload
  * Step order: Upload -> Map Assignment -> Review & Edit -> Confirm
  * Features: speed-grader keyboard shortcuts, LO comparison, dark mode support
  *
  * Important constraints:
- * - Module-level state (uploadedPDFData) is intentionally
+ * - Module-level state (uploadedCsvData) is intentionally
  *   global because the wizard spans multiple step transitions inside the same
  *   page. Resetting state happens only when the user explicitly starts over.
  * - All `.grade-cell` keyboard handling is *delegated* on the table container
@@ -12,7 +12,10 @@
  *   because the table is re-rendered when users add/remove rows.
  */
 
-let uploadedPDFData = null;
+let uploadedCsvData = null;
+let csvMatchedAssignmentId = null;
+let csvMatchedAssignmentTitle = '';
+let csvMatchNoteKind = '';
 let classRoster = [];
 
 (function loadClassRoster() {
@@ -56,13 +59,6 @@ function isHomeworkHeader(lo) {
   return false;
 }
 
-function extractionPathLabel(path) {
-  if (path === 'pdf_table') return 'Extracted from PDF table (local, fast).';
-  if (path === 'pdf_text') return 'Extracted from PDF text layout (local).';
-  if (path === 'csv') return 'Read from CSV (no OCR).';
-  return 'Extracted with AI (Gemini).';
-}
-
 // ============================================================================
 // FILE UPLOAD HANDLING
 // ============================================================================
@@ -89,11 +85,63 @@ function clearUploadParseError() {
   el.classList.add('hidden');
 }
 
+function clearCsvAssignmentMatch() {
+  csvMatchedAssignmentId = null;
+  csvMatchedAssignmentTitle = '';
+  csvMatchNoteKind = '';
+  const note = document.getElementById('csvAssignmentMatchNote');
+  if (note) {
+    note.textContent = '';
+    note.classList.add('hidden');
+  }
+  const line = document.getElementById('csvMatchedAssignmentLine');
+  if (line) line.textContent = '';
+}
+
+function syncCsvAssignmentMatchNote() {
+  const note = document.getElementById('csvAssignmentMatchNote');
+  const sel = document.getElementById('assignmentSelect');
+  if (!note) return;
+  const selected = sel ? String(sel.value || '') : '';
+  if (
+    csvMatchNoteKind === 'matched' &&
+    csvMatchedAssignmentId &&
+    selected === String(csvMatchedAssignmentId)
+  ) {
+    note.textContent = 'Matched from your file: ' + csvMatchedAssignmentTitle;
+    note.classList.remove('hidden');
+    return;
+  }
+  if (csvMatchNoteKind === 'ambiguous' && !selected) {
+    note.textContent = "Your file's assignment name matches more than one assignment. Choose one.";
+    note.classList.remove('hidden');
+    return;
+  }
+  note.textContent = '';
+  note.classList.add('hidden');
+}
+
+function syncCsvMatchedAssignmentLine() {
+  const line = document.getElementById('csvMatchedAssignmentLine');
+  const sel = document.getElementById('assignmentSelect');
+  if (!line) return;
+  if (!sel || !sel.value) {
+    line.textContent = '';
+    return;
+  }
+  const chosen = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
+  if (csvMatchedAssignmentId && String(sel.value) === String(csvMatchedAssignmentId)) {
+    line.textContent = 'Assignment: ' + csvMatchedAssignmentTitle + ' (matched from your file)';
+  } else {
+    line.textContent = 'Assignment: ' + chosen;
+  }
+}
+
 function resetUploadChooser() {
-  const pdfInput = document.getElementById('pdfInput');
+  const csvInput = document.getElementById('csvInput');
   const fileName = document.getElementById('selectedFileName');
   const nextBtn = document.getElementById('nextBtn1');
-  if (pdfInput) pdfInput.value = '';
+  if (csvInput) csvInput.value = '';
   if (fileName) {
     fileName.textContent = '';
     fileName.classList.add('hidden');
@@ -102,7 +150,8 @@ function resetUploadChooser() {
     nextBtn.disabled = true;
     nextBtn.classList.add('opacity-50', 'cursor-not-allowed');
   }
-  uploadedPDFData = null;
+  uploadedCsvData = null;
+  clearCsvAssignmentMatch();
 }
 
 function handleFileSelect(input) {
@@ -111,9 +160,8 @@ function handleFileSelect(input) {
 
   clearUploadParseError();
 
-  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
-  if (!isCsvUpload(file) && !allowedTypes.includes(file.type)) {
-    showUploadParseError('Please select a CSV, PDF, JPG, or PNG file');
+  if (!isCsvUpload(file)) {
+    showUploadParseError('Please select a CSV file');
     resetUploadChooser();
     return;
   }
@@ -129,7 +177,8 @@ function handleFileSelect(input) {
   fileName.textContent = `Selected: ${file.name}`;
   fileName.classList.remove('hidden');
 
-  uploadedPDFData = null;
+  uploadedCsvData = null;
+  clearCsvAssignmentMatch();
 
   const nextBtn = document.getElementById('nextBtn1');
   nextBtn.disabled = false;
@@ -140,7 +189,7 @@ function handleFileSelect(input) {
 document.addEventListener('DOMContentLoaded', function () {
   const dropZone = document.getElementById('dropZone');
   const dropArea = document.getElementById('dropArea');
-  const pdfInput = document.getElementById('pdfInput');
+  const csvInput = document.getElementById('csvInput');
 
   if (dropZone) {
     dropZone.addEventListener('dragover', (e) => {
@@ -154,8 +203,8 @@ document.addEventListener('DOMContentLoaded', function () {
       e.preventDefault();
       dropArea.classList.remove('border-blue-500', 'bg-blue-50');
       if (e.dataTransfer.files.length > 0) {
-        pdfInput.files = e.dataTransfer.files;
-        handleFileSelect(pdfInput);
+        csvInput.files = e.dataTransfer.files;
+        handleFileSelect(csvInput);
       }
     });
   }
@@ -184,14 +233,14 @@ function goToStep(stepNumber) {
 
   if (stepNumber > current) {
     if (!validateStep(current)) return;
-    // Trigger Gemini analysis when leaving step 1 for the first time
-    if (current === 1 && !uploadedPDFData) {
+    // Parse the CSV when leaving step 1 for the first time
+    if (current === 1 && !uploadedCsvData) {
       analyzeUpload();
       return;
     }
     // Render the extracted data table when entering step 3
-    if (stepNumber === 3 && uploadedPDFData) {
-      displayExtractedData(uploadedPDFData);
+    if (stepNumber === 3 && uploadedCsvData) {
+      displayExtractedData(uploadedCsvData);
     }
     // Populate confirm summary when entering step 4
     if (stepNumber === 4) populateConfirmSummary();
@@ -203,6 +252,8 @@ function goToStep(stepNumber) {
     if (p) p.classList.toggle('hidden', i !== stepNumber);
   }
   updateStepIndicators(stepNumber);
+  if (stepNumber === 2) syncCsvAssignmentMatchNote();
+  if (stepNumber === 3) syncCsvMatchedAssignmentLine();
 }
 
 function getCurrentStep() {
@@ -215,27 +266,13 @@ function getCurrentStep() {
 
 function validateStep(step) {
   if (step === 1) {
-    const pdfInput = document.getElementById('pdfInput');
-    if (!pdfInput.files || pdfInput.files.length === 0) {
-      alert('Please select a CSV, PDF, JPG, or PNG file');
+    const csvInput = document.getElementById('csvInput');
+    if (!csvInput.files || csvInput.files.length === 0) {
+      alert('Please select a CSV file');
       return false;
     }
   }
   if (step === 2) {
-    const createMode = document.getElementById('mapModeCreate');
-    if (createMode && createMode.checked) {
-      const nameEl = document.getElementById('newAssignmentName');
-      const hwEl = document.getElementById('newAssignmentHwGroup');
-      if (!nameEl || !String(nameEl.value || '').trim()) {
-        alert('Enter a name for the new assignment.');
-        return false;
-      }
-      if (!hwEl || !String(hwEl.value || '').trim()) {
-        alert('Enter a homework group for the new assignment.');
-        return false;
-      }
-      return true;
-    }
     const sel = document.getElementById('assignmentSelect');
     if (!sel || !sel.value) {
       alert('Please select an assignment before continuing.');
@@ -288,6 +325,8 @@ function updateStepIndicators(currentStep) {
 // ============================================================================
 
 function onAssignmentSelected() {
+  syncCsvAssignmentMatchNote();
+  syncCsvMatchedAssignmentLine();
   const sel = document.getElementById('assignmentSelect');
   if (!sel || !sel.value) return;
 
@@ -304,160 +343,30 @@ function onAssignmentSelected() {
   approvedExtraLOs.clear();
 
   // If extracted data already exists, run comparison immediately
-  if (uploadedPDFData) runLOComparison();
+  if (uploadedCsvData) runLOComparison();
 }
 
-function onMapModeChange() {
-  const createOn = document.getElementById('mapModeCreate') && document.getElementById('mapModeCreate').checked;
-  const fields = document.getElementById('createAssignmentFields');
-  const sel = document.getElementById('assignmentSelect');
-  if (fields) fields.classList.toggle('hidden', !createOn);
-  if (sel) sel.disabled = !!createOn;
-}
-
-function prefillCreateAssignmentFromCsv(data) {
-  const name = String((data && data.assignment_name) || '').trim();
-  const dateVal = String((data && data.date_value) || '').trim();
-  const nameEl = document.getElementById('newAssignmentName');
-  const hwEl = document.getElementById('newAssignmentHwGroup');
-  const createRadio = document.getElementById('mapModeCreate');
-  if (nameEl) nameEl.value = name;
-  if (hwEl && !String(hwEl.value || '').trim()) hwEl.value = name;
-  if (createRadio) {
-    createRadio.checked = true;
-    onMapModeChange();
-  }
-  window.__csvDateReturned = /^\d{4}-\d{2}-\d{2}$/.test(dateVal) ? dateVal : '';
-}
-
-function classLoIdsForExtractedHeaders() {
-  const codes = new Set(
-    ((uploadedPDFData && uploadedPDFData.learning_objectives) || []).map(function (c) {
-      return String(c || '').toUpperCase();
-    })
-  );
-  return (window.CLASS_LOS || [])
-    .filter(function (lo) {
-      return codes.has(String(lo.vendor_code || '').toUpperCase());
-    })
-    .map(function (lo) { return lo.id; })
-    .filter(Boolean);
-}
-
-function vendorCodeForLoId(loId) {
-  const hit = (window.CLASS_LOS || []).find(function (lo) {
-    return String(lo.id) === String(loId);
-  });
-  return hit && hit.vendor_code ? hit.vendor_code : '';
-}
-
-async function createAssignmentFromMapStep() {
-  const name = String((document.getElementById('newAssignmentName') || {}).value || '').trim();
-  const hwGroup = String((document.getElementById('newAssignmentHwGroup') || {}).value || '').trim();
-  const typeEl = document.getElementById('newAssignmentType');
-  const assignmentType = typeEl ? typeEl.value : 'mastery_opp';
-  const selectedLos = classLoIdsForExtractedHeaders();
-  const body = {
-    name: name,
-    homework_group: hwGroup,
-    assignment_type: assignmentType,
-    selected_los: selectedLos,
-  };
-  if (window.__csvDateReturned) body.date_returned = window.__csvDateReturned;
-
-  const resp = await fetch('/class/' + encodeURIComponent(window.CLASS_ID) + '/create_assignment', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    body: JSON.stringify(body)
-  });
-  const result = await resp.json().catch(function () { return {}; });
-  if (!resp.ok || !result.success || !result.id) {
-    throw new Error(result.error || 'Could not create assignment');
-  }
-
-  const newId = String(result.id);
-  const ao = selectedLos.map(function (loId) {
-    return {
-      learning_objective_id: loId,
-      learning_objectives: { vendor_code: vendorCodeForLoId(loId) }
-    };
-  });
-  window.ASSIGNMENTS_DATA = window.ASSIGNMENTS_DATA || [];
-  window.ASSIGNMENTS_DATA.push({
-    id: newId,
-    name: name,
-    assignment_type: assignmentType,
-    assignment_objectives: ao
-  });
-  const sel = document.getElementById('assignmentSelect');
-  if (sel) {
-    const opt = document.createElement('option');
-    opt.value = newId;
-    opt.textContent = name;
-    sel.appendChild(opt);
-    sel.disabled = false;
-    sel.value = newId;
-  }
-  const existingRadio = document.getElementById('mapModeExisting');
-  if (existingRadio) existingRadio.checked = true;
-  onMapModeChange();
-  onAssignmentSelected();
-  return true;
-}
-
-async function continueFromMapStep() {
+function continueFromMapStep() {
   if (!validateStep(2)) return;
-  const createOn = document.getElementById('mapModeCreate') && document.getElementById('mapModeCreate').checked;
-  if (createOn) {
-    const name = String((document.getElementById('newAssignmentName') || {}).value || '').trim();
-    const hwGroup = String((document.getElementById('newAssignmentHwGroup') || {}).value || '').trim();
-    if (!name) {
-      alert('Please provide an assignment name.');
-      return;
-    }
-    if (!hwGroup) {
-      alert('Please provide a homework group (e.g., Quiz 1, Unit 3, Midterm).');
-      return;
-    }
-  }
-  const btn = document.getElementById('nextBtn2');
-  const orig = btn ? btn.innerHTML : '';
-  try {
-    if (createOn) {
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Creating assignment';
-      }
-      await createAssignmentFromMapStep();
-    }
-    goToStep(3);
-  } catch (err) {
-    alert('Error creating assignment: ' + (err.message || err));
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = orig;
-    }
-  }
+  goToStep(3);
 }
 
 function runLOComparison() {
   const section = document.getElementById('loComparisonSection');
   const content = document.getElementById('loComparisonContent');
-  if (!section || !content || !uploadedPDFData) return;
+  if (!section || !content || !uploadedCsvData) return;
 
-  const scannedLOs = uploadedPDFData.learning_objectives || [];
+  const fileLearningObjectives = uploadedCsvData.learning_objectives || [];
   const assignSet = new Set(assignmentLOs.map(v => v.toUpperCase()));
 
   const matched = [];
   const extra   = [];
-  scannedLOs.forEach(lo => {
+  fileLearningObjectives.forEach(lo => {
     if (assignSet.has(lo.toUpperCase())) matched.push(lo);
     else extra.push(lo);
   });
 
-  const missing = assignmentLOs.filter(v => !scannedLOs.map(s => s.toUpperCase()).includes(v.toUpperCase()));
+  const missing = assignmentLOs.filter(v => !fileLearningObjectives.map(s => s.toUpperCase()).includes(v.toUpperCase()));
 
   let html = '';
 
@@ -469,7 +378,7 @@ function runLOComparison() {
   if (extra.length) {
     lastExtraLOList = extra.slice();
     html += '<div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-1">';
-    html += '<p class="text-xs font-medium text-slate-500 dark:text-slate-400">Extra (found by Gemini but not in assignment)</p>';
+    html += '<p class="text-xs font-medium text-slate-500 dark:text-slate-400">Extra (in the file but not in the assignment)</p>';
     html += '<div class="flex items-center gap-2 shrink-0 text-xs">';
     html += '<button type="button" class="font-medium text-amber-600 dark:text-amber-400 hover:underline" onclick="setAllExtraLOs(true)">Select all</button>';
     html += '<span class="text-slate-400" aria-hidden="true">|</span>';
@@ -489,7 +398,7 @@ function runLOComparison() {
     lastExtraLOList = [];
   }
   if (missing.length) {
-    html += '<p class="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Missing (in assignment but not scanned)</p><div class="flex flex-wrap gap-2 mb-3">';
+    html += '<p class="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Missing (in assignment but not in the file)</p><div class="flex flex-wrap gap-2 mb-3">';
     missing.forEach(lo => { html += `<span class="lo-missing px-2.5 py-1 rounded-full text-xs font-semibold">${escapeHTML(lo)}</span>`; });
     html += '</div>';
   }
@@ -517,26 +426,22 @@ function setAllExtraLOs(checked) {
 }
 
 // ============================================================================
-// PDF / GEMINI ANALYSIS
+// CSV PARSE
 // ============================================================================
 
 async function analyzeUpload() {
-  const pdfInput = document.getElementById('pdfInput');
-  const file = pdfInput.files[0];
-  if (!file) {
-    showUploadParseError('Please select a CSV, PDF, JPG, or PNG file');
+  const csvInput = document.getElementById('csvInput');
+  const file = csvInput.files[0];
+  if (!file || !isCsvUpload(file)) {
+    showUploadParseError('Please select a CSV file');
     return;
   }
-  if (isCsvUpload(file)) {
-    await analyzeCsv(file);
-    return;
-  }
-  await analyzePDF();
+  await analyzeCsv(file);
 }
 
 function csvLoHasAnyGrade(lo) {
   const code = String(lo || '').toUpperCase();
-  return (uploadedPDFData.students || []).some(function (s) {
+  return (uploadedCsvData.students || []).some(function (s) {
     const grades = (s && s.grades) || {};
     return Object.keys(grades).some(function (k) {
       return String(k).toUpperCase() === code && String(grades[k] || '').trim() !== '';
@@ -551,13 +456,10 @@ function applyCsvAssignmentMapping(matchedId) {
     return String(opt.value) === String(matchedId);
   });
   if (!ok) return false;
-  const existingRadio = document.getElementById('mapModeExisting');
-  if (existingRadio) existingRadio.checked = true;
-  onMapModeChange();
   sel.value = String(matchedId);
   onAssignmentSelected();
   const assignSet = new Set(assignmentLOs.map(function (v) { return String(v).toUpperCase(); }));
-  (uploadedPDFData.learning_objectives || []).forEach(function (lo) {
+  (uploadedCsvData.learning_objectives || []).forEach(function (lo) {
     if (assignSet.has(String(lo).toUpperCase())) return;
     if (csvLoHasAnyGrade(lo)) approvedExtraLOs.add(lo);
   });
@@ -569,6 +471,7 @@ async function analyzeCsv(file) {
   const origHTML = nextBtn.innerHTML;
   nextBtn.disabled = true;
   nextBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Parsing CSV';
+  clearCsvAssignmentMatch();
 
   try {
     const formData = new FormData();
@@ -588,12 +491,27 @@ async function analyzeCsv(file) {
     }
     const result = await resp.json();
     if (!result.success) throw new Error(result.error || 'CSV parse failed');
-    uploadedPDFData = result.data;
-    displayExtractedLOs(uploadedPDFData);
-    if (result.matched_assignment_id && applyCsvAssignmentMapping(result.matched_assignment_id)) {
-      goToStep(3);
+    uploadedCsvData = result.data;
+    displayExtractedLOs(uploadedCsvData);
+    if (result.assignment_match === 'ambiguous') {
+      const sel = document.getElementById('assignmentSelect');
+      if (sel) sel.value = '';
+      csvMatchNoteKind = 'ambiguous';
+      syncCsvAssignmentMatchNote();
+      goToStep(2);
+    } else if (result.matched_assignment_id) {
+      csvMatchedAssignmentId = String(result.matched_assignment_id);
+      csvMatchedAssignmentTitle = String(result.matched_assignment_title || '');
+      csvMatchNoteKind = 'matched';
+      if (applyCsvAssignmentMapping(result.matched_assignment_id)) {
+        syncCsvAssignmentMatchNote();
+        syncCsvMatchedAssignmentLine();
+        goToStep(3);
+      } else {
+        clearCsvAssignmentMatch();
+        goToStep(2);
+      }
     } else {
-      prefillCreateAssignmentFromCsv(uploadedPDFData);
       goToStep(2);
     }
   } catch (err) {
@@ -602,7 +520,7 @@ async function analyzeCsv(file) {
     resetUploadChooser();
   } finally {
     nextBtn.innerHTML = origHTML;
-    const input = document.getElementById('pdfInput');
+    const input = document.getElementById('csvInput');
     const hasFile = input && input.files && input.files.length > 0;
     nextBtn.disabled = !hasFile;
     if (hasFile) {
@@ -613,50 +531,6 @@ async function analyzeCsv(file) {
   }
 }
 
-async function analyzePDF() {
-  const pdfInput = document.getElementById('pdfInput');
-  const file = pdfInput.files[0];
-  if (!file) { alert('Please select a PDF file'); return; }
-
-  const nextBtn = document.getElementById('nextBtn1');
-  const origHTML = nextBtn.innerHTML;
-  nextBtn.disabled = true;
-  nextBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Analyzing with Gemini\u2026';
-
-  try {
-    const formData = new FormData();
-    formData.append('pdf', file);
-
-    const resp = await fetch('/api/analyze-grade-pdf', { method: 'POST', body: formData });
-    if (!resp.ok) {
-      const contentType = resp.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const e = await resp.json();
-        throw new Error(e.error || 'Failed to analyze PDF');
-      }
-      throw new Error(resp.status === 502 || resp.status === 504
-        ? 'Request timed out. The AI service may be busy — please try again.'
-        : `Server error (${resp.status}). Please try again.`);
-    }
-
-    const result = await resp.json();
-    if (!result.success) throw new Error(result.error || 'Analysis failed');
-
-    uploadedPDFData = result.data;
-
-    // Pre-populate LO badges on step 3
-    displayExtractedLOs(uploadedPDFData);
-
-    // Jump to step 2 (Map Assignment)
-    goToStep(2);
-  } catch (err) {
-    console.error('Gemini error:', err);
-    showUploadParseError('Error analyzing PDF: ' + err.message);
-  } finally {
-    nextBtn.disabled = false;
-    nextBtn.innerHTML = origHTML;
-  }
-}
 
 // ============================================================================
 // DISPLAY EXTRACTED DATA  (Step 3 — Review & Edit)
@@ -667,9 +541,8 @@ function displayExtractedLOs(data) {
   if (!loContainer) return;
   const los = Array.isArray(data.learning_objectives) ? data.learning_objectives : [];
   const parts = [];
-  const ep = data.extraction_path || 'vision';
   parts.push(
-    `<p class="text-xs text-slate-500 dark:text-slate-400 mb-2">${escapeHTML(extractionPathLabel(ep))}</p>`
+    `<p class="text-xs text-slate-500 dark:text-slate-400 mb-2">${escapeHTML('Read from CSV.')}</p>`
   );
   if (data.homework_column) {
     parts.push(
@@ -704,11 +577,12 @@ function displayExtractedData(data) {
     badge.textContent = sel.options[sel.selectedIndex].text;
     badge.classList.remove('hidden');
   }
+  syncCsvMatchedAssignmentLine();
 
   const table = document.getElementById('extractedStudentsTable');
   if (!table || !data.students) return;
 
-  // Legacy: move HW-style columns from grades into homework_pct (older Gemini output)
+  // Move HW-style columns from grades into homework_pct
   (data.students || []).forEach(s => {
     if (!s.grades) return;
     Object.keys(s.grades).forEach(h => {
@@ -894,8 +768,8 @@ function setCellGrade(cell, grade) {
   gradeHistory.push({ cell, prev });
 
   // Update data model
-  if (uploadedPDFData && uploadedPDFData.students && uploadedPDFData.students[rowIdx]) {
-    const s = uploadedPDFData.students[rowIdx];
+  if (uploadedCsvData && uploadedCsvData.students && uploadedCsvData.students[rowIdx]) {
+    const s = uploadedCsvData.students[rowIdx];
     if (!s.grades) s.grades = {};
     s.grades[lo] = grade;
   }
@@ -913,8 +787,8 @@ function undoLastGrade() {
   const rowIdx = parseInt(cell.dataset.studentIndex);
   const lo     = cell.dataset.lo;
 
-  if (uploadedPDFData && uploadedPDFData.students && uploadedPDFData.students[rowIdx]) {
-    const s = uploadedPDFData.students[rowIdx];
+  if (uploadedCsvData && uploadedCsvData.students && uploadedCsvData.students[rowIdx]) {
+    const s = uploadedCsvData.students[rowIdx];
     if (!s.grades) s.grades = {};
     s.grades[lo] = prev;
   }
@@ -950,25 +824,25 @@ function moveFocus(row, col) {
 // ============================================================================
 
 function updateExtractedStudentName(idx, value) {
-  if (!uploadedPDFData || !uploadedPDFData.students || !uploadedPDFData.students[idx]) return;
-  uploadedPDFData.students[idx].name = value;
+  if (!uploadedCsvData || !uploadedCsvData.students || !uploadedCsvData.students[idx]) return;
+  uploadedCsvData.students[idx].name = value;
   hideImportNameMatchError();
   setReviewContinueEnabled(true);
   paintNameFlags();
 }
 
 function updateExtractedHomeworkPct(idx, value) {
-  if (!uploadedPDFData || !uploadedPDFData.students || !uploadedPDFData.students[idx]) return;
+  if (!uploadedCsvData || !uploadedCsvData.students || !uploadedCsvData.students[idx]) return;
   const t = (value == null) ? '' : String(value).trim();
   if (t === '') {
-    uploadedPDFData.students[idx].homework_pct = null;
+    uploadedCsvData.students[idx].homework_pct = null;
     return;
   }
   const n = parseFloat(t);
   if (Number.isFinite(n)) {
-    uploadedPDFData.students[idx].homework_pct = String(Math.max(0, Math.min(100, Math.round(n * 10) / 10)));
+    uploadedCsvData.students[idx].homework_pct = String(Math.max(0, Math.min(100, Math.round(n * 10) / 10)));
   } else {
-    uploadedPDFData.students[idx].homework_pct = t;
+    uploadedCsvData.students[idx].homework_pct = t;
   }
 }
 
@@ -984,15 +858,15 @@ function populateConfirmSummary() {
   }
 
   const summary = document.getElementById('confirmSummary');
-  if (!summary || !uploadedPDFData) return;
+  if (!summary || !uploadedCsvData) return;
   summary.innerHTML = '';
 }
 
 function buildFilteredStudents() {
   const includeLOs = new Set(assignmentLOs.map(v => v.toUpperCase()));
   approvedExtraLOs.forEach(v => includeLOs.add(v.toUpperCase()));
-  const isCsv = (uploadedPDFData.extraction_path || '') === 'csv';
-  return (uploadedPDFData.students || []).map(s => {
+  const isCsv = (uploadedCsvData.extraction_path || '') === 'csv';
+  return (uploadedCsvData.students || []).map(s => {
     const grades = {};
     Object.keys(s.grades || {}).forEach(lo => {
       if (isHomeworkHeader(lo) || isHwPrevHeader(lo)) return;
@@ -1106,7 +980,7 @@ function restoreImportButton() {
 }
 
 function sheetNameAt(index) {
-  var students = uploadedPDFData && uploadedPDFData.students;
+  var students = uploadedCsvData && uploadedCsvData.students;
   var student = students && students[index];
   return student && student.name != null ? String(student.name) : '';
 }
@@ -1244,7 +1118,7 @@ function buildUnmatchedNameFlag(row) {
 
 function paintNameFlags() {
   clearNameMatchBanners();
-  var students = (uploadedPDFData && uploadedPDFData.students) || [];
+  var students = (uploadedCsvData && uploadedCsvData.students) || [];
   var flags = computeNameFlags(students, classRoster);
   setImportNameConfirmCount(uniqueUnmatchedCount(flags));
   flags.ambiguous.forEach(function (row) {
@@ -1263,8 +1137,8 @@ function paintNameFlags() {
 }
 
 function continueFromReviewStep() {
-  if (!uploadedPDFData || !uploadedPDFData.students) {
-    alert('No extracted data available. Please upload a CSV, PDF, or image first.');
+  if (!uploadedCsvData || !uploadedCsvData.students) {
+    alert('No extracted data available. Please upload a CSV first.');
     return;
   }
   paintNameFlags();
@@ -1279,8 +1153,8 @@ function continueFromReviewStep() {
 async function handleFormSubmit(e) {
   e.preventDefault();
 
-  if (!uploadedPDFData || !uploadedPDFData.students) {
-    alert('No extracted data available. Please upload a CSV, PDF, or image first.');
+  if (!uploadedCsvData || !uploadedCsvData.students) {
+    alert('No extracted data available. Please upload a CSV first.');
     return;
   }
 
@@ -1292,10 +1166,10 @@ async function handleFormSubmit(e) {
 
   const includeLOs = new Set(assignmentLOs.map(v => v.toUpperCase()));
   approvedExtraLOs.forEach(v => includeLOs.add(v.toUpperCase()));
-  const hasHomework = (uploadedPDFData.students || []).some(
+  const hasHomework = (uploadedCsvData.students || []).some(
     s => s.homework_pct != null && String(s.homework_pct).trim() !== ''
   );
-  const isCsv = (uploadedPDFData.extraction_path || '') === 'csv';
+  const isCsv = (uploadedCsvData.extraction_path || '') === 'csv';
   if (!isCsv && includeLOs.size === 0 && !hasHomework) {
     alert(
       'Nothing to import: add learning objectives to this assignment (or approve extra columns in step 2), and/or enter homework % values, then try again.'
@@ -1323,8 +1197,8 @@ async function handleFormSubmit(e) {
   const filteredStudents = buildFilteredStudents();
 
   const filteredLOs = isCsv
-    ? (uploadedPDFData.learning_objectives || []).filter(lo => !isHomeworkHeader(lo) && !isHwPrevHeader(lo))
-    : (uploadedPDFData.learning_objectives || []).filter(lo =>
+    ? (uploadedCsvData.learning_objectives || []).filter(lo => !isHomeworkHeader(lo) && !isHwPrevHeader(lo))
+    : (uploadedCsvData.learning_objectives || []).filter(lo =>
         includeLOs.has(lo.toUpperCase())
       );
 

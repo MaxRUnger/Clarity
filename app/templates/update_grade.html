@@ -5,7 +5,7 @@
 <div class="space-y-6">
   <div>
     <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">Upload Grades</h1>
-    <p class="text-slate-500 dark:text-slate-400 mt-1">Import grades from a PDF, image, or CSV and review before adding to grader</p>
+    <p class="text-slate-500 dark:text-slate-400 mt-1">Import grades from a CSV and review before adding to grader</p>
   </div>
   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-12">
     <div class="max-w-lg mx-auto text-center">
@@ -27,14 +27,14 @@
 <form id="uploadForm" class="space-y-6">
   <div>
     <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">Upload Grades</h1>
-    <p class="text-slate-500 dark:text-slate-400 mt-1">Import grades from a PDF, image, or CSV and review before adding to grader</p>
+    <p class="text-slate-500 dark:text-slate-400 mt-1">Import grades from a CSV and review before adding to grader</p>
   </div>
 
   <!-- Step Progress Indicator -->
   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm px-8 py-6">
     <div class="flex items-center justify-center">
 
-      <!-- Step 1: Upload PDF -->
+      <!-- Step 1: Upload CSV -->
       <div class="flex flex-col items-center step-item" data-step="1">
         <div id="step-icon-1" class="w-10 h-10 rounded-full flex items-center justify-center bg-blue-600 text-white transition-all">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -159,7 +159,7 @@
     .dark .lo-missing   { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
   </style>
 
-  <!-- Step 1: Upload PDF -->
+  <!-- Step 1: Upload CSV -->
   <div id="panel-1" class="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-8 md:p-12">
     <div class="max-w-6xl mx-auto">
       <div class="text-center mb-8">
@@ -169,7 +169,7 @@
           </svg>
         </div>
         <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">Upload Grade Sheet</h2>
-        <p class="text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">Upload a filled blank CSV, or a PDF/JPG/PNG grade sheet. CSV is read on our servers. PDF and images are extracted with Gemini AI.</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">Upload a filled blank CSV. It is read on our servers.</p>
       </div>
 
       <div class="w-full">
@@ -180,8 +180,8 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
               </svg>
               <p class="font-medium text-slate-700 dark:text-slate-300 mb-1">Click to upload or drag and drop</p>
-              <p class="text-sm text-slate-400 dark:text-slate-500">CSV, PDF, JPG, or PNG up to 10MB</p>
-              <input type="file" id="pdfInput" accept=".csv,.pdf,.jpg,.jpeg,.png" class="hidden" onchange="handleFileSelect(this)">
+              <p class="text-sm text-slate-400 dark:text-slate-500">CSV up to 10MB</p>
+              <input type="file" id="csvInput" accept=".csv" class="hidden" onchange="handleFileSelect(this)">
             </div>
           </label>
           <p id="selectedFileName" class="text-sm text-slate-500 dark:text-slate-400 mt-3 hidden"></p>
@@ -201,48 +201,21 @@
   <div id="panel-2" class="hidden bg-white dark:bg-slate-800 rounded-xl shadow-sm p-12">
     <div class="max-w-2xl mx-auto">
       <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">Map Assignment</h2>
-      <p class="text-sm text-slate-500 dark:text-slate-400 mb-6">Select which assignment these grades belong to. The assignment's learning objectives will be used to validate extracted results.</p>
+      <p class="text-sm text-slate-500 dark:text-slate-400 mb-6">Choose which assignment these grades belong to.</p>
 
       <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6 text-sm space-y-4">
-        <label class="flex items-center gap-2 font-medium text-slate-900 dark:text-white cursor-pointer">
-          <input type="radio" name="mapMode" id="mapModeExisting" value="existing" checked onchange="onMapModeChange()">
-          Use an existing assignment
-        </label>
+        <label for="assignmentSelect" class="block font-medium text-slate-900 dark:text-white">Assignment</label>
         <select id="assignmentSelect" onchange="onAssignmentSelected()" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white">
           <option value="" disabled selected>Select assignment</option>
           {% for assignment in assignments %}
             <option value="{{ assignment.id }}">{{ assignment.name }}</option>
           {% endfor %}
         </select>
-        <p class="text-xs text-slate-500 dark:text-slate-400">The assignment's learning objectives will be compared against the uploaded sheet.</p>
-
-        <div class="border-t border-slate-200 dark:border-slate-700 pt-4">
-          <label class="flex items-center gap-2 font-medium text-slate-900 dark:text-white cursor-pointer">
-            <input type="radio" name="mapMode" id="mapModeCreate" value="create" onchange="onMapModeChange()">
-            Create a new assignment
-          </label>
-          <div id="createAssignmentFields" class="hidden mt-3 space-y-3">
-            <div>
-              <label for="newAssignmentName" class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Name</label>
-              <input type="text" id="newAssignmentName" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 text-slate-900 dark:text-white" autocomplete="off">
-            </div>
-            <div>
-              <label for="newAssignmentHwGroup" class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Homework group</label>
-              <input type="text" id="newAssignmentHwGroup" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 text-slate-900 dark:text-white" autocomplete="off">
-            </div>
-            <div>
-              <label for="newAssignmentType" class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Type</label>
-              <select id="newAssignmentType" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 text-slate-900 dark:text-white">
-                <option value="mastery_opp">Mastery Opportunity</option>
-                <option value="exam">Exam</option>
-                <option value="project">Project</option>
-              </select>
-            </div>
-          </div>
-        </div>
+        <p id="csvAssignmentMatchNote" class="hidden text-xs text-slate-500 dark:text-slate-400"></p>
+        <p class="text-xs text-slate-500 dark:text-slate-400">The assignment's learning objectives will be compared against the uploaded CSV.</p>
       </div>
 
-      <!-- LO Comparison Section (populated after assignment selection + Gemini) -->
+      <!-- LO Comparison Section (populated after assignment selection) -->
       <div id="loComparisonSection" class="hidden mb-6">
         <h3 class="text-sm font-semibold text-slate-900 dark:text-white mb-3">Learning Objective Comparison</h3>
         <div id="loComparisonContent"></div>
@@ -266,7 +239,8 @@
       <div class="flex items-start justify-between mb-4">
         <div>
           <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">Review &amp; Edit Extracted Grades</h2>
-          <p class="text-sm text-slate-500 dark:text-slate-400">Confirm or correct what was extracted from your grade sheet using Gemini AI.</p>
+          <p class="text-sm text-slate-500 dark:text-slate-400">Confirm or correct the grades from your CSV.</p>
+          <p id="csvMatchedAssignmentLine" class="text-sm text-slate-600 dark:text-slate-300 mt-2"></p>
         </div>
         <div id="selectedAssignmentBadge" class="text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-3 py-1 rounded-lg hidden"></div>
       </div>
@@ -339,7 +313,7 @@
       <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6 bg-slate-50 dark:bg-slate-700/50 text-sm text-slate-600 dark:text-slate-400 space-y-2">
         <div class="flex items-center gap-2">
           <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
-          PDF uploaded and parsed
+          CSV uploaded and parsed
         </div>
         <div class="flex items-center gap-2">
           <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
@@ -376,8 +350,7 @@
   window.CLASS_ID = "{{ class_id }}";
   // Pass assignment LO data from server to JS
   window.ASSIGNMENTS_DATA = JSON.parse('{{ assignments | tojson }}');
-  window.CLASS_LOS = JSON.parse('{{ learning_objectives | default([]) | tojson }}');
 </script>
-<script src="{{ url_for('static', filename='js/pdf_analyzer.js') }}?v=19"></script>
+<script src="{{ url_for('static', filename='js/csv_wizard.js') }}?v=20"></script>
 {% endif %}
 {% endblock %}
