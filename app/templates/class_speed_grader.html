@@ -1302,10 +1302,10 @@ function filterByAssignment() {
   showFlatGraderLayout();
   restoreLoColumnSubtitles();
   const linkedLoIds = new Set((assignment.assignment_objectives || []).map(ao => String(ao.learning_objective_id)));
-  // When an assignment has no LOs explicitly linked (legacy/PDF-imported rows
-  // never edited in the UI) show every class LO column so grades still surface
-  // here the same way they do on the Reports tab. The scoped filter still
-  // applies as soon as any LO is linked via Class -> Assignments -> Edit.
+  // When an assignment has no linked learning objectives, show every class
+  // learning objective column so those grades still show here the same way
+  // they do on the Reports tab. The scoped filter still applies as soon as
+  // any learning objective is linked via Class -> Assignments -> Edit.
   const showAllLos = linkedLoIds.size === 0;
 
   const loScoped = document.querySelectorAll('#graderTable th[data-lo-id], #graderTable td[data-lo-id]');

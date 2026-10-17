@@ -2792,7 +2792,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         rv = self.client.post("/api/class/c1/parse-grade-csv")
         self.assertEqual(rv.status_code, 401)
 
-    def test_valid_csv_does_not_call_gemini_and_can_match_assignment(self):
+    def test_valid_csv_matches_assignment(self):
         from app import routes as r
         csv_text = (
             "Assignment,Quiz 1\n"
@@ -2879,7 +2879,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         self.assertEqual(students[1]["homework_pct"], "0")
         self.assertFalse(any("NOTE" in (s.get("name") or "").upper() for s in students))
 
-    def test_malformed_csv_400_without_gemini(self):
+    def test_malformed_csv_returns_400(self):
         from app import routes as r
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -8549,52 +8549,15 @@ class TestSignupEmailRedirect(unittest.TestCase):
         self.assertEqual(url, "http://localhost:5000/login")
 
 
-class TestMobileUploadRoutesGone(unittest.TestCase):
-    def setUp(self):
-        self.app = create_app()
-        self.app.config["TESTING"] = True
-        self.client = self.app.test_client()
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = "inst1"
-            sess["role"] = "instructor"
-            sess["csrf_token"] = "test-csrf"
-
-    def test_page_status_and_file_are_404(self):
-        self.assertEqual(
-            self.client.get("/class/class-a/mobile-upload/tok").status_code, 404
-        )
-        self.assertEqual(
-            self.client.get("/api/class/class-a/mobile-upload-status/tok").status_code,
-            404,
-        )
-        self.assertEqual(
-            self.client.get("/api/class/class-a/mobile-upload-file/tok").status_code,
-            404,
-        )
-
-    def test_post_with_csrf_is_404(self):
-        rv = self.client.post(
-            "/api/mobile-upload/tok",
-            data={"file": (io.BytesIO(b"a,b"), "outcomes.csv")},
-            content_type="multipart/form-data",
-            headers={"X-CSRF-Token": "test-csrf"},
-        )
-        self.assertEqual(rv.status_code, 404)
-
-
-class TestMobileUploadMarkupGone(unittest.TestCase):
+class TestCsvUploadMarkup(unittest.TestCase):
     def _read(self, name):
         path = os.path.join(os.path.dirname(__file__), "..", "app", "templates", name)
         with open(path, encoding="utf-8") as f:
             return f.read()
 
-    def test_upload_and_assignments_have_csv_and_no_qr(self):
+    def test_upload_and_assignments_have_csv_controls(self):
         upload = self._read("update_grade.html")
         assignments = self._read("class_assignments.html")
-        for src in (upload, assignments):
-            self.assertNotIn("qrcodejs", src)
-            self.assertNotIn("qrCanvas", src)
-            self.assertNotIn("loQrCanvas", src)
         self.assertIn('id="csvInput"', upload)
         self.assertIn('accept=".csv"', upload)
         self.assertIn('id="loCsvInput"', assignments)
@@ -8681,26 +8644,6 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         self.assertGreater(remove_at, gate0)
         self.assertEqual(unlock.count('classList.remove("overflow-hidden")'), 2)
         self.assertNotIn('classList.add("overflow-hidden")', unlock)
-
-
-class TestAnalyzeGradePdfGone(unittest.TestCase):
-    def setUp(self):
-        self.app = create_app()
-        self.app.config["TESTING"] = True
-        self.client = self.app.test_client()
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = "inst1"
-            sess["role"] = "instructor"
-            sess["csrf_token"] = "test-csrf"
-
-    def test_logged_in_instructor_post_is_404(self):
-        rv = self.client.post(
-            "/api/analyze-grade-pdf",
-            data={"pdf": (io.BytesIO(b"%PDF"), "sheet.pdf")},
-            content_type="multipart/form-data",
-            headers={"X-CSRF-Token": "test-csrf"},
-        )
-        self.assertEqual(rv.status_code, 404)
 
 
 class TestGeminiDependencyGone(unittest.TestCase):

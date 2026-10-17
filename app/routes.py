@@ -4125,9 +4125,9 @@ def api_assignment_grades(class_id, assignment_id):
         # assignment. Class reports load all grade rows per student, so those marks appeared
         # there but not here when we only filtered by assignment_id. Fill gaps from unscoped rows
         # for LOs linked to this assignment (explicit assignment-scoped rows win if both exist).
-        # When assignment_objectives has no rows yet (e.g. PDF-imported assignments that were
-        # never edited in the UI), fall back to every LO in the class so legacy grades still
-        # surface here the same way they do on the Reports tab.
+        # When an assignment has no linked learning objectives, fall back to every
+        # learning objective in the class so those grades still show here the same
+        # way they do on the Reports tab.
         ao_resp = supabase_admin.table("assignment_objectives") \
             .select("learning_objective_id") \
             .eq("assignment_id", assignment_id) \

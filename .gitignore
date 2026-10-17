@@ -13,6 +13,7 @@ __pycache__/
 
 # Test / coverage cache
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
