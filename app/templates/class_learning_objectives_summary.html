@@ -1,54 +1,158 @@
 {% extends "app_base.html" %}
 
+{% macro lo_header_cells() %}
+<th class="sticky left-0 z-10 bg-white dark:bg-slate-800 px-4 py-3 text-left font-semibold text-slate-900 dark:text-white">Student</th>
+{% for lo in learning_objectives %}
+<th class="px-3 py-3 text-center font-semibold text-slate-900 dark:text-white whitespace-nowrap" title="{{ lo.name }}">{{ lo.vendor_code }}</th>
+{% endfor %}
+<th class="px-3 py-3 text-center font-semibold text-slate-900 dark:text-white whitespace-nowrap">Progress</th>
+{% endmacro %}
+
+{% macro lo_student_row(student) %}
+<tr class="border-b border-slate-100 dark:border-slate-700">
+  <td class="sticky left-0 z-10 bg-white dark:bg-slate-800 px-4 py-2 text-slate-900 dark:text-white whitespace-nowrap">{{ student.name }}</td>
+  {% for cell in student.cells %}
+  <td title="{{ cell.text }}" class="px-3 py-2 text-center font-mono min-w-[3ch] {% if cell.status == 'passed' %}text-green-700 dark:text-green-400{% elif cell.status == 'close' %}text-yellow-700 dark:text-yellow-300{% else %}text-red-700 dark:text-red-400{% endif %}">
+    {% if cell.status == 'passed' %}
+    <span class="sr-only">passed</span>
+    <span aria-hidden="true">{{ cell.display }}</span>
+    {% else %}
+    {{ cell.display }}
+    {% endif %}
+  </td>
+  {% endfor %}
+  <td class="lo-progress px-3 py-2 text-center font-mono text-slate-900 dark:text-white whitespace-nowrap">
+    {{ student.progress_text }}
+  </td>
+</tr>
+{% endmacro %}
+
 {% block content %}
-<div class="space-y-6">
-  <div class="flex items-center justify-between">
+{% set lo_count = learning_objectives|length %}
+{% set student_count = grid_rows|length %}
+{% set fit = namespace(col_max=13, font=13, pad=1, rpp=34) %}
+{% if lo_count > 24 %}{% set fit.col_max = 8 %}
+{% elif lo_count > 18 %}{% set fit.col_max = 9 %}
+{% elif lo_count > 12 %}{% set fit.col_max = 11 %}
+{% endif %}
+{% if student_count <= 34 and fit.col_max >= 13 %}
+  {% set fit.font = 13 %}{% set fit.pad = 1 %}{% set fit.rpp = 34 %}
+{% elif student_count <= 45 and fit.col_max >= 11 %}
+  {% set fit.font = 11 %}{% set fit.pad = 1 %}{% set fit.rpp = 45 %}
+{% elif student_count <= 53 and fit.col_max >= 9 %}
+  {% set fit.font = 9 %}{% set fit.pad = 1 %}{% set fit.rpp = 53 %}
+{% elif student_count <= 68 and fit.col_max >= 13 %}
+  {% set fit.font = 13 %}{% set fit.pad = 1 %}{% set fit.rpp = 34 %}
+{% elif student_count <= 90 and fit.col_max >= 11 %}
+  {% set fit.font = 11 %}{% set fit.pad = 1 %}{% set fit.rpp = 45 %}
+{% elif student_count <= 106 and fit.col_max >= 9 %}
+  {% set fit.font = 9 %}{% set fit.pad = 1 %}{% set fit.rpp = 53 %}
+{% else %}
+  {% set fit.font = 8 %}{% set fit.pad = 0 %}{% set fit.rpp = 70 %}
+{% endif %}
+{% set sheets = namespace(chunks=[grid_rows]) %}
+{% if student_count > fit.rpp %}
+  {% set sheets.chunks = [grid_rows[0:fit.rpp], grid_rows[fit.rpp:]] %}
+{% endif %}
+<div class="space-y-6 lo-sheet-page">
+  <div class="lo-print-pages">
+    {% macro lo_passed_row() %}
+    <tr class="border-t border-slate-200 dark:border-slate-700">
+      <th class="sticky left-0 z-10 bg-slate-50 dark:bg-slate-900 px-4 py-3 text-left font-semibold text-slate-900 dark:text-white">Passed</th>
+      {% for lo in learning_objectives %}
+      <td class="px-3 py-3 text-center bg-slate-50 dark:bg-slate-900">
+        <p class="font-semibold text-slate-900 dark:text-white">{{ lo.passed_count }} / {{ total_students }}</p>
+        <p class="text-xs text-slate-500 dark:text-slate-400">passed</p>
+      </td>
+      {% endfor %}
+      <td class="px-3 py-3 bg-slate-50 dark:bg-slate-900"></td>
+    </tr>
+    {% endmacro %}
+    {% if learning_objectives or grid_rows %}
+    {% for chunk in sheets.chunks %}
+    <section class="lo-print-page">
+      {% if loop.first %}
+      <div class="lo-print-title">
+        <h1>Learning Objectives</h1>
+        <div class="lo-print-classline">
+          <p>{{ class_display_title(class_name, class_days, class_section) }}</p>
+          <p class="lo-print-date">Printed {{ printed_on }}</p>
+        </div>
+      </div>
+      {% endif %}
+      <table class="lo-grid lo-fit-{{ fit.font }}">
+        <thead>
+          <tr class="border-b border-slate-200 dark:border-slate-700">
+            {{ lo_header_cells() }}
+          </tr>
+        </thead>
+        <tbody>
+          {% for student in chunk %}
+          {{ lo_student_row(student) }}
+          {% else %}
+          <tr>
+            <td class="px-4 py-6 text-sm text-slate-500 dark:text-slate-400" colspan="{{ learning_objectives|length + 2 }}">No active students.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% if loop.last %}
+        <tfoot>
+          {{ lo_passed_row() }}
+        </tfoot>
+        {% endif %}
+      </table>
+    </section>
+    {% endfor %}
+    {% else %}
+    <section class="lo-print-page">
+      <div class="lo-print-title">
+        <h1>Learning Objectives</h1>
+        <div class="lo-print-classline">
+          <p>{{ class_display_title(class_name, class_days, class_section) }}</p>
+          <p class="lo-print-date">Printed {{ printed_on }}</p>
+        </div>
+      </div>
+      <p>No objectives are attached to an assignment yet.</p>
+    </section>
+    {% endif %}
+  </div>
+  <div class="lo-screen-header flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">Learning Objectives</h1>
       <p class="text-slate-500 dark:text-slate-400 mt-1">{{ class_display_title(class_name, class_days, class_section) }}</p>
     </div>
-    <a href="{{ url_for('main.class_detail', class_id=class_id) }}"
-      class="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors text-sm font-medium text-slate-900 dark:text-white">
-      Back to Dashboard
-    </a>
+    <div class="flex items-center gap-2">
+      <button type="button" onclick="window.print()"
+        class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
+        </svg>
+        Print class sheet
+      </button>
+      <a href="{{ url_for('main.class_detail', class_id=class_id) }}"
+        class="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors text-sm font-medium text-slate-900 dark:text-white">
+        Back to Dashboard
+      </a>
+    </div>
   </div>
 
-  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+  <div class="lo-sheet-card bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
     {% if not learning_objectives %}
     <div class="px-5 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
       No objectives are attached to an assignment yet.
     </div>
     {% endif %}
     {% if learning_objectives or grid_rows %}
-    <div class="overflow-x-auto">
+    <div class="lo-sheet-scroll overflow-x-auto">
       <table class="min-w-full text-sm border-collapse">
         <thead>
           <tr class="border-b border-slate-200 dark:border-slate-700">
-            <th class="sticky left-0 z-10 bg-white dark:bg-slate-800 px-4 py-3 text-left font-semibold text-slate-900 dark:text-white">Student</th>
-            {% for lo in learning_objectives %}
-            <th class="px-3 py-3 text-center font-semibold text-slate-900 dark:text-white whitespace-nowrap" title="{{ lo.name }}">{{ lo.vendor_code }}</th>
-            {% endfor %}
-            <th class="px-3 py-3 text-center font-semibold text-slate-900 dark:text-white whitespace-nowrap">Progress</th>
+            {{ lo_header_cells() }}
           </tr>
         </thead>
         <tbody>
           {% for student in grid_rows %}
-          <tr class="border-b border-slate-100 dark:border-slate-700">
-            <td class="sticky left-0 z-10 bg-white dark:bg-slate-800 px-4 py-2 text-slate-900 dark:text-white whitespace-nowrap">{{ student.name }}</td>
-            {% for cell in student.cells %}
-            <td title="{{ cell.text }}" class="px-3 py-2 text-center font-mono min-w-[3ch] {% if cell.status == 'passed' %}text-green-700 dark:text-green-400{% elif cell.status == 'close' %}text-yellow-700 dark:text-yellow-300{% else %}text-red-700 dark:text-red-400{% endif %}">
-              {% if cell.status == 'passed' %}
-              <span class="sr-only">passed</span>
-              <span aria-hidden="true">{{ cell.display }}</span>
-              {% else %}
-              {{ cell.display }}
-              {% endif %}
-            </td>
-            {% endfor %}
-            <td class="px-3 py-2 text-center font-mono text-slate-900 dark:text-white whitespace-nowrap">
-              {{ student.progress_text }}
-            </td>
-          </tr>
+          {{ lo_student_row(student) }}
           {% else %}
           <tr>
             <td class="px-4 py-6 text-sm text-slate-500 dark:text-slate-400" colspan="{{ learning_objectives|length + 2 }}">No active students.</td>
@@ -56,20 +160,149 @@
           {% endfor %}
         </tbody>
         <tfoot>
-          <tr class="border-t border-slate-200 dark:border-slate-700">
-            <th class="sticky left-0 z-10 bg-slate-50 dark:bg-slate-900 px-4 py-3 text-left font-semibold text-slate-900 dark:text-white">Passed</th>
-            {% for lo in learning_objectives %}
-            <td class="px-3 py-3 text-center bg-slate-50 dark:bg-slate-900">
-              <p class="font-semibold text-slate-900 dark:text-white">{{ lo.passed_count }} / {{ total_students }}</p>
-              <p class="text-xs text-slate-500 dark:text-slate-400">passed</p>
-            </td>
-            {% endfor %}
-            <td class="px-3 py-3 bg-slate-50 dark:bg-slate-900"></td>
-          </tr>
+          {{ lo_passed_row() }}
         </tfoot>
       </table>
     </div>
     {% endif %}
   </div>
 </div>
+<script>
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get("print") !== "1") {
+    return;
+  }
+  window.addEventListener("load", function () {
+    window.setTimeout(function () {
+      // Lets the Tailwind CDN finish applying styles.
+      window.print();
+      params.delete("print");
+      var query = params.toString();
+      var next = window.location.pathname + (query ? "?" + query : "") + window.location.hash;
+      history.replaceState(null, "", next);
+    }, 250);
+  });
+})();
+</script>
+<style>
+.lo-print-pages { display: none; }
+@media print {
+  @page { size: landscape; margin: 0; }
+  html, body, main {
+    background: #fff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  .lo-screen-header,
+  .lo-sheet-card { display: none !important; }
+  .lo-print-pages { display: block !important; }
+  .lo-print-page {
+    padding: 0.2in;
+    background: #fff !important;
+    break-after: page;
+    page-break-after: always;
+  }
+  .lo-print-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  .lo-print-title h1 {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.15;
+    font-weight: 600;
+    color: #64748b !important;
+  }
+  .lo-print-classline {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .lo-print-classline p {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.15;
+    color: #0f172a !important;
+  }
+  .lo-print-date {
+    color: #64748b !important;
+    white-space: nowrap;
+  }
+  .lo-print-page .lo-grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #fff !important;
+  }
+  .lo-print-page .lo-grid.lo-fit-13 { font-size: 13px !important; }
+  .lo-print-page .lo-grid.lo-fit-11 { font-size: 11px !important; }
+  .lo-print-page .lo-grid.lo-fit-9 { font-size: 9px !important; }
+  .lo-print-page .lo-grid.lo-fit-8 { font-size: 8px !important; }
+  .lo-print-page th,
+  .lo-print-page td {
+    position: static !important;
+    background: #fff !important;
+    background-color: #fff !important;
+    border: 1px solid #111827 !important;
+    color: #0f172a !important;
+    padding: 1px 2px !important;
+    line-height: 1.1 !important;
+    font-size: inherit !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .lo-print-page .lo-grid.lo-fit-8 th,
+  .lo-print-page .lo-grid.lo-fit-8 td {
+    padding: 0 1px !important;
+  }
+  .lo-print-page th *,
+  .lo-print-page td * {
+    font-size: inherit !important;
+    color: #0f172a !important;
+  }
+  .lo-print-page td.font-mono,
+  .lo-print-page td.font-mono * {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  }
+  .lo-print-page th:first-child,
+  .lo-print-page td:first-child {
+    width: 14%;
+    text-align: left !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    padding-left: 4px !important;
+  }
+  .lo-print-page th:not(:first-child),
+  .lo-print-page td:not(:first-child) {
+    text-align: center !important;
+  }
+  .lo-print-page .lo-grid thead { display: table-header-group; }
+  .lo-print-page .lo-grid tfoot { display: table-row-group; }
+  .lo-print-page .lo-grid tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .lo-print-page .lo-grid tfoot p {
+    display: inline;
+    margin: 0 !important;
+  }
+  .lo-print-page td.text-green-700,
+  .lo-print-page td.text-green-700 * { color: #166534 !important; }
+  .lo-print-page td.text-yellow-700,
+  .lo-print-page td.text-yellow-700 * { color: #854d0e !important; }
+  .lo-print-page td.text-red-700,
+  .lo-print-page td.text-red-700 * { color: #991b1b !important; }
+  .lo-print-page td.lo-progress,
+  .lo-print-page td.lo-progress * { color: #0f172a !important; }
+}
+</style>
 {% endblock %}

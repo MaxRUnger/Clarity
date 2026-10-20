@@ -8665,5 +8665,138 @@ class TestGeminiDependencyGone(unittest.TestCase):
                 self.assertNotIn("GEMINI_", text)
 
 
+class TestPrintClassSheet(unittest.TestCase):
+    def _template(self, name):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", name,
+        )
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_both_pages_have_print_class_sheet(self):
+        summary = self._template("class_learning_objectives_summary.html")
+        students = self._template("class_students.html")
+        self.assertIn("Print class sheet", summary)
+        self.assertIn("Print class sheet", students)
+        self.assertIn("print student sheets", students)
+        self.assertIn(
+            "url_for('main.class_learning_objectives_summary', class_id=class_id, print=1)",
+            students,
+        )
+
+    def test_summary_auto_print_is_only_for_print_param(self):
+        src = self._template("class_learning_objectives_summary.html")
+        self.assertIn('params.get("print") !== "1"', src)
+        gate = src.find('params.get("print") !== "1"')
+        load = src.find('addEventListener("load"', gate)
+        timer = src.find("setTimeout", load)
+        printed = src.find("window.print()", timer)
+        delay = src.find("}, 250);", timer)
+        replaced = src.find("history.replaceState", printed)
+        self.assertGreater(load, gate)
+        self.assertGreater(timer, load)
+        self.assertGreater(printed, timer)
+        self.assertGreater(delay, printed)
+        self.assertGreater(replaced, printed)
+        self.assertIn("lo-print-title", src)
+        self.assertIn("lo-screen-header", src)
+        self.assertNotIn("print:block", src)
+        self.assertNotIn("print:hidden", src)
+        title = src[src.find('class="lo-print-title"'):src.find("lo-screen-header")]
+        self.assertIn("class_display_title(class_name, class_days, class_section)", title)
+        self.assertNotIn("class_semester", title)
+        self.assertNotIn("{{ class_name }}", title)
+        self.assertNotIn("{{ class_days }}", title)
+
+    def test_summary_print_rules_are_landscape_with_repeating_header(self):
+        src = self._template("class_learning_objectives_summary.html")
+        self.assertIn("@page { size: landscape;", src)
+        self.assertIn("@page { size: landscape; margin: 0; }", src)
+        self.assertIn("table-header-group", src)
+        self.assertIn("table-row-group", src)
+        self.assertNotIn("table-footer-group", src)
+        self.assertIn("font-size: inherit !important", src)
+        self.assertIn("td.text-green-700", src)
+        self.assertIn("td.lo-progress", src)
+        self.assertIn("bg-blue-600", src)
+        self.assertIn("lo-print-page", src)
+        self.assertIn("break-after: page", src)
+        self.assertIn(".lo-print-pages { display: none; }", src)
+        self.assertIn(".lo-print-pages { display: block !important; }", src)
+        print_src = src.split('class="lo-print-pages"', 1)[1].split("lo-screen-header", 1)[0]
+        self.assertEqual(print_src.count(">Passed<"), 1)
+        self.assertEqual(print_src.count("{{ lo_passed_row() }}"), 1)
+
+    def _summary_grid(self, count):
+        los = [{
+            "vendor_code": "T0",
+            "name": "LO 0",
+            "passed_count": 0,
+        }]
+        rows = []
+        for index in range(count):
+            rows.append({
+                "name": "Student %s" % index,
+                "cells": [{
+                    "text": "0/2",
+                    "status": "behind",
+                    "display": "0/2",
+                }],
+                "progress_text": "0/1",
+            })
+        return los, rows
+
+    def _render_summary(self, count):
+        from flask import render_template, session
+        los, rows = self._summary_grid(count)
+        app = create_app()
+        with app.test_request_context("/class/c1/learning-objectives"):
+            session["role"] = "instructor"
+            return render_template(
+                "class_learning_objectives_summary.html",
+                class_id="c1",
+                class_name="Test Upload",
+                class_days="MW",
+                class_section="F26",
+                class_semester="Fall 2026",
+                printed_on="2026-10-20",
+                learning_objectives=los,
+                total_students=count,
+                grid_rows=rows,
+            )
+
+    def test_forty_three_students_print_on_one_page(self):
+        html = self._render_summary(43)
+        self.assertEqual(html.count('class="lo-print-page"'), 1)
+
+    def test_seventy_students_print_on_two_pages(self):
+        html = self._render_summary(70)
+        parts = html.split('class="lo-print-page"')
+        self.assertEqual(len(parts) - 1, 2)
+        self.assertNotIn(">Passed<", parts[1])
+        self.assertIn(">Passed<", parts[2])
+
+    def test_students_link_renders_print_query(self):
+        from flask import render_template, session
+        app = create_app()
+        student = {
+            "id": "s1",
+            "name": "Lee, Ana",
+            "email": "",
+            "learning_objectives": [],
+            "objective_total": 0,
+        }
+        with app.test_request_context("/class/c1/students"):
+            session["role"] = "instructor"
+            html = render_template(
+                "class_students.html",
+                class_id="c1",
+                class_name="MW",
+                students=[student],
+            )
+        self.assertIn("/class/c1/learning-objectives?print=1", html)
+        self.assertIn("print student sheets", html)
+
+
 if __name__ == '__main__':
     unittest.main()

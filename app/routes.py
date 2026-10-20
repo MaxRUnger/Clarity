@@ -1542,6 +1542,8 @@ def class_learning_objectives_summary(class_id):
         class_name=class_data.get("name"),
         class_days=class_data.get("days"),
         class_section=class_data.get("section_number"),
+        class_semester=class_data.get("semester"),
+        printed_on=date.today().isoformat(),
         learning_objectives=summary_rows,
         total_students=total_students,
         grid_rows=grid_rows,
