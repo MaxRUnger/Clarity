@@ -319,7 +319,7 @@
       <div class="flex items-center gap-3">
         <select id="revisionViewSelect" class="revision-modal-chrome px-3 py-2 bg-slate-50 dark:bg-slate-700 rounded-lg text-sm text-slate-900 dark:text-white" onchange="selectRevisionView(this.value)">
           {% for view in revision_report.views %}
-          <option value="{{ view.key }}"{% if view.key == 'overdue' %} selected{% endif %}>{{ view.label }} ({{ view.student_count }})</option>
+          <option value="{{ view.key }}"{% if view.key == 'overdue' %} selected{% endif %}>{% if view.key == '3' and revision_unsent_count %}{{ view.label }} ({{ revision_unsent_count }} not emailed){% elif view.key == '3' and revision_unsent_count == 0 %}{{ view.label }}{% else %}{{ view.label }} ({{ view.student_count }}){% endif %}</option>
           {% endfor %}
         </select>
         <button type="button" onclick="window.print()" class="revision-modal-chrome px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Print</button>
@@ -349,6 +349,14 @@
                   </div>
                 </div>
                 <p class="revision-totals text-sm text-slate-500 dark:text-slate-400 mb-3">{{ view.count_line }}</p>
+                {% if view.key == '3' and revision_email_note %}
+                <p class="revision-modal-chrome text-sm text-slate-600 dark:text-slate-300 mb-3">{{ revision_email_note }}</p>
+                {% endif %}
+                {% if view.key == '3' and revision_unsent_count %}
+                <button type="button" id="revisionEmailBtn" class="revision-modal-chrome mb-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium" onclick="openRevisionEmailModal()">Email students ({{ revision_unsent_count }})</button>
+                {% elif view.key == '3' and revision_unsent_count is none and view.students %}
+                <button type="button" id="revisionEmailBtn" class="revision-modal-chrome mb-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium" onclick="openRevisionEmailModal()">Email students</button>
+                {% endif %}
                 {% if view.students %}
                 <div class="revision-card-columns space-y-3">
                   {% for student in view.students %}
@@ -549,6 +557,20 @@
   }
 }
 </style>
+
+<div id="revisionEmailModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-8 print:hidden">
+  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-lg w-full max-h-[80vh] overflow-hidden flex flex-col" role="dialog" aria-labelledby="revisionEmailTitle">
+    <div class="p-6 border-b border-slate-100 dark:border-slate-700">
+      <h2 id="revisionEmailTitle" class="font-semibold text-slate-900 dark:text-white">Email students</h2>
+    </div>
+    <div id="revisionEmailBody" class="p-6 overflow-y-auto text-sm text-slate-700 dark:text-slate-200 space-y-3"></div>
+    <p id="revisionEmailSummary" class="px-6 text-sm text-slate-700 dark:text-slate-200"></p>
+    <div class="p-6 flex justify-end gap-3">
+      <button type="button" id="revisionEmailCancel" class="px-4 py-2 rounded-lg text-sm text-slate-700 dark:text-slate-200" onclick="closeRevisionEmailModal()">Cancel</button>
+      <button type="button" id="revisionEmailSend" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium" onclick="sendRevisionEmails()">Send</button>
+    </div>
+  </div>
+</div>
 
 <div id="studentManagementModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-8">
   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
@@ -872,6 +894,133 @@ function closeOverdueRevisionsModal() {
   if (wasOpen && window.ClarityUI && typeof window.ClarityUI.unlockPageScroll === 'function') {
     window.ClarityUI.unlockPageScroll();
   }
+}
+
+var revisionEmailNeedsReload = false;
+
+function closeRevisionEmailModal() {
+  var modal = document.getElementById('revisionEmailModal');
+  if (modal) modal.classList.add('hidden');
+  if (window.ClarityUI && typeof window.ClarityUI.unlockPageScroll === 'function') {
+    window.ClarityUI.unlockPageScroll();
+  }
+  if (revisionEmailNeedsReload) {
+    location.reload();
+  }
+}
+
+function revisionEmailLine(label, people) {
+  var block = document.createElement('div');
+  var title = document.createElement('p');
+  title.className = 'font-medium text-slate-900 dark:text-white';
+  title.textContent = label;
+  block.appendChild(title);
+  (people || []).forEach(function (person) {
+    var line = document.createElement('p');
+    line.textContent = person.email ? (person.name + ' <' + person.email + '>') : person.name;
+    block.appendChild(line);
+  });
+  return block;
+}
+
+function openRevisionEmailModal() {
+  var modal = document.getElementById('revisionEmailModal');
+  var body = document.getElementById('revisionEmailBody');
+  var summary = document.getElementById('revisionEmailSummary');
+  var emailSendBtn = document.getElementById('revisionEmailSend');
+  var cancelBtn = document.getElementById('revisionEmailCancel');
+  if (!modal || !body || !summary || !emailSendBtn) return;
+  revisionEmailNeedsReload = false;
+  if (cancelBtn) cancelBtn.textContent = 'Cancel';
+  body.textContent = '';
+  summary.textContent = '';
+  emailSendBtn.disabled = true;
+  modal.classList.remove('hidden');
+  if (window.ClarityUI && typeof window.ClarityUI.lockPageScroll === 'function') {
+    window.ClarityUI.lockPageScroll();
+  }
+  fetch('/api/class/{{ class_id }}/revision-reminders/preview', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: '{}'
+  }).then(function (response) {
+    return response.json().then(function (data) {
+      return {ok: response.ok, data: data || {}};
+    });
+  }).then(function (result) {
+    if (!result.ok) {
+      summary.textContent = result.data.error || 'Could not load the reminder.';
+      return;
+    }
+    var people = result.data.recipients || [];
+    var count = document.createElement('p');
+    count.textContent = people.length === 1
+      ? '1 student will be emailed.'
+      : (people.length + ' students will be emailed.');
+    body.appendChild(count);
+    body.appendChild(revisionEmailLine('Recipients', people));
+    var missingEmail = result.data.no_email || [];
+    if (missingEmail.length) {
+      body.appendChild(revisionEmailLine('No email on file', missingEmail));
+    }
+    var reminded = result.data.already_reminded || [];
+    if (reminded.length) {
+      body.appendChild(revisionEmailLine('Already reminded', reminded));
+    }
+    if (result.data.sample_body) {
+      var heading = document.createElement('p');
+      heading.className = 'font-medium text-slate-900 dark:text-white';
+      heading.textContent = 'Sample message (first student)';
+      body.appendChild(heading);
+      var preview = document.createElement('pre');
+      preview.className = 'whitespace-pre-wrap font-sans';
+      preview.textContent = result.data.sample_body;
+      body.appendChild(preview);
+    }
+    emailSendBtn.disabled = people.length === 0;
+  }).catch(function () {
+    summary.textContent = 'Could not load the reminder.';
+  });
+}
+
+function sendRevisionEmails() {
+  var emailSendBtn = document.getElementById('revisionEmailSend');
+  var summary = document.getElementById('revisionEmailSummary');
+  var cancelBtn = document.getElementById('revisionEmailCancel');
+  if (!emailSendBtn || !summary) return;
+  emailSendBtn.disabled = true;
+  fetch('/api/class/{{ class_id }}/revision-reminders/send', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: '{}'
+  }).then(function (response) {
+    revisionEmailNeedsReload = true;
+    if (cancelBtn) cancelBtn.textContent = 'Close';
+    emailSendBtn.disabled = true;
+    return response.json().then(function (data) {
+      return {ok: response.ok, data: data || {}};
+    });
+  }).then(function (result) {
+    if (!result.ok) {
+      summary.textContent = result.data.error || 'Could not send the reminders.';
+      return;
+    }
+    var counts = result.data.counts || {};
+    var lines = [
+      (counts.sent || 0) + ' sent',
+      (counts.failed || 0) + ' failed',
+      (counts.skipped || 0) + ' skipped',
+      (counts.not_attempted || 0) + ' not attempted'
+    ];
+    if (counts.sent_not_recorded) {
+      lines.push(counts.sent_not_recorded + ' sent but not recorded');
+    }
+    if (result.data.message) lines.push(result.data.message);
+    if (result.data.warning) lines.push(result.data.warning);
+    summary.textContent = lines.join('. ');
+  }).catch(function () {
+    summary.textContent = 'Could not send the reminders.';
+  });
 }
 
 maybeOpenManageStudentsModalFromQuery();

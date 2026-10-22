@@ -1638,6 +1638,291 @@ def build_revision_report(rows, today):
     return {"views": views, "overdue_revision_count": views[0]["revision_count"]}
 
 
+_REVISION_EMAIL_BUDGET_SECONDS = 60
+_REVISION_EMAIL_PAUSE_SECONDS = 0.5
+_REVISION_FOOTER = (
+    "Replies to this email are not monitored. "
+    "Contact your instructor directly."
+)
+_REVISION_SCORE_PHRASE = {
+    "R": "Revise for Mastery",
+    "RQ": "Revise with Question (RQ)",
+}
+
+
+def _revision_due_phrase(iso_date: str) -> str:
+    year, month, day = [int(part) for part in str(iso_date).split("-")]
+    written = date(year, month, day)
+    return written.strftime("%A, %b ") + str(written.day)
+
+
+def _revision_greeting(student_name: str) -> str:
+    text = " ".join(str(student_name or "").split())
+    if not text:
+        return "student"
+    if "," not in text:
+        return text
+    given = " ".join(text.split(",", 1)[1].split())
+    return given or text
+
+
+def _revision_signoff(full_name: str) -> str:
+    """Natural order. Signup stores the typed name, often Last, First."""
+    text = " ".join(str(full_name or "").split())
+    if not text:
+        return "Your instructor"
+    if "," not in text:
+        return text
+    last, given = text.split(",", 1)
+    last = " ".join(last.split())
+    given = " ".join(given.split())
+    if given and last:
+        return f"{given} {last}"
+    return given or last or "Your instructor"
+
+
+def _revision_objective_line(obj: Dict[str, Any]) -> str:
+    parts = []
+    code = str(obj.get("lo_code") or "").strip()
+    if code:
+        parts.append(code)
+    if obj.get("show_name"):
+        parts.append(str(obj.get("lo_name") or "").strip())
+    label = " ".join(part for part in parts if part) or "Objective"
+    mark = str(obj.get("top_score") or "").strip()
+    return f"{label}: {_REVISION_SCORE_PHRASE.get(mark, mark)}"
+
+
+def _revision_message(
+    student: Dict[str, Any], due_iso: str, class_title: str, signature: str
+) -> str:
+    lines = [
+        f"Hello {_revision_greeting(student.get('name') or '')},",
+        "",
+        f"You have a revision due in 3 days, on {_revision_due_phrase(due_iso)}.",
+        f"Class: {class_title}",
+        "",
+        "Please revise the following:",
+        "",
+    ]
+    assignments = list(student.get("assignments") or [])
+    for index, assignment in enumerate(assignments):
+        if index:
+            lines.append("")
+        name = str(assignment.get("assignment_name") or "Assignment")
+        lines.append(f"Assignment: {name}")
+        for obj in assignment.get("objectives") or []:
+            lines.append("- " + _revision_objective_line(obj))
+    lines.extend(["", "Thank you,", signature, "", _REVISION_FOOTER])
+    return "\n".join(lines)
+
+
+def _revision_named_rows(class_id, today):
+    class_data = Course.get_full_class_data(class_id)
+    if not class_data:
+        return [], []
+    progress = _class_data_for_progress(class_data)
+    active, _, _ = _process_enrollments(progress)
+    names = {
+        student["id"]: display_name(student.get("full_name") or "")
+        for student in active
+    }
+    named = []
+    for row in Grade.get_revision_candidates(class_id, today):
+        if row.get("student_id") in names:
+            row["student_name"] = names[row["student_id"]]
+            named.append(row)
+    return named, active
+
+
+def _load_sent_reminder_keys(class_id: str, due_iso: str):
+    resp = (
+        supabase_admin.table("revision_reminders_sent")
+        .select("student_id, assignment_id, learning_objective_id")
+        .eq("class_id", class_id)
+        .eq("revision_due", due_iso)
+        .execute()
+    )
+    keys = set()
+    for row in resp.data or []:
+        keys.add((
+            str(row.get("student_id") or ""),
+            str(row.get("assignment_id") or ""),
+            str(row.get("learning_objective_id") or ""),
+        ))
+    return keys
+
+
+def revision_reminder_partition(class_id, today, named_rows=None, students=None):
+    """Recipients, students with no usable email, and students already reminded.
+
+    The reminders table is read once. Pass named_rows and students from a page
+    that already loaded them. Preview and send omit both and load them here.
+    """
+    due_iso = (today + timedelta(days=3)).isoformat()
+    if named_rows is None or students is None:
+        named_rows, students = _revision_named_rows(class_id, today)
+    email_by_id = {}
+    for student in students or []:
+        email_by_id[str(student.get("id") or "")] = normalize_email(
+            student.get("email") or ""
+        )
+    sent = _load_sent_reminder_keys(class_id, due_iso)
+    due_rows = [
+        row for row in (named_rows or [])
+        if (row.get("revision_due") or "") == due_iso
+    ]
+    open_rows = []
+    for row in due_rows:
+        key = (
+            str(row.get("student_id") or ""),
+            str(row.get("assignment_id") or ""),
+            str(row.get("learning_objective_id") or ""),
+        )
+        if key not in sent:
+            open_rows.append(row)
+    everyone = _revision_view("3", "", "", "", due_rows)["students"]
+    still_open = {
+        str(student["student_id"]): student
+        for student in _revision_view("3", "", "", "", open_rows)["students"]
+    }
+    recipients = []
+    no_email = []
+    already_reminded = []
+    for student in everyone:
+        sid = str(student["student_id"])
+        if sid not in still_open:
+            already_reminded.append({
+                "student_id": sid,
+                "name": student["student_name"],
+            })
+            continue
+        email = email_by_id.get(sid)
+        if not email:
+            no_email.append({
+                "student_id": sid,
+                "name": student["student_name"],
+            })
+            continue
+        recipients.append({
+            "student_id": sid,
+            "name": student["student_name"],
+            "email": email,
+            "assignments": still_open[sid]["assignments"],
+        })
+    return {
+        "due": due_iso,
+        "recipients": recipients,
+        "no_email": no_email,
+        "already_reminded": already_reminded,
+    }
+
+
+def _revision_sender_name() -> str:
+    return _revision_signoff(str(session.get("full_name") or ""))
+
+
+def _attach_revision_messages(partition, class_title, signature):
+    subject = f"Revision due in 3 days: {class_title}"
+    for student in partition["recipients"]:
+        student["subject"] = subject
+        student["body"] = _revision_message(
+            student, partition["due"], class_title, signature
+        )
+    return subject
+
+
+def _insert_reminder_rows(class_id, student, due_iso, sent_by):
+    rows = []
+    for assignment in student.get("assignments") or []:
+        for obj in assignment.get("objectives") or []:
+            rows.append({
+                "class_id": class_id,
+                "student_id": student["student_id"],
+                "assignment_id": assignment["assignment_id"],
+                "learning_objective_id": obj["learning_objective_id"],
+                "revision_due": due_iso,
+                "sent_by": sent_by,
+            })
+    if rows:
+        supabase_admin.table("revision_reminders_sent").upsert(
+            rows,
+            on_conflict="student_id,assignment_id,learning_objective_id,revision_due",
+            ignore_duplicates=True,
+        ).execute()
+
+
+def _send_revision_reminders(class_id, recipients, due_iso, sender_name, sent_by):
+    deadline = time.monotonic() + _REVISION_EMAIL_BUDGET_SECONDS
+    results = []
+    attempted = 0
+    for index, student in enumerate(recipients):
+        if time.monotonic() >= deadline:
+            break
+        if index:
+            time.sleep(_REVISION_EMAIL_PAUSE_SECONDS)
+            if time.monotonic() >= deadline:
+                break
+        ok, _err = _send_via_resend(
+            student["email"],
+            student["subject"],
+            student["body"],
+            sender_name=sender_name,
+            log_provider_body=False,
+        )
+        if not ok:
+            results.append({
+                "student_id": student["student_id"],
+                "name": student["name"],
+                "status": "failed",
+            })
+            attempted = index + 1
+            continue
+        try:
+            _insert_reminder_rows(class_id, student, due_iso, sent_by)
+        except Exception:
+            logger.error(
+                "Revision reminder accepted but not recorded for class %s student %s",
+                class_id,
+                student["student_id"],
+            )
+            results.append({
+                "student_id": student["student_id"],
+                "name": student["name"],
+                "status": "sent_not_recorded",
+            })
+            attempted = index + 1
+            continue
+        results.append({
+            "student_id": student["student_id"],
+            "name": student["name"],
+            "status": "sent",
+        })
+        attempted = index + 1
+    for student in recipients[attempted:]:
+        results.append({
+            "student_id": student["student_id"],
+            "name": student["name"],
+            "status": "not_attempted",
+        })
+    return results
+
+
+def _reminder_counts(results):
+    counts = {
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0,
+        "not_attempted": 0,
+        "sent_not_recorded": 0,
+    }
+    for row in results:
+        status = row["status"]
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
 @main_bp.route("/class/<class_id>")
 @login_required
 def class_detail(class_id):
@@ -1668,6 +1953,26 @@ def class_detail(class_id):
             named_revisions.append(rev)
     revision_report = build_revision_report(named_revisions, today)
 
+    revision_unsent_count = None
+    revision_email_note = ""
+    try:
+        reminder_partition = revision_reminder_partition(
+            class_id,
+            today,
+            named_rows=named_revisions,
+            students=students_for_template,
+        )
+    except Exception as e:
+        logger.error("Revision reminder lookup failed for class %s: %s", class_id, e)
+    else:
+        revision_unsent_count = len(reminder_partition["recipients"])
+        day3 = next(view for view in revision_report["views"] if view["key"] == "3")
+        if revision_unsent_count == 0 and day3["students"]:
+            if reminder_partition["no_email"] and not reminder_partition["already_reminded"]:
+                revision_email_note = "No students have a usable email address."
+            else:
+                revision_email_note = "All students have been emailed."
+
     try:
         all_los = Course.get_learning_objectives(class_id)
     except Exception as e:
@@ -1685,7 +1990,9 @@ def class_detail(class_id):
                             all_los=all_los,
                             assignments=assignments,
                             revision_report=revision_report,
-                            revision_printed_on=today.isoformat())
+                            revision_printed_on=today.isoformat(),
+                            revision_unsent_count=revision_unsent_count,
+                            revision_email_note=revision_email_note)
 
 
 @main_bp.route("/class/<class_id>/learning-objectives")
@@ -3680,7 +3987,12 @@ def _report_body_html(body_text: str, subject: str) -> str:
 
 
 def _send_via_resend(
-    to_email: str, subject: str, body_text: str, *, sender_name: str
+    to_email: str,
+    subject: str,
+    body_text: str,
+    *,
+    sender_name: str,
+    log_provider_body: bool = True,
 ) -> Tuple[bool, str]:
     api_key = (os.environ.get("RESEND_API_KEY") or "").strip()
     from_email = (os.environ.get("REPORTS_FROM_EMAIL") or "").strip()
@@ -3717,11 +4029,16 @@ def _send_via_resend(
         if isinstance(parsed, dict) and isinstance(parsed.get("id"), str):
             message_id = parsed.get("id").strip()
         if resp.status_code >= 400 or not message_id:
-            if resp.status_code >= 400:
+            if resp.status_code >= 400 and log_provider_body:
                 logger.error(
                     "Email provider rejected request (%s): %s",
                     resp.status_code,
                     resp.text[:400],
+                )
+            elif resp.status_code >= 400:
+                logger.error(
+                    "Email provider rejected request (%s)",
+                    resp.status_code,
                 )
             else:
                 logger.error(
@@ -3882,6 +4199,117 @@ def api_send_bulk_report_emails(class_id):
         return jsonify(payload), 502
     payload["success"] = True
     return jsonify(payload)
+
+
+def _revision_class_title(class_id):
+    resp = (
+        supabase_admin.table("classes")
+        .select("name, days, section_number")
+        .eq("id", class_id)
+        .limit(1)
+        .execute()
+    )
+    row = (resp.data or [{}])[0] or {}
+    return class_display_title(
+        row.get("name"),
+        row.get("days"),
+        row.get("section_number"),
+    )
+
+
+def _public_reminder_student(student):
+    item = {
+        "student_id": student["student_id"],
+        "name": student["name"],
+    }
+    if student.get("email"):
+        item["email"] = student["email"]
+    return item
+
+
+@main_bp.route("/api/class/<class_id>/revision-reminders/preview", methods=["POST"])
+@api_instructor_required
+def api_preview_revision_reminders(class_id):
+    if not _instructor_owns_class(class_id):
+        return jsonify({"success": False, "error": "Forbidden"}), 403
+    today = local_today()
+    try:
+        partition = revision_reminder_partition(class_id, today)
+        signature = instructor_title(session.get("full_name"))
+        class_title = _revision_class_title(class_id)
+        subject = _attach_revision_messages(partition, class_title, signature)
+    except Exception as e:
+        logger.error("Revision reminder preview failed for class %s: %s", class_id, e)
+        return jsonify({"success": False, "error": "Could not load reminders"}), 500
+    recipients = partition["recipients"]
+    sample_body = recipients[0]["body"] if recipients else ""
+    return jsonify({
+        "success": True,
+        "subject": subject,
+        "sample_body": sample_body,
+        "recipients": [_public_reminder_student(student) for student in recipients],
+        "no_email": [
+            _public_reminder_student(student) for student in partition["no_email"]
+        ],
+        "already_reminded": [
+            _public_reminder_student(student)
+            for student in partition["already_reminded"]
+        ],
+    })
+
+
+@main_bp.route("/api/class/<class_id>/revision-reminders/send", methods=["POST"])
+@api_instructor_required
+def api_send_revision_reminders(class_id):
+    if not _instructor_owns_class(class_id):
+        return jsonify({"success": False, "error": "Forbidden"}), 403
+    _data, err = _require_json_object()
+    if err:
+        return err[0], err[1]
+    if not (os.environ.get("RESEND_API_KEY") or "").strip():
+        return jsonify({"success": False, "error": "Email is not configured."}), 503
+    if not (os.environ.get("REPORTS_FROM_EMAIL") or "").strip():
+        return jsonify({"success": False, "error": "Email is not configured."}), 503
+    today = local_today()
+    try:
+        partition = revision_reminder_partition(class_id, today)
+        signature = instructor_title(session.get("full_name"))
+        sender_name = _revision_sender_name()
+        _attach_revision_messages(
+            partition, _revision_class_title(class_id), signature
+        )
+    except Exception as e:
+        logger.error("Revision reminder send failed for class %s: %s", class_id, e)
+        return jsonify({"success": False, "error": "Could not load reminders"}), 500
+    sent_by = str(session.get("user_id") or "")
+    results = _send_revision_reminders(
+        class_id,
+        partition["recipients"],
+        partition["due"],
+        sender_name,
+        sent_by,
+    )
+    for student in partition["already_reminded"]:
+        results.append({
+            "student_id": student["student_id"],
+            "name": student["name"],
+            "status": "skipped",
+        })
+    counts = _reminder_counts(results)
+    message = ""
+    warning = ""
+    if counts["not_attempted"]:
+        message = "Close this window and choose Email students again to send the rest."
+    if counts["sent_not_recorded"]:
+        warning = "Sending again may email that student twice."
+    return jsonify({
+        "success": True,
+        "counts": counts,
+        "results": results,
+        "message": message,
+        "warning": warning,
+    })
+
 
 @main_bp.route("/class/<class_id>/student/<student_id>/history")
 @login_required
