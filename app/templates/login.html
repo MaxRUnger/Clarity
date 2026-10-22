@@ -11,6 +11,10 @@
         <p class="text-slate-500 dark:text-slate-400 text-sm">Sign in to manage your classes</p>
       </div>
 
+      {% if request.args.get('reason') == 'inactivity' %}
+      <p id="inactivityNotice" class="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-100">You were signed out due to inactivity.</p>
+      {% endif %}
+
       <form onsubmit="submitLogin(event)" class="space-y-5">
 
         <!-- Email -->

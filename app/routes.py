@@ -27,7 +27,8 @@ import requests
 from html import escape as html_escape
 import threading
 import time
-from datetime import date
+from datetime import date, timedelta
+from itsdangerous import BadSignature
 from collections import defaultdict, deque
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -39,12 +40,14 @@ from flask import (  # type: ignore
     redirect,
     url_for,
     session,
+    current_app,
     Response,
     g,
 )
 from werkzeug.utils import secure_filename
 from app.authentication import supabase, supabase_admin
 from app.lo_order import lo_sort_key
+from app.local_time import local_today
 from app.paging import fetch_all_rows
 from app.models import (
     Course,
@@ -609,12 +612,20 @@ def login_required(f):
     return decorated
 
 
+def _session_expired_response():
+    return jsonify({
+        "success": False,
+        "error": "Unauthorized",
+        "code": "session_expired",
+    }), 401
+
+
 def api_login_required(f):
     """Return 401 JSON if the user has no active session (for API routes)."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
-            return jsonify({"success": False, "error": "Unauthorized"}), 401
+            return _session_expired_response()
         return f(*args, **kwargs)
     return decorated
 
@@ -624,7 +635,7 @@ def api_instructor_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if "user_id" not in session:
-            return jsonify({"success": False, "error": "Unauthorized"}), 401
+            return _session_expired_response()
         role = (session.get("role") or "").strip().lower()
         if role != "instructor":
             return jsonify({"success": False, "error": "Unauthorized"}), 401
@@ -1270,8 +1281,58 @@ def signup_page():
 
 @main_bp.route("/logout")
 def logout():
+    reason = request.args.get("reason")
     session.clear()
-    return redirect(url_for('main.login_page'))
+    if reason == "inactivity":
+        return redirect(url_for("main.login_page", reason="inactivity"))
+    return redirect(url_for("main.login_page"))
+
+
+def _session_seconds_left():
+    raw = request.cookies.get(current_app.config["SESSION_COOKIE_NAME"])
+    serializer = current_app.session_interface.get_signing_serializer(current_app)
+    if not raw or serializer is None:
+        return None
+    max_age = int(current_app.permanent_session_lifetime.total_seconds())
+    try:
+        _payload, issued = serializer.loads(raw, max_age=max_age, return_timestamp=True)
+    except BadSignature:
+        return None
+    issued_at = issued.timestamp() if hasattr(issued, "timestamp") else float(issued)
+    remaining = max_age - int(time.time() - issued_at)
+    return remaining if remaining > 0 else 0
+
+
+def _session_status_response(body, status):
+    response = jsonify(body)
+    response.headers["Cache-Control"] = "no-store"
+    response.status_code = status
+    return response
+
+
+@main_bp.route("/api/session-status")
+def session_status():
+    if "user_id" not in session:
+        return _session_status_response({
+            "success": False,
+            "error": "Unauthorized",
+            "code": "session_expired",
+        }, 401)
+    remaining = _session_seconds_left()
+    if remaining is None:
+        return _session_status_response({
+            "success": False,
+            "error": "Unauthorized",
+            "code": "session_expired",
+        }, 401)
+    return _session_status_response({"ok": True, "seconds_left": remaining}, 200)
+
+
+@main_bp.route("/api/session-keepalive", methods=["POST"])
+def session_keepalive():
+    if "user_id" not in session:
+        return _session_expired_response()
+    return jsonify({"ok": True})
 
 @main_bp.route("/api/set-instructor-mode", methods=["POST"])
 @api_login_required
@@ -1450,6 +1511,133 @@ def _sort_overdue_revisions(revisions):
     return revisions
 
 
+def _revision_count_line(student_count, revision_count):
+    students = "student" if student_count == 1 else "students"
+    revisions = "revision" if revision_count == 1 else "revisions"
+    return f"{student_count} {students}, {revision_count} {revisions}"
+
+
+def _objective_shows_name(code, name):
+    text = (name or "").strip()
+    if not text:
+        return False
+    return text.casefold() != (code or "").strip().casefold()
+
+
+def _revision_view(key, label, print_title, empty_message, rows):
+    grouped = {}
+    order = []
+    for row in rows:
+        sid = row.get("student_id")
+        if sid not in grouped:
+            grouped[sid] = {
+                "student_id": sid,
+                "student_name": row.get("student_name") or "",
+                "assignments": {},
+                "assignment_order": [],
+            }
+            order.append(sid)
+        student = grouped[sid]
+        aid = row.get("assignment_id") or row.get("assignment_name") or ""
+        if aid not in student["assignments"]:
+            student["assignments"][aid] = {
+                "assignment_id": aid,
+                "assignment_name": row.get("assignment_name") or "",
+                "revision_due": row.get("revision_due") or "",
+                "objectives": [],
+            }
+            student["assignment_order"].append(aid)
+        code = row.get("lo_code") or ""
+        name = row.get("lo_objective_name") or ""
+        student["assignments"][aid]["objectives"].append({
+            "lo_code": code,
+            "lo_name": name,
+            "show_name": _objective_shows_name(code, name),
+            "top_score": row.get("top_score") or "",
+            "learning_objective_id": row.get("learning_objective_id") or "",
+        })
+    students = []
+    revision_count = 0
+    for sid in order:
+        student = grouped[sid]
+        assignments = [student["assignments"][aid] for aid in student["assignment_order"]]
+        assignments.sort(key=lambda item: (
+            item.get("revision_due") or "",
+            collator_key(item.get("assignment_name") or ""),
+            item.get("assignment_id") or "",
+        ))
+        for assignment in assignments:
+            assignment["objectives"].sort(key=lambda obj: lo_sort_key({
+                "vendor_code": obj.get("lo_code") or "",
+                "name": obj.get("lo_name") or "",
+                "id": obj.get("learning_objective_id") or "",
+            }))
+            revision_count += len(assignment["objectives"])
+        students.append({
+            "student_id": student["student_id"],
+            "student_name": student["student_name"],
+            "assignments": assignments,
+        })
+    _sort_overdue_revisions(students)
+    return {
+        "key": key,
+        "label": label,
+        "print_title": print_title,
+        "empty_message": empty_message,
+        "students": students,
+        "student_count": len(students),
+        "revision_count": revision_count,
+        "count_line": _revision_count_line(len(students), revision_count),
+    }
+
+
+def build_revision_report(rows, today):
+    """Group named revision rows into Overdue, Due today, and exact due-in-1..7 views."""
+    today_iso = today.isoformat()
+    buckets = {"overdue": [], "today": []}
+    for n in range(1, 8):
+        buckets[str(n)] = []
+    day_dates = {n: (today + timedelta(days=n)).isoformat() for n in range(1, 8)}
+    for row in rows:
+        due = row.get("revision_due") or ""
+        if due and due < today_iso:
+            buckets["overdue"].append(row)
+        elif due == today_iso:
+            buckets["today"].append(row)
+        else:
+            for n, iso in day_dates.items():
+                if due == iso:
+                    buckets[str(n)].append(row)
+                    break
+    views = [
+        _revision_view(
+            "overdue",
+            "Overdue",
+            "Overdue revisions",
+            "No overdue revisions.",
+            buckets["overdue"],
+        ),
+        _revision_view(
+            "today",
+            "Due today",
+            "Revisions due today",
+            "No revisions due today",
+            buckets["today"],
+        ),
+    ]
+    for n in range(1, 8):
+        noun = "day" if n == 1 else "days"
+        star = " ★" if n == 3 else ""
+        views.append(_revision_view(
+            str(n),
+            f"Due in {n} {noun}{star}",
+            f"Revisions due in {n} {noun}",
+            f"No revisions due in {n} {noun}",
+            buckets[str(n)],
+        ))
+    return {"views": views, "overdue_revision_count": views[0]["revision_count"]}
+
+
 @main_bp.route("/class/<class_id>")
 @login_required
 def class_detail(class_id):
@@ -1467,17 +1655,18 @@ def class_detail(class_id):
     )
     assignments = load_assignments_for_class(class_id)
 
-    overdue_raw = Grade.get_overdue_revisions(class_id)
+    today = local_today()
+    revision_raw = Grade.get_revision_candidates(class_id, today)
     student_name_map = {
         s["id"]: display_name(s.get("full_name") or "")
         for s in students_for_template
     }
-    overdue_revisions = []
-    for rev in overdue_raw:
+    named_revisions = []
+    for rev in revision_raw:
         if rev['student_id'] in student_name_map:
             rev['student_name'] = student_name_map[rev['student_id']]
-            overdue_revisions.append(rev)
-    overdue_revisions = _sort_overdue_revisions(overdue_revisions)
+            named_revisions.append(rev)
+    revision_report = build_revision_report(named_revisions, today)
 
     try:
         all_los = Course.get_learning_objectives(class_id)
@@ -1495,7 +1684,8 @@ def class_detail(class_id):
                             learning_objectives=summary,
                             all_los=all_los,
                             assignments=assignments,
-                            overdue_revisions=overdue_revisions)
+                            revision_report=revision_report,
+                            revision_printed_on=today.isoformat())
 
 
 @main_bp.route("/class/<class_id>/learning-objectives")

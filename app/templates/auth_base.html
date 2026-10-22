@@ -101,5 +101,9 @@
         })();
     </script>
     {% block scripts %}{% endblock %}
+    {% if session.get('user_id') %}
+    <script type="application/json" id="sessionTimeoutConfig">{{ session_timeout|tojson }}</script>
+    <script src="{{ url_for('static', filename='js/session_timeout.js') }}?v=1"></script>
+    {% endif %}
 </body>
 </html>

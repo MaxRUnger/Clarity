@@ -1588,12 +1588,6 @@ async function performSave(btn) {
       }, 2000);
     }
   } catch (e) {
-    if (e && (e.status === 401 || e.message === 'Unauthorized')) {
-      if (window.ClarityUI && typeof window.ClarityUI.handleSessionExpired === 'function') {
-        window.ClarityUI.handleSessionExpired();
-      }
-      return;
-    }
     if (btn) {
       alert('Error saving grades: ' + e.message);
       btn.disabled = false;

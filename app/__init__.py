@@ -13,13 +13,45 @@ import hmac
 from flask import Flask, session, request, jsonify
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from config import Config
+
+def session_timeout_settings(app):
+    """Scale the warning and keep-alive from the configured idle lifetime.
+
+    This is the only place those two values are defined.
+    """
+    idle_seconds = int(app.permanent_session_lifetime.total_seconds())
+    if idle_seconds < 1:
+        idle_seconds = 1
+    return {
+        "idle_seconds": idle_seconds,
+        "warning_seconds": min(120, idle_seconds // 3),
+        "keepalive_seconds": min(300, idle_seconds // 4),
+    }
+
+
+def _require_app_timezone(app):
+    """Load APP_TIMEZONE at startup so a typo fails the deploy, not a class page."""
+    tz_name = str(app.config.get("APP_TIMEZONE") or "").strip()
+    if not tz_name:
+        raise RuntimeError(
+            "APP_TIMEZONE is empty. Set it to an IANA time zone such as America/Los_Angeles."
+        )
+    try:
+        ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError as exc:
+        raise RuntimeError(
+            f"APP_TIMEZONE {tz_name!r} is not a recognized IANA time zone."
+        ) from exc
+    app.config["APP_TIMEZONE"] = tz_name
+
 
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
-    
-    
+    _require_app_timezone(app)
+
     app.secret_key = config_class.SECRET_KEY
 
     # Railway's edge is the only proxy in front of this app, so trust exactly
@@ -68,18 +100,21 @@ def create_app(config_class=Config):
         if not token:
             token = secrets.token_urlsafe(32)
             session["csrf_token"] = token
-        return {
+        payload = {
             'instructor_mode': session.get('instructor_mode', 'mark'),
             'csrf_token': token,
             'class_display_title': class_display_title,
         }
+        if session.get("user_id"):
+            payload["session_timeout"] = session_timeout_settings(app)
+        return payload
 
     @app.before_request
     def slide_idle_session():
         # Asset responses stay free of Set-Cookie. Re-signing every static
         # file would keep an idle tab alive for as long as it kept loading
         # scripts and stylesheets.
-        if request.endpoint == "static":
+        if request.endpoint in ("static", "main.session_status"):
             return None
         if session.get("user_id"):
             session.modified = True

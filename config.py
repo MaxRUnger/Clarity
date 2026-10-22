@@ -34,6 +34,7 @@ class Config:
     # Empty (not "development") when unset, so we can tell "never configured"
     # apart from someone explicitly opting out of production hardening below.
     APP_ENV = os.environ.get("APP_ENV", "").strip().lower()
+    APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/Los_Angeles").strip() or "America/Los_Angeles"
 
     # Production hardening (secure cookies, HSTS, strict SECRET_KEY) applies
     # whenever APP_ENV explicitly says so, OR whenever we detect we're

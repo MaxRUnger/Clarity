@@ -30,7 +30,7 @@
       <div class="flex items-start justify-between">
         <div>
           <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Overdue Revisions</p>
-          <p class="text-3xl font-semibold text-orange-600 dark:text-orange-400">{{ overdue_revisions|length }}</p>
+          <p class="text-3xl font-semibold text-orange-600 dark:text-orange-400">{{ revision_report.overdue_revision_count }}</p>
         </div>
         <div class="p-2.5 rounded-lg bg-orange-50 dark:bg-orange-900 text-orange-600 dark:text-orange-400">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
@@ -41,7 +41,7 @@
        class="block bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm hover:scale-[1.02] transition-transform">
       <div class="flex items-start justify-between">
         <div>
-          <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Learning Objectives</p>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mb-2">Learning Objectives Assessed</p>
           <p class="text-3xl font-semibold text-slate-900 dark:text-white">{{ total_los }}</p>
         </div>
         <div class="p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900 text-blue-600 dark:text-blue-400">
@@ -310,38 +310,245 @@
 </div>
 
 <div id="overdueRevisionsModal" class="mark-only hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-8 overflow-hidden overscroll-contain">
-  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-    <div class="p-6 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+  <div class="revision-dialog bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+    <div class="revision-modal-chrome p-6 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-4">
       <div>
         <h2 class="font-semibold text-slate-900 dark:text-white">Overdue Revisions Report</h2>
         <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Students with revisions past due date</p>
       </div>
-      <button type="button" onclick="closeOverdueRevisionsModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
-        <svg class="w-5 h-5 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-      </button>
-    </div>
-    <div class="flex-1 overflow-y-auto overscroll-contain p-6">
-      {% if overdue_revisions %}
-      <div class="space-y-3">
-        {% for rev in overdue_revisions %}
-        <div class="flex items-center justify-between p-4 rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20">
-          <div>
-            <p class="font-medium text-slate-900 dark:text-white">{{ rev.student_name }}</p>
-            <p class="text-sm text-slate-600 dark:text-slate-400">{{ rev.lo_name }} · {{ rev.assignment_name }}</p>
-          </div>
-          <div class="text-right">
-            <span class="px-2 py-1 bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 text-xs font-medium rounded-full">{{ rev.top_score }}</span>
-            <p class="text-xs text-red-500 mt-1">Due {{ rev.revision_due }}</p>
-          </div>
-        </div>
-        {% endfor %}
+      <div class="flex items-center gap-3">
+        <select id="revisionViewSelect" class="revision-modal-chrome px-3 py-2 bg-slate-50 dark:bg-slate-700 rounded-lg text-sm text-slate-900 dark:text-white" onchange="selectRevisionView(this.value)">
+          {% for view in revision_report.views %}
+          <option value="{{ view.key }}"{% if view.key == 'overdue' %} selected{% endif %}>{{ view.label }} ({{ view.student_count }})</option>
+          {% endfor %}
+        </select>
+        <button type="button" onclick="window.print()" class="revision-modal-chrome px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Print</button>
+        <button type="button" onclick="closeOverdueRevisionsModal()" class="revision-modal-chrome p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+          <svg class="w-5 h-5 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
       </div>
-      {% else %}
-      <p class="text-slate-500 dark:text-slate-400 text-center py-8">No overdue revisions.</p>
-      {% endif %}
+    </div>
+    <div class="revision-scroll flex-1 overflow-y-auto overscroll-contain p-6">
+      {% for view in revision_report.views %}
+      <div class="revision-view{% if view.key == 'overdue' %} is-selected{% endif %}" data-revision-view="{{ view.key }}"{% if view.key != 'overdue' %} hidden{% endif %}>
+        <table class="revision-print-frame">
+          <thead class="revision-print-spacer">
+            <tr><td></td></tr>
+          </thead>
+          <tfoot class="revision-print-spacer">
+            <tr><td></td></tr>
+          </tfoot>
+          <tbody>
+            <tr>
+              <td>
+                <div class="revision-print-title">
+                  <h1>{{ view.print_title }}</h1>
+                  <div class="revision-print-classline">
+                    <p>{{ class_display_title(class_name, class_days, class_section) }}</p>
+                    <p class="revision-print-date">Printed {{ revision_printed_on }}</p>
+                  </div>
+                </div>
+                <p class="revision-totals text-sm text-slate-500 dark:text-slate-400 mb-3">{{ view.count_line }}</p>
+                {% if view.students %}
+                <div class="revision-card-columns space-y-3">
+                  {% for student in view.students %}
+                  <div class="revision-card rounded-lg border border-slate-200 dark:border-slate-600 p-4">
+                    <p class="font-medium leading-6 text-slate-900 dark:text-white">{{ student.student_name }}</p>
+                    <div class="mt-3 space-y-3">
+                      {% for assignment in student.assignments %}
+                      <div class="revision-assignment">
+                        <div class="flex items-baseline justify-between gap-3">
+                          <p class="font-semibold leading-6 text-sm text-slate-900 dark:text-white">{{ assignment.assignment_name }}</p>
+                          <p class="shrink-0 text-sm leading-6 font-normal text-slate-500 dark:text-slate-400">Due {{ assignment.revision_due }}</p>
+                        </div>
+                        <ul class="mt-1.5 space-y-1 pl-4">
+                          {% for obj in assignment.objectives %}
+                          <li class="flex items-baseline justify-between gap-3 text-sm leading-6 font-normal text-slate-700 dark:text-slate-200">
+                            <span>{% if obj.lo_code %}{{ obj.lo_code }}{% endif %}{% if obj.show_name %}{% if obj.lo_code %} {% endif %}{{ obj.lo_name }}{% endif %}</span>
+                            <span class="revision-grade revision-grade-{{ obj.top_score|lower }} shrink-0 rounded border px-1.5 py-0.5 text-xs font-medium">{{ obj.top_score }}</span>
+                          </li>
+                          {% endfor %}
+                        </ul>
+                      </div>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+                {% else %}
+                <p class="revision-empty text-slate-500 dark:text-slate-400 text-center py-8">{{ view.empty_message }}</p>
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {% endfor %}
     </div>
   </div>
 </div>
+<style>
+.revision-grade-r {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fcd34d;
+}
+.dark .revision-grade-r {
+  color: #fde68a;
+  background: #451a03;
+  border-color: #d97706;
+}
+.revision-grade-rq {
+  color: #9a3412;
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+.dark .revision-grade-rq {
+  color: #ffedd5;
+  background: #431407;
+  border-color: #ea580c;
+}
+.revision-print-title { display: none; }
+.revision-print-spacer { display: none; }
+.revision-print-frame,
+.revision-print-frame tbody,
+.revision-print-frame tr,
+.revision-print-frame td {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+@media print {
+  @page { size: letter portrait; margin: 0; }
+  html, body {
+    background: #fff !important;
+    color: #000 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+  nav, .space-y-6,
+  #studentManagementModal, #addStudentModal, #editStudentModal,
+  #studentRemovalModal, #uploadStudentsModal, #studentUploadPreviewModal {
+    display: none !important;
+  }
+  #overdueRevisionsModal {
+    display: block !important;
+    position: static !important;
+    background: #fff !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+  }
+  #overdueRevisionsModal .revision-dialog,
+  #overdueRevisionsModal .revision-scroll {
+    display: block !important;
+    position: static !important;
+    background: #fff !important;
+    color: #000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+  #overdueRevisionsModal .revision-modal-chrome { display: none !important; }
+  #overdueRevisionsModal .revision-view { display: none !important; }
+  #overdueRevisionsModal .revision-view.is-selected { display: block !important; }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame {
+    display: table !important;
+    width: 100% !important;
+    border-collapse: collapse;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame thead {
+    display: table-header-group !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame tfoot {
+    display: table-footer-group !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame tbody {
+    display: table-row-group !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame tr {
+    display: table-row !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame td {
+    display: table-cell !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-spacer td {
+    height: 0.2in;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame tbody td {
+    padding: 0 0.2in !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-title {
+    display: block !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-title h1,
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-title p,
+  #overdueRevisionsModal .revision-view.is-selected .revision-totals,
+  #overdueRevisionsModal .revision-view.is-selected .revision-empty,
+  #overdueRevisionsModal .revision-view.is-selected .revision-card,
+  #overdueRevisionsModal .revision-view.is-selected .revision-card * {
+    color: #000 !important;
+    background: #fff !important;
+  }
+  .revision-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #000 !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card-columns {
+    column-count: 2;
+    column-gap: 8px;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card {
+    padding: 8px !important;
+    margin: 0 0 8px !important;
+    display: inline-block !important;
+    width: 100% !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card > p,
+  #overdueRevisionsModal .revision-view.is-selected .revision-assignment p {
+    font-size: 12px !important;
+    line-height: 18px !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card .mt-3 {
+    margin-top: 6px !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card .space-y-3 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 6px !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-assignment ul {
+    margin-top: 6px !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-assignment li {
+    font-size: 11px !important;
+    line-height: 18px !important;
+    margin-top: 0 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card .revision-grade {
+    background: transparent !important;
+    color: #000 !important;
+    border: 1px solid #000 !important;
+  }
+}
+</style>
 
 <div id="studentManagementModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-8">
   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
@@ -637,6 +844,15 @@ function maybeOpenManageStudentsModalFromQuery() {
   // Clean up the URL after restoring modal state.
   currentUrl.searchParams.delete('manage_students');
   window.history.replaceState({}, '', currentUrl.toString());
+}
+
+function selectRevisionView(key) {
+  var views = document.querySelectorAll('#overdueRevisionsModal .revision-view');
+  for (var i = 0; i < views.length; i++) {
+    var on = views[i].getAttribute('data-revision-view') === key;
+    views[i].hidden = !on;
+    views[i].classList.toggle('is-selected', on);
+  }
 }
 
 function openOverdueRevisionsModal() {

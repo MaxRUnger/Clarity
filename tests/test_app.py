@@ -435,6 +435,264 @@ class TestStoredCanvasNames(unittest.TestCase):
         )
 
 
+def _revision_row(student_id, name, due, assignment, code="", objective="", assignment_id=None, top_score="R", learning_objective_id=""):
+    return {
+        "student_id": student_id,
+        "student_name": name,
+        "revision_due": due,
+        "assignment_name": assignment,
+        "assignment_id": assignment if assignment_id is None else assignment_id,
+        "lo_code": code,
+        "lo_objective_name": objective,
+        "top_score": top_score,
+        "learning_objective_id": learning_objective_id,
+    }
+
+
+class TestRevisionReport(unittest.TestCase):
+    def test_local_today_at_02_utc_is_the_previous_pacific_date(self):
+        from datetime import datetime, timezone, date
+        from app.local_time import local_today
+        app = create_app()
+        instant = datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc)
+        with app.app_context():
+            self.assertEqual(local_today(instant), date(2026, 10, 20))
+
+    def test_invalid_app_timezone_raises_at_startup(self):
+        from config import Config
+        class BadTimezone(Config):
+            APP_TIMEZONE = "Not/ARealZone"
+        with self.assertRaises(RuntimeError) as caught:
+            create_app(BadTimezone)
+        self.assertIn("Not/ARealZone", str(caught.exception))
+
+    def test_revision_candidates_honor_the_passed_date(self):
+        from datetime import date
+        today = date(2026, 1, 1)
+        def grade(student_id, due, score):
+            return {
+                "student_id": student_id,
+                "assignment_id": "a-" + student_id,
+                "top_score": "R",
+                "hw_score_at_entry": score,
+                "assignments": {
+                    "id": "a-" + student_id,
+                    "name": "Quiz",
+                    "revision_due": due,
+                },
+                "learning_objectives": {
+                    "id": "lo",
+                    "name": "Limits",
+                    "vendor_code": "T1",
+                },
+            }
+        grades = [
+            grade("past", "2025-12-31", 80),
+            grade("today", "2026-01-01", 80),
+            grade("day7", "2026-01-08", 80),
+            grade("day8", "2026-01-09", 80),
+            grade("low", "2026-01-01", 74),
+            grade("blank", "", 80),
+            grade("missing", None, 80),
+        ]
+        query = MagicMock()
+        query.select.return_value = query
+        query.in_.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        query.execute.return_value = MagicMock(data=[])
+        with unittest.mock.patch(
+            "app.models.Course.get_all_lo_ids_for_class", return_value=["lo"]
+        ), unittest.mock.patch(
+            "app.models.fetch_all_rows", return_value=grades
+        ), unittest.mock.patch("app.models.supabase_admin") as sa:
+            sa.table.return_value = query
+            rows = Grade.get_revision_candidates("c1", today)
+        self.assertEqual(
+            sorted(row["revision_due"] for row in rows),
+            ["2025-12-31", "2026-01-01", "2026-01-08"],
+        )
+        self.assertEqual(rows[0]["lo_code"], "T1")
+        self.assertEqual(rows[0]["lo_objective_name"], "Limits")
+        self.assertEqual(rows[0]["assignment_id"], "a-past")
+        self.assertEqual(rows[0]["learning_objective_id"], "lo")
+
+    def test_report_groups_exact_days_and_one_card_per_student(self):
+        from datetime import date
+        from app.routes import build_revision_report
+        today = date(2026, 10, 20)
+        rows = [
+            _revision_row("s1", "Zenith, Bob", "2026-10-19", "Quiz B", "T2", "Derivatives"),
+            _revision_row("s1", "Zenith, Bob", "2026-10-19", "Quiz A", "T1", "Limits"),
+            _revision_row("s2", "Adams, Zoe", "2026-10-19", "Quiz A", "T1", "Limits"),
+            _revision_row("s2", "Adams, Zoe", "2026-10-20", "Quiz C", "T3", "Integrals"),
+            _revision_row("s3", "Lee, Ana", "2026-10-24", "Quiz D", "T4", "Series"),
+            _revision_row("s4", "Ng, Bo", "2026-10-23", "Quiz E", "T5", "Proofs"),
+            _revision_row("s5", "Cho, Min", "2026-10-21", "Quiz F"),
+        ]
+        report = build_revision_report(rows, today)
+        views = {view["key"]: view for view in report["views"]}
+        self.assertEqual(
+            [view["key"] for view in report["views"]],
+            ["overdue", "today", "1", "2", "3", "4", "5", "6", "7"],
+        )
+        overdue = views["overdue"]
+        self.assertEqual(overdue["student_count"], 2)
+        self.assertEqual(overdue["revision_count"], 3)
+        self.assertEqual(report["overdue_revision_count"], 3)
+        self.assertEqual(
+            [student["student_name"] for student in overdue["students"]],
+            ["Adams, Zoe", "Zenith, Bob"],
+        )
+        zenith = overdue["students"][1]
+        self.assertEqual(len(zenith["assignments"]), 2)
+        self.assertEqual(
+            [item["assignment_name"] for item in zenith["assignments"]],
+            ["Quiz A", "Quiz B"],
+        )
+        self.assertEqual(views["today"]["student_count"], 1)
+        self.assertEqual(views["today"]["revision_count"], 1)
+        self.assertEqual(views["today"]["students"][0]["student_id"], "s2")
+        self.assertEqual(views["1"]["label"], "Due in 1 day")
+        self.assertEqual(views["1"]["student_count"], 1)
+        self.assertEqual(views["3"]["label"], "Due in 3 days ★")
+        self.assertEqual(views["3"]["student_count"], 1)
+        self.assertEqual(views["3"]["students"][0]["assignments"][0]["revision_due"], "2026-10-23")
+        self.assertEqual(views["4"]["student_count"], 1)
+        self.assertEqual(views["4"]["students"][0]["assignments"][0]["revision_due"], "2026-10-24")
+        self.assertEqual(views["4"]["students"][0]["student_id"], "s3")
+        self.assertNotIn("s3", [student["student_id"] for student in views["3"]["students"]])
+        self.assertEqual(views["5"]["revision_count"], 0)
+        self.assertEqual(views["5"]["empty_message"], "No revisions due in 5 days")
+        self.assertEqual(views["4"]["count_line"], "1 student, 1 revision")
+        self.assertEqual(overdue["count_line"], "2 students, 3 revisions")
+        self.assertEqual(views["today"]["empty_message"], "No revisions due today")
+
+    def test_due_on_the_pacific_date_is_not_overdue_at_02_utc(self):
+        from datetime import datetime, timezone
+        from app.local_time import local_today
+        from app.routes import build_revision_report
+        app = create_app()
+        instant = datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc)
+        with app.app_context():
+            today = local_today(instant)
+        report = build_revision_report(
+            [_revision_row("s1", "Lee, Ana", "2026-10-20", "Quiz", "T1", "Limits")],
+            today,
+        )
+        views = {view["key"]: view for view in report["views"]}
+        self.assertEqual(views["overdue"]["revision_count"], 0)
+        self.assertEqual(views["today"]["revision_count"], 1)
+        self.assertEqual(views["today"]["student_count"], 1)
+
+    def test_empty_day_message_for_four_days(self):
+        from datetime import date
+        from app.routes import build_revision_report
+        report = build_revision_report([], date(2026, 10, 20))
+        views = {view["key"]: view for view in report["views"]}
+        self.assertEqual(views["4"]["empty_message"], "No revisions due in 4 days")
+        self.assertEqual(views["4"]["label"], "Due in 4 days")
+        self.assertEqual(views["overdue"]["revision_count"], 0)
+
+    def test_assignments_group_by_id_and_objectives_sort_by_code(self):
+        from datetime import date
+        from app.routes import build_revision_report
+        today = date(2026, 10, 20)
+        rows = [
+            _revision_row("s1", "Lee, Ana", "2026-10-19", "Quiz", "E10", "Series", assignment_id="a-late", learning_objective_id="lo-10"),
+            _revision_row("s1", "Lee, Ana", "2026-10-18", "Quiz", "E2", "Limits", assignment_id="a-early", top_score="RQ", learning_objective_id="lo-2"),
+            _revision_row("s1", "Lee, Ana", "2026-10-18", "Quiz", "Test 1.2", "Test 1.2", assignment_id="a-early", learning_objective_id="lo-test"),
+        ]
+        report = build_revision_report(rows, today)
+        overdue = {view["key"]: view for view in report["views"]}["overdue"]
+        self.assertEqual(overdue["student_count"], 1)
+        self.assertEqual(overdue["revision_count"], 3)
+        student = overdue["students"][0]
+        self.assertEqual(
+            [item["assignment_id"] for item in student["assignments"]],
+            ["a-early", "a-late"],
+        )
+        self.assertEqual(
+            [item["assignment_name"] for item in student["assignments"]],
+            ["Quiz", "Quiz"],
+        )
+        early = student["assignments"][0]
+        self.assertEqual([obj["lo_code"] for obj in early["objectives"]], ["E2", "Test 1.2"])
+        self.assertTrue(early["objectives"][0]["show_name"])
+        self.assertFalse(early["objectives"][1]["show_name"])
+        self.assertEqual(early["objectives"][0]["top_score"], "RQ")
+
+
+class TestRevisionModalTemplate(unittest.TestCase):
+    def _render(self, report):
+        from flask import render_template, session
+        app = create_app()
+        with app.test_request_context("/"):
+            session["role"] = "instructor"
+            return render_template(
+                "class_detail.html",
+                class_id="c1",
+                class_name="Test Upload",
+                class_days="MW",
+                class_section="F26",
+                students=[],
+                all_students=[],
+                learning_objectives=[],
+                assignments=[],
+                revision_report=report,
+                revision_printed_on="2026-10-20",
+            )
+
+    def test_dropdown_counts_star_and_empty_day(self):
+        from datetime import date
+        from app.routes import build_revision_report
+        today = date(2026, 10, 20)
+        populated = build_revision_report([
+            _revision_row("s1", "Adams, Zoe", "2026-10-19", "Quiz A", "T1", "Limits"),
+            _revision_row("s2", "Lee, Ana", "2026-10-24", "Quiz B", "T2", "Derivatives"),
+            _revision_row("s3", "Ng, Bo", "2026-10-24", "Quiz C"),
+        ], today)
+        html = self._render(populated)
+        self.assertIn("Overdue (1)", html)
+        self.assertIn("Due today (0)", html)
+        self.assertIn("Due in 1 day (0)", html)
+        self.assertIn("Due in 3 days ★ (0)", html)
+        self.assertIn("Due in 4 days (2)", html)
+        self.assertIn("2 students, 2 revisions", html)
+        empty = self._render(build_revision_report([], today))
+        self.assertIn("No revisions due in 4 days", empty)
+        self.assertIn("No revisions due today", empty)
+        self.assertIn("No overdue revisions.", empty)
+
+    def test_print_frame_and_no_inner_html(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "class_detail.html",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        modal = src.split('id="overdueRevisionsModal"', 1)[1].split(
+            'id="studentManagementModal"', 1
+        )[0]
+        self.assertIn("@page { size: letter portrait; margin: 0; }", modal)
+        self.assertIn("overflow: visible !important;", modal)
+        self.assertIn("height: auto !important;", modal)
+        self.assertIn("break-inside: avoid;", modal)
+        self.assertIn("padding: 0 0.2in !important;", modal)
+        self.assertIn("display: table-footer-group !important;", modal)
+        self.assertIn("class_display_title(class_name, class_days, class_section)", modal)
+        self.assertIn('<thead class="revision-print-spacer">', modal)
+        self.assertIn('<tfoot class="revision-print-spacer">', modal)
+        self.assertIn("revision-modal-chrome", modal)
+        self.assertIn("revision-grade", modal)
+        print_block = modal.split("@media print", 1)[1]
+        self.assertIn("column-count: 2", print_block)
+        self.assertIn("break-inside: avoid", print_block)
+        self.assertNotIn("innerHTML", modal)
+        script = src[src.find("function selectRevisionView"):src.find("function openOverdueRevisionsModal")]
+        self.assertNotIn("innerHTML", script)
+        self.assertIn("classList.toggle", script)
+
+
 class TestNormalizeProfile(unittest.TestCase):
     """Tests for normalize_profile — handles Supabase join shape quirks."""
 
@@ -2660,7 +2918,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertIn("window.setInterval(runAutosave, 180000);", src)
         self.assertIn("every 3 minutes", src)
         self.assertNotIn("every minute", src)
-        self.assertIn("handleSessionExpired", src)
+        self.assertNotIn("handleSessionExpired", src)
 
         handler_at = src.find("addEventListener('visibilitychange'")
         self.assertGreaterEqual(handler_at, 0)
@@ -5768,6 +6026,8 @@ class TestClassHeaderTitle(unittest.TestCase):
         )
 
     def _dashboard(self, section):
+        from datetime import date
+        from app.routes import build_revision_report
         return self._render(
             "class_detail.html",
             class_id="c1",
@@ -5777,8 +6037,9 @@ class TestClassHeaderTitle(unittest.TestCase):
             students=[],
             all_students=[],
             learning_objectives=[],
-            overdue_revisions=[],
             assignments=[],
+            revision_report=build_revision_report([], date(2026, 10, 20)),
+            revision_printed_on="2026-10-20",
         )
 
     def test_dashboard_header_matches_card_title(self):
@@ -6287,7 +6548,9 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         self.assertEqual(rv.status_code, 404)
 
     def test_manage_students_card_shows_the_active_count(self):
+        from datetime import date
         from flask import render_template, session
+        from app.routes import build_revision_report
         app = create_app()
         student = {
             "id": "stu-1",
@@ -6308,8 +6571,9 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
                 students=[student],
                 all_students=[student],
                 learning_objectives=[],
-                overdue_revisions=[],
                 assignments=[],
+                revision_report=build_revision_report([], date(2026, 10, 20)),
+                revision_printed_on="2026-10-20",
             )
         self.assertIn("Manage Students", html)
         self.assertIn('id="activeStudentsCount"', html)

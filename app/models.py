@@ -14,7 +14,7 @@ authorization is enforced upstream by helpers in ``app/routes.py``.
 
 import logging
 import re
-from datetime import date
+from datetime import timedelta
 from typing import List, Optional, Dict, Any
 
 from app.authentication import supabase_admin
@@ -246,14 +246,17 @@ class Grade:
         return None
 
     @staticmethod
-    def get_overdue_revisions(class_id):
-        """Return R and RQ grades where the assignment's revision_due date has passed
-        and the student was eligible to revise to mastery (HW >= 75, pass does not qualify).
+    def get_revision_candidates(class_id, today):
+        """Return eligible R and RQ grades whose revision_due is on or before today+7.
+
+        `today` is the calendar date for this report. Overdue, due today, and due
+        in 1 through 7 days all fall in that window. The homework gate is unchanged:
+        the score must be at least 75, and a free pass does not qualify.
 
         Batched: loads all needed assignment/homework-group data and homework_scores in a
         small fixed number of queries instead of per-assignment queries inside a loop.
         """
-        today = date.today().isoformat()
+        horizon = (today + timedelta(days=7)).isoformat()
         try:
             lo_ids = Course.get_all_lo_ids_for_class(class_id)
             if not lo_ids:
@@ -368,11 +371,11 @@ class Grade:
             for aid in assignment_ids:
                 hw_by_assignment[aid] = _hw_map_for_assignment(aid)
 
-            overdue = []
+            candidates = []
             for grade in grade_rows:
                 assignment = grade.get('assignments') or {}
-                rev_due = assignment.get('revision_due')
-                if not rev_due or rev_due >= today:
+                rev_due = assignment.get('revision_due') or ""
+                if not rev_due or rev_due > horizon:
                     continue
                 aid = grade.get('assignment_id')
                 snapshot = grade.get('hw_score_at_entry')
@@ -383,16 +386,20 @@ class Grade:
                 if not Homework.is_revision_to_m_eligible_hw_score(score):
                     continue
                 lo = grade.get('learning_objectives') or {}
-                overdue.append({
+                candidates.append({
                     'student_id': grade['student_id'],
+                    'assignment_id': grade.get('assignment_id') or '',
                     'assignment_name': assignment.get('name', ''),
                     'revision_due': rev_due,
+                    'learning_objective_id': lo.get('id') or '',
+                    'lo_code': (lo.get('vendor_code') or '').strip(),
+                    'lo_objective_name': (lo.get('name') or '').strip(),
                     'lo_name': lo.get('vendor_code') or lo.get('name', 'Unknown LO'),
                     'top_score': grade.get('top_score') or '',
                 })
-            return overdue
+            return candidates
         except Exception as e:
-            logger.error("Error fetching overdue revisions: %s", e)
+            logger.error("Error fetching revision candidates: %s", e)
             return []
 
 class Student:

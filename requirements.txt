@@ -6,3 +6,4 @@ PyMuPDF==1.27.1
 pymupdf-fonts==1.0.5
 gunicorn==23.0.0
 pyuca==1.2
+tzdata==2026.5
