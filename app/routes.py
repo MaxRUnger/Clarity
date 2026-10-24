@@ -435,7 +435,7 @@ def _owned_archive_row(archive_id, instructor_id):
         return None
     resp = (
         supabase_admin.table("archived_classes")
-        .select("id, class_name, storage_path, instructor_id")
+        .select("id, class_name, storage_path, snapshot_path, instructor_id")
         .eq("id", archive_id)
         .eq("instructor_id", instructor_id)
         .limit(1)
@@ -448,6 +448,20 @@ def _owned_archive_row(archive_id, instructor_id):
 def _removed_archive_is_already_gone(exc: BaseException) -> bool:
     from storage3.exceptions import StorageApiError
     return isinstance(exc, StorageApiError) and str(exc.status) == "404"
+
+
+def _remove_archive_object(path: str) -> None:
+    """Remove one stored archive object. A missing object is not an error."""
+    if not str(path or "").strip():
+        return
+    from app.archive_storage import remove_archive
+    try:
+        remove_archive(path)
+    except Exception as exc:
+        if _removed_archive_is_already_gone(exc):
+            logger.error("Archive file %s was already gone: %s", path, exc)
+            return
+        raise
 
 
 def _user_ids_equal(a: Any, b: Any) -> bool:
@@ -2618,12 +2632,21 @@ def delete_class(class_id):
 @api_instructor_required
 def archive_class(class_id):
     from app.archive_export import build_class_archive_zip, check_archive_manifest
-    from app.archive_storage import download_archive, remove_archive, upload_archive
+    from app.archive_snapshot import build_class_snapshot
+    from app.archive_storage import (
+        download_archive,
+        remove_archive,
+        upload_archive,
+        upload_snapshot,
+    )
 
     kept_error = (
         "The class was archived, but it was not fully removed. "
         "The archive is saved under Archived Classes. "
         "Delete the class to finish removing it."
+    )
+    budget_error = (
+        "The archive took too long, or the class changed. Nothing was removed. Try again."
     )
     instructor_id = session["user_id"]
     class_row = _owned_class_row(class_id, instructor_id)
@@ -2640,13 +2663,15 @@ def archive_class(class_id):
 
     archive_id = str(uuid4())
     path = f"{instructor_id}/{archive_id}.zip"
+    snapshot_path = f"{instructor_id}/{archive_id}.snapshot.json.gz"
     start = time.monotonic()
 
     def discard(message):
-        try:
-            remove_archive(path)
-        except Exception:
-            logger.error("Could not remove archive at %s", path)
+        for object_path in (snapshot_path, path):
+            try:
+                remove_archive(object_path)
+            except Exception:
+                logger.error("Could not remove archive at %s", object_path)
         return jsonify({"success": False, "error": message}), 500
 
     try:
@@ -2668,9 +2693,24 @@ def archive_class(class_id):
             ),
         }), 413
     try:
+        snapshot_bytes = build_class_snapshot(class_id, manifest)
+    except Exception as exc:
+        logger.error("Could not build snapshot for class %s: %s", class_id, exc)
+        return jsonify({
+            "success": False,
+            "error": "Could not build the archive. Nothing was changed.",
+        }), 500
+    if time.monotonic() - start > 200:
+        return jsonify({"success": False, "error": budget_error}), 500
+    try:
         upload_archive(path, zip_bytes)
     except Exception as exc:
         logger.error("Could not upload archive %s: %s", path, exc)
+        return discard("Could not save the archive. The class was not changed.")
+    try:
+        upload_snapshot(snapshot_path, snapshot_bytes)
+    except Exception as exc:
+        logger.error("Could not upload snapshot %s: %s", snapshot_path, exc)
         return discard("Could not save the archive. The class was not changed.")
     try:
         saved = download_archive(path)
@@ -2678,6 +2718,14 @@ def archive_class(class_id):
         check_archive_manifest(manifest, saved)
         if mismatch:
             raise ValueError("downloaded archive bytes do not match the upload")
+        del saved
+        saved_snapshot = download_archive(snapshot_path)
+        if saved_snapshot != snapshot_bytes:
+            raise ValueError("downloaded snapshot bytes do not match the upload")
+        del saved_snapshot
+        size_bytes = len(zip_bytes)
+        del zip_bytes
+        del snapshot_bytes
     except Exception as exc:
         logger.error("Archive %s failed verification: %s", path, exc)
         return discard(
@@ -2687,13 +2735,9 @@ def archive_class(class_id):
         again = _owned_class_row(class_id, instructor_id)
     except Exception as exc:
         logger.error("Could not re-check class %s before recording the archive: %s", class_id, exc)
-        return discard(
-            "The archive took too long, or the class changed. Nothing was removed. Try again."
-        )
+        return discard(budget_error)
     if again is None or time.monotonic() - start > 200:
-        return discard(
-            "The archive took too long, or the class changed. Nothing was removed. Try again."
-        )
+        return discard(budget_error)
     record = {
         "id": archive_id,
         "instructor_id": instructor_id,
@@ -2704,7 +2748,8 @@ def archive_class(class_id):
         "student_count": manifest.get("source_students"),
         "assignment_count": manifest.get("source_assignments"),
         "storage_path": path,
-        "size_bytes": len(zip_bytes),
+        "snapshot_path": snapshot_path,
+        "size_bytes": size_bytes,
     }
     try:
         supabase_admin.table("archived_classes").insert(record).execute()
@@ -2808,7 +2853,6 @@ def download_archived_class(archive_id):
 @main_bp.route("/archived-classes/<archive_id>/delete", methods=["POST"])
 @api_instructor_required
 def delete_archived_class(archive_id):
-    from app.archive_storage import remove_archive
     if _ARCHIVE_ID.fullmatch(str(archive_id or "")) is None:
         return jsonify({"success": False, "error": "This archive was not found."}), 404
     instructor_id = session["user_id"]
@@ -2824,15 +2868,14 @@ def delete_archived_class(archive_id):
             "error": "Type the class name exactly to delete this archive.",
         }), 400
     try:
-        remove_archive(row.get("storage_path") or "")
+        _remove_archive_object(row.get("storage_path") or "")
+        _remove_archive_object(row.get("snapshot_path") or "")
     except Exception as exc:
-        if not _removed_archive_is_already_gone(exc):
-            logger.error("Could not remove archive %s: %s", archive_id, exc)
-            return jsonify({
-                "success": False,
-                "error": "Could not delete the archive file. The record was kept.",
-            }), 500
-        logger.error("Archive file %s was already gone: %s", archive_id, exc)
+        logger.error("Could not remove archive %s: %s", archive_id, exc)
+        return jsonify({
+            "success": False,
+            "error": "Could not delete the archive file. The record was kept.",
+        }), 500
     try:
         supabase_admin.table("archived_classes").delete().eq("id", archive_id).eq(
             "instructor_id", instructor_id

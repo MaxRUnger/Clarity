@@ -8588,6 +8588,7 @@ class _ArchiveBucket:
         self.events = []
         self.fail = fail
         self.payload = None
+        self.objects = {}
         self.download_bytes = download_bytes
         self.built = 0
         self.missing_after = missing_after
@@ -8599,6 +8600,9 @@ class _ArchiveBucket:
         self.calls.append(("upload", path, data, options))
         if self.fail == "upload":
             raise RuntimeError("upload failed")
+        if self.fail == "snapshot-upload" and str(path).endswith(".snapshot.json.gz"):
+            raise RuntimeError("snapshot upload failed")
+        self.objects[path] = data
         self.payload = data
 
     def download(self, path):
@@ -8606,8 +8610,12 @@ class _ArchiveBucket:
         self.calls.append(("download", path))
         if self.fail == "download":
             raise RuntimeError("download failed")
+        if self.fail == "snapshot-download" and str(path).endswith(".snapshot.json.gz"):
+            return b"corrupt"
         if self.download_bytes is not None:
             return self.download_bytes
+        if path in self.objects:
+            return self.objects[path]
         return self.payload
 
     def remove(self, paths):
@@ -8663,6 +8671,30 @@ class TestClassArchiveRoute(unittest.TestCase):
         }
         return buffer.getvalue(), manifest
 
+    def _snapshot_gzip(self, students, assignments):
+        import gzip
+        import json
+        document = {
+            "format_version": 1,
+            "archived_at": "2026-10-24T00:00:00+00:00",
+            "classes": [{"id": "c1", "name": "Archive Class"}],
+            "learning_objectives": [],
+            "assignments": [{"id": "a%s" % index} for index in range(assignments)],
+            "assignment_objectives": [],
+            "enrollments": [
+                {"id": "e%s" % index, "student_id": "s%s" % index}
+                for index in range(students)
+            ],
+            "grades": [],
+            "homework_scores": [],
+            "free_passes": [],
+            "students": [
+                {"id": "s%s" % index, "full_name": "Student %s" % index}
+                for index in range(students)
+            ],
+        }
+        return gzip.compress(json.dumps(document, sort_keys=True).encode("utf-8"))
+
     def _post(
         self,
         data=None,
@@ -8679,6 +8711,8 @@ class TestClassArchiveRoute(unittest.TestCase):
         delete_error=False,
         owned=None,
         include_confirm=True,
+        snapshot_error=None,
+        snapshot_override=None,
     ):
         from uuid import UUID
         from app import routes as r
@@ -8728,6 +8762,16 @@ class TestClassArchiveRoute(unittest.TestCase):
             if delete_error:
                 raise RuntimeError("delete failed")
 
+        def build_snapshot(_class_id, manifest):
+            if snapshot_error is not None:
+                raise snapshot_error
+            if snapshot_override is not None:
+                return snapshot_override
+            return self._snapshot_gzip(
+                manifest.get("source_students") or 0,
+                manifest.get("source_assignments") or 0,
+            )
+
         client = create_app().test_client()
         with client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -8742,6 +8786,7 @@ class TestClassArchiveRoute(unittest.TestCase):
             unittest.mock.patch.object(r, "supabase_admin", admin),
             unittest.mock.patch.object(storage, "supabase_admin", admin),
             unittest.mock.patch("app.archive_export.build_class_archive_zip", side_effect=build_zip),
+            unittest.mock.patch("app.archive_snapshot.build_class_snapshot", side_effect=build_snapshot),
             unittest.mock.patch.object(r, "uuid4", return_value=UUID(self.ARCHIVE_ID)),
             unittest.mock.patch.object(r, "delete_class_rows", side_effect=delete_rows),
         ]
@@ -8890,7 +8935,7 @@ class TestClassArchiveRoute(unittest.TestCase):
         self.assertEqual(missing.get_json()["error"], self.CHANGED)
         self.assertEqual(missing_bucket.calls[-1][0], "remove")
         self.assertFalse(any(entry["op"] == "insert" for entry in missing_log))
-        late, late_log, late_bucket, _deleted = self._post(monotonic=[0, 201])
+        late, late_log, late_bucket, _deleted = self._post(monotonic=[0, 100, 201])
         self.assertEqual(late.status_code, 500)
         self.assertEqual(late.get_json()["error"], self.CHANGED)
         self.assertEqual(late_bucket.calls[-1][0], "remove")
@@ -8908,7 +8953,10 @@ class TestClassArchiveRoute(unittest.TestCase):
         response, log, bucket, deleted = self._post(owned=owned)
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.get_json()["error"], self.CHANGED)
-        self.assertEqual([call[0] for call in bucket.calls], ["upload", "download", "remove"])
+        self.assertEqual(
+            [call[0] for call in bucket.calls],
+            ["upload", "upload", "download", "download", "remove", "remove"],
+        )
         self.assertFalse(any(entry["op"] == "insert" for entry in log))
         self.assertEqual(deleted, [])
 
@@ -8983,18 +9031,43 @@ class TestClassArchiveRoute(unittest.TestCase):
         self.assertTrue(response.get_json()["redirect"].endswith("/instructor/dashboard"))
         self.assertEqual(
             bucket.events,
-            ["upload", "download", "insert", "delete_class_rows"],
+            ["upload", "upload", "download", "download", "insert", "delete_class_rows"],
         )
-        self.assertEqual([call[0] for call in bucket.calls], ["upload", "download"])
+        self.assertEqual(
+            [call[0] for call in bucket.calls],
+            ["upload", "upload", "download", "download"],
+        )
         path = f"inst1/{self.ARCHIVE_ID}.zip"
+        snapshot_path = f"inst1/{self.ARCHIVE_ID}.snapshot.json.gz"
         self.assertEqual(bucket.calls[0][1], path)
         self.assertEqual(bucket.calls[0][2], zip_bytes)
         self.assertEqual(bucket.calls[0][3], {"content-type": "application/zip", "upsert": "false"})
+        self.assertEqual(bucket.calls[1][1], snapshot_path)
+        self.assertEqual(
+            bucket.calls[1][3],
+            {"content-type": "application/gzip", "upsert": "false"},
+        )
+        self.assertIsNot(bucket.calls[0][3], bucket.calls[1][3])
+        import gzip
+        import json
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(bucket.calls[0][2])) as archive:
+            names = archive.namelist()
+        self.assertFalse(any(name.endswith(".json") or name.endswith(".gz") for name in names))
+        snapshot_text = gzip.decompress(bucket.calls[1][2]).decode("utf-8")
+        snapshot = json.loads(snapshot_text)
+        self.assertEqual(snapshot["format_version"], 1)
+        self.assertEqual(len(snapshot["students"]), 2)
+        self.assertEqual(len(snapshot["enrollments"]), 2)
+        self.assertEqual(len(snapshot["assignments"]), 1)
+        self.assertNotIn("@", snapshot_text)
+        self.assertNotIn("email", snapshot_text.lower())
         inserted = next(
             entry for entry in log
             if entry["table"] == "archived_classes" and entry["op"] == "insert"
         )
         self.assertEqual(inserted["rows"]["storage_path"], path)
+        self.assertEqual(inserted["rows"]["snapshot_path"], snapshot_path)
         self.assertEqual(inserted["rows"]["student_count"], 2)
         self.assertEqual(inserted["rows"]["assignment_count"], 1)
         self.assertEqual(inserted["rows"]["class_name"], "Archive Class")
@@ -9014,6 +9087,69 @@ class TestClassArchiveRoute(unittest.TestCase):
         )
         self.assertEqual(inserted["student_count"], manifest["source_students"])
         self.assertEqual(inserted["student_count"], 2)
+
+    def test_spent_budget_before_upload_leaves_the_class_and_storage_untouched(self):
+        response, log, bucket, deleted = self._post(monotonic=[0, 201])
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json()["error"], self.CHANGED)
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(deleted, [])
+        self.assertFalse(any(entry["op"] == "insert" for entry in log))
+
+    def test_snapshot_build_error_uploads_nothing(self):
+        from app.archive_snapshot import SnapshotCountError
+        failed, _log, bucket, deleted = self._post(snapshot_error=RuntimeError("snapshot failed"))
+        self.assertEqual(failed.status_code, 500)
+        self.assertEqual(
+            failed.get_json()["error"],
+            "Could not build the archive. Nothing was changed.",
+        )
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(deleted, [])
+        mismatched, _log, mismatch_bucket, _deleted = self._post(
+            snapshot_error=SnapshotCountError("enrollments"),
+        )
+        self.assertEqual(mismatched.status_code, 500)
+        self.assertEqual(
+            mismatched.get_json()["error"],
+            "Could not build the archive. Nothing was changed.",
+        )
+        self.assertEqual(mismatch_bucket.calls, [])
+
+    def test_snapshot_upload_failure_removes_both_objects(self):
+        response, log, bucket, deleted = self._post(bucket_fail="snapshot-upload")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Could not save the archive. The class was not changed.",
+        )
+        self.assertEqual(
+            [call[0] for call in bucket.calls],
+            ["upload", "upload", "remove", "remove"],
+        )
+        self.assertEqual(
+            bucket.calls[-2][1],
+            [f"inst1/{self.ARCHIVE_ID}.snapshot.json.gz"],
+        )
+        self.assertEqual(bucket.calls[-1][1], [f"inst1/{self.ARCHIVE_ID}.zip"])
+        self.assertFalse(any(entry["op"] == "insert" for entry in log))
+        self.assertEqual(deleted, [])
+
+    def test_snapshot_download_mismatch_removes_both_objects(self):
+        response, log, bucket, deleted = self._post(bucket_fail="snapshot-download")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json()["error"],
+            "The saved archive did not verify and was removed. The class was not changed.",
+        )
+        self.assertEqual(bucket.calls[-1][0], "remove")
+        self.assertEqual(bucket.calls[-1][1], [f"inst1/{self.ARCHIVE_ID}.zip"])
+        self.assertEqual(
+            bucket.calls[-2][1],
+            [f"inst1/{self.ARCHIVE_ID}.snapshot.json.gz"],
+        )
+        self.assertFalse(any(entry["op"] == "insert" for entry in log))
+        self.assertEqual(deleted, [])
 
     def test_each_upload_gets_its_own_options_dict(self):
         from app.archive_storage import upload_archive
@@ -9261,6 +9397,38 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertIn(("eq", "id", self.ARCHIVE_ID), deleted[0]["filters"])
         self.assertIn(("eq", "instructor_id", "inst-a"), deleted[0]["filters"])
 
+    def test_delete_removes_the_snapshot_after_the_zip(self):
+        row = self._row(self.ARCHIVE_ID, "inst-a", "Algebra")
+        row["snapshot_path"] = f"inst-a/{self.ARCHIVE_ID}.snapshot.json.gz"
+        response, log, bucket, _seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/delete",
+            [row],
+            data={"confirm_name": "Algebra"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(bucket.calls[0][1], [f"inst-a/{self.ARCHIVE_ID}.zip"])
+        self.assertEqual(
+            bucket.calls[1][1],
+            [f"inst-a/{self.ARCHIVE_ID}.snapshot.json.gz"],
+        )
+        self.assertTrue(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_an_old_archive_without_snapshot_path_downloads_only_the_zip(self):
+        rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
+        self.assertNotIn("snapshot_path", rows[0])
+        listed, _log, list_bucket, _seen = self._request("GET", "/archived-classes", rows)
+        self.assertEqual(listed.status_code, 200)
+        self.assertIn("Algebra", listed.get_data(as_text=True))
+        self.assertEqual(list_bucket.calls, [])
+        downloaded, _log, bucket, _seen = self._request(
+            "GET", f"/archived-classes/{self.ARCHIVE_ID}/download", rows
+        )
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(bucket.calls, [("download", f"inst-a/{self.ARCHIVE_ID}.zip")])
+
     def test_a_missing_storage_object_still_deletes_the_row(self):
         from storage3.exceptions import StorageApiError
         rows = [self._row(self.ARCHIVE_ID, "inst-a", "Algebra")]
@@ -9422,6 +9590,315 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertIn(f'data-archive-id="{self.ARCHIVE_ID}"', buttons[0])
         self.assertIn('datetime="2026-10-15T18:04:00+00:00"', page)
         self.assertIn("This permanently deletes the saved zip. It cannot be undone.", page)
+
+
+class _SnapshotResponse:
+    def __init__(self, data, count):
+        self.data = data
+        self.count = count
+
+
+class _SnapshotQuery:
+    def __init__(self, rows, admin, name):
+        self.rows = list(rows)
+        self.admin = admin
+        self.name = name
+        self.filters = []
+        self.orders = []
+        self.count_mode = None
+        self.head = False
+        self.range_bounds = None
+
+    def select(self, *args, **kwargs):
+        self.admin.selects.append((self.name, args, kwargs))
+        self.count_mode = kwargs.get("count")
+        self.head = bool(kwargs.get("head"))
+        return self
+
+    def eq(self, column, value):
+        self.filters.append(("eq", column, value))
+        return self
+
+    def in_(self, column, values):
+        copied = list(values)
+        self.admin.in_calls.append((column, copied))
+        self.filters.append(("in", column, copied))
+        return self
+
+    def or_(self, expr):
+        self.admin.or_calls.append(expr)
+        self.filters.append(("or", expr))
+        return self
+
+    def order(self, column, desc=False):
+        self.orders.append((column, desc))
+        self.admin.orders.append((self.name, column))
+        return self
+
+    def range(self, start, end):
+        self.range_bounds = (start, end)
+        self.admin.ranges.append((self.name, start, end))
+        return self
+
+    def _or_matches(self, row, expr):
+        import re
+        clauses = re.findall(r"([A-Za-z0-9_]+)\.in\.\(([^)]*)\)", expr)
+        for column, raw in clauses:
+            ids = [item for item in raw.split(",") if item]
+            if str(row.get(column) or "") in ids:
+                return True
+        return False
+
+    def _filtered(self):
+        kept = []
+        for row in self.rows:
+            matched = True
+            for kind, column, value in (
+                (item[0], item[1], item[2] if len(item) > 2 else None) for item in self.filters
+            ):
+                if kind == "eq" and str(row.get(column)) != str(value):
+                    matched = False
+                elif kind == "in" and str(row.get(column) or "") not in {str(item) for item in value}:
+                    matched = False
+                elif kind == "or" and not self._or_matches(row, column):
+                    matched = False
+            if matched:
+                kept.append(row)
+        for column, desc in reversed(self.orders):
+            kept.sort(key=lambda item: str(item.get(column) or ""), reverse=desc)
+        return kept
+
+    def execute(self):
+        rows = self._filtered()
+        if self.head:
+            count = len(rows)
+            if self.admin.short:
+                count = max(count - 1, 0)
+            return _SnapshotResponse([], count)
+        if self.range_bounds is not None:
+            start, end = self.range_bounds
+            rows = rows[start:end + 1]
+        count = len(rows) if self.count_mode else None
+        return _SnapshotResponse(rows, count)
+
+
+class _SnapshotAdmin:
+    def __init__(self, tables, short=False):
+        self.table_names = []
+        self.rows_for = tables
+        self.short = short
+        self.selects = []
+        self.in_calls = []
+        self.or_calls = []
+        self.orders = []
+        self.ranges = []
+
+    def table(self, name):
+        self.table_names.append(name)
+        return _SnapshotQuery(self.rows_for.get(name, []), self, name)
+
+
+class TestArchiveSnapshot(unittest.TestCase):
+    def _tables(self, grade_count=1):
+        grades = [
+            {
+                "id": "g%s" % index,
+                "student_id": "s1",
+                "learning_objective_id": "lo1",
+                "assignment_id": "a1",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            }
+            for index in range(grade_count)
+        ]
+        return {
+            "classes": [{
+                "id": "c1",
+                "name": "Algebra",
+                "instructor_id": "inst1",
+                "days": "MW",
+                "section_number": "01",
+            }],
+            "learning_objectives": [{
+                "id": "lo1",
+                "class_id": "c1",
+                "name": "Factor",
+                "description": "Factor expressions",
+            }],
+            "assignments": [{
+                "id": "a1",
+                "class_id": "c1",
+                "name": "Quiz",
+                "homework_group": "Exam",
+                "date_returned": "2026-08-20",
+                "revision_due": None,
+                "assignment_type": "exam",
+            }],
+            "assignment_objectives": [{
+                "assignment_id": "a1",
+                "learning_objective_id": "lo1",
+            }],
+            "enrollments": [{
+                "id": "e1",
+                "class_id": "c1",
+                "student_id": "s1",
+                "muted": False,
+            }],
+            "grades": grades,
+            "homework_scores": [],
+            "free_passes": [],
+            "profiles": [{
+                "id": "s1",
+                "full_name": "Lee, Ana",
+                "email": "ana@example.com",
+            }],
+        }
+
+    def _assignments(self, count):
+        return [
+            {
+                "id": "a%s" % index,
+                "class_id": "c1",
+                "name": "A%s" % index,
+                "homework_group": "Exam",
+                "date_returned": "2026-08-20",
+                "revision_due": None,
+                "assignment_type": "exam",
+            }
+            for index in range(count)
+        ]
+
+    def _build(self, tables=None, students=None, assignments=None, short=False):
+        import app.archive_snapshot as snapshot
+        tables = self._tables() if tables is None else tables
+        if students is None:
+            students = len(tables["enrollments"])
+        if assignments is None:
+            assignments = len(tables["assignments"])
+        admin = _SnapshotAdmin(tables, short=short)
+        manifest = {
+            "source_students": students,
+            "source_assignments": assignments,
+        }
+        with unittest.mock.patch.object(snapshot, "supabase_admin", admin):
+            payload = snapshot.build_class_snapshot("c1", manifest)
+        return payload, admin
+
+    def test_snapshot_keeps_names_pages_grades_and_drops_email(self):
+        import gzip
+        import json
+        payload, admin = self._build(self._tables(grade_count=1001))
+        document = json.loads(gzip.decompress(payload).decode("utf-8"))
+        text = gzip.decompress(payload).decode("utf-8")
+        self.assertEqual(document["format_version"], 1)
+        self.assertEqual(document["students"], [{"full_name": "Lee, Ana", "id": "s1"}])
+        self.assertEqual(len(document["grades"]), 1001)
+        self.assertNotIn("@", text)
+        self.assertNotIn("email", text.lower())
+        self.assertIn(
+            ("profiles", ("id, full_name",)),
+            [(name, args) for name, args, _kwargs in admin.selects],
+        )
+        self.assertNotIn("grade_change_log", admin.table_names)
+        self.assertNotIn("revision_reminders_sent", admin.table_names)
+        self.assertEqual(
+            [column for table, column in admin.orders if table == "assignment_objectives"],
+            ["assignment_id", "learning_objective_id"],
+        )
+        self.assertIn(("grades", "id"), admin.orders)
+        self.assertIn(("classes", "id"), admin.orders)
+        grade_ranges = [(start, end) for table, start, end in admin.ranges if table == "grades"]
+        self.assertIn((0, 999), grade_ranges)
+        self.assertIn((1000, 1999), grade_ranges)
+
+    def test_enrollment_count_must_match_the_manifest(self):
+        from app.archive_snapshot import SnapshotCountError
+        with self.assertRaises(SnapshotCountError):
+            self._build(self._tables(), students=9)
+
+    def test_a_short_head_count_raises(self):
+        from app.archive_snapshot import SnapshotCountError
+        with self.assertRaises(SnapshotCountError):
+            self._build(self._tables(), short=True)
+
+    def test_fifty_one_assignment_ids_are_chunked_and_each_grade_is_kept_once(self):
+        import gzip
+        import json
+        tables = self._tables(grade_count=0)
+        tables["assignments"] = self._assignments(51)
+        tables["grades"] = [
+            {
+                "id": "g%s" % index,
+                "student_id": "s1",
+                "learning_objective_id": "lo1",
+                "assignment_id": "a%s" % index,
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            }
+            for index in range(51)
+        ]
+        payload, admin = self._build(tables, students=1, assignments=51)
+        document = json.loads(gzip.decompress(payload).decode("utf-8"))
+        grade_ids = [row["id"] for row in document["grades"]]
+        self.assertEqual(admin.or_calls, [])
+        self.assertEqual(len(grade_ids), 51)
+        self.assertEqual(len(set(grade_ids)), 51)
+
+    def test_a_grade_returned_by_both_chunks_appears_once(self):
+        import gzip
+        import json
+        tables = self._tables(grade_count=0)
+        tables["assignments"] = self._assignments(51)
+        tables["grades"] = [
+            {
+                "id": "both",
+                "student_id": "s1",
+                "learning_objective_id": "lo1",
+                "assignment_id": "a0",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+            {
+                "id": "assignment-only",
+                "student_id": "s1",
+                "learning_objective_id": "lo-other",
+                "assignment_id": "a1",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+        ]
+        payload, admin = self._build(tables, students=1, assignments=51)
+        document = json.loads(gzip.decompress(payload).decode("utf-8"))
+        ids = [row["id"] for row in document["grades"]]
+        self.assertEqual(admin.or_calls, [])
+        self.assertTrue(any(column == "assignment_id" for column, _values in admin.in_calls))
+        self.assertIn(("learning_objective_id", ["lo1"]), admin.in_calls)
+        self.assertEqual(sorted(ids), ["assignment-only", "both"])
+        self.assertEqual(len(ids), 2)
+
+    def test_one_student_with_two_enrollment_rows_is_one_student(self):
+        import gzip
+        import json
+        tables = self._tables()
+        tables["enrollments"] = [
+            {"id": "e1", "class_id": "c1", "student_id": "s1", "muted": False},
+            {"id": "e2", "class_id": "c1", "student_id": "s1", "muted": True},
+        ]
+        payload, _admin = self._build(tables, students=2, assignments=1)
+        document = json.loads(gzip.decompress(payload).decode("utf-8"))
+        self.assertEqual(len(document["enrollments"]), 2)
+        self.assertEqual(document["students"], [{"full_name": "Lee, Ana", "id": "s1"}])
+
+    def test_a_key_whose_name_contains_email_is_rejected(self):
+        from app.archive_snapshot import SnapshotCountError
+        tables = self._tables()
+        tables["classes"][0]["student_email"] = "hidden"
+        with self.assertRaises(SnapshotCountError):
+            self._build(tables)
 
 
 class TestSignupEmailRedirect(unittest.TestCase):

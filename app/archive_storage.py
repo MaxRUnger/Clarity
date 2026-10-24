@@ -11,6 +11,14 @@ def upload_archive(path, data):
     )
 
 
+def upload_snapshot(path, data):
+    supabase_admin.storage.from_(_BUCKET).upload(
+        path,
+        data,
+        {"content-type": "application/gzip", "upsert": "false"},
+    )
+
+
 def download_archive(path) -> bytes:
     return supabase_admin.storage.from_(_BUCKET).download(path)
 
