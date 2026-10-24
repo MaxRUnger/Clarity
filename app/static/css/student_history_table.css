@@ -1,0 +1,92 @@
+.history-print-spacer { display: none; }
+
+.history-sheet-kicker,
+.history-sheet-class {
+  margin: 0;
+  color: #475569;
+  font-size: 0.72rem;
+  line-height: 1.15;
+}
+
+.history-sheet-name {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.1rem;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.history-sheet-banner td {
+  border: 0;
+  text-align: left;
+  padding: 0 0 6px;
+  background: #fff;
+}
+
+.student-history-print-table {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.history-print-frame {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 10px;
+  line-height: 1.05;
+  color: #0f172a;
+  background: #fff;
+}
+
+.history-col-assignment { width: 26%; }
+
+.history-col-objective { width: calc(74% / var(--history-lo-count)); }
+
+.history-print-frame th,
+.history-print-frame td {
+  border: 1px solid #1f2937;
+  padding: 2px 4px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.history-print-frame th {
+  font-weight: 700;
+  text-align: center;
+}
+
+.history-print-frame td.assignment-name {
+  text-align: left;
+  font-weight: 600;
+}
+
+.history-print-frame td.grade-cell {
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 700;
+}
+
+@media print {
+  .history-print-frame thead { display: table-header-group; }
+  .history-print-frame tfoot { display: table-footer-group; }
+  .history-print-frame tbody { display: table-row-group; }
+  .history-sheet-banner td {
+    border: 0 !important;
+    text-align: left !important;
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+  .history-sheet-kicker,
+  .history-sheet-class {
+    color: #475569 !important;
+  }
+  .history-sheet-name {
+    color: #0f172a !important;
+  }
+  .history-print-frame th,
+  .history-print-frame td {
+    border: 1px solid #1f2937 !important;
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+}

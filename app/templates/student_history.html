@@ -53,7 +53,7 @@
       <div class="p-6">
         {% if lo.grades|length > 0 %}
         <div class="space-y-3">
-          {% for grade in lo.grades|reverse %}
+          {% for grade in lo.grades %}
           <div class="student-history-row flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-transparent dark:border-transparent">
             <div>
               <div class="text-sm font-medium text-slate-900 dark:text-white">
@@ -102,55 +102,8 @@
   </div>
 
   <!-- Print-only compact table (Excel-style) -->
-  <div class="student-history-print-table hidden print:block mt-4">
-    {% set ns = namespace(assignments=[]) %}
-    {% for lo in learning_objectives %}
-      {% for grade in lo.grades %}
-        {% if grade.assignments and grade.assignments.name %}
-          {% set aname = grade.assignments.name|string %}
-          {% if aname not in ns.assignments %}
-            {% set ns.assignments = ns.assignments + [aname] %}
-          {% endif %}
-        {% endif %}
-      {% endfor %}
-    {% endfor %}
-    <table class="w-full border-collapse">
-      <thead>
-        <tr>
-          <th>Assignment</th>
-          {% for lo in learning_objectives %}
-          <th>{{ lo.vendor_code }}</th>
-          {% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for aname in ns.assignments %}
-        <tr>
-          <td class="assignment-name">{{ aname }}</td>
-          {% for lo in learning_objectives %}
-          {% set cell = namespace(scores=[]) %}
-          {% for grade in lo.grades %}
-            {% if grade.assignments and (grade.assignments.name|string) == aname %}
-              {% if grade.top_score %}
-                {% set cell.scores = cell.scores + [grade.top_score] %}
-              {% endif %}
-              {% if grade.second_score %}
-                {% set cell.scores = cell.scores + [grade.second_score] %}
-              {% endif %}
-            {% endif %}
-          {% endfor %}
-          <td class="grade-cell">
-            {% if cell.scores|length > 0 %}
-              {{ cell.scores|join(', ') }}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-          {% endfor %}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="hidden print:block mt-4">
+    {% include "student_history_table.html" %}
   </div>
 
 </div>
@@ -252,6 +205,7 @@ function emailStudentHistoryReport(btnEl) {
 </script>
 
 {{ mastery_badge_styles() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/student_history_table.css') }}">
 <style>
 @media print {
   @page { size: letter portrait; margin: 0.22in; }
@@ -270,6 +224,9 @@ function emailStudentHistoryReport(btnEl) {
   }
   .student-history-print-header p {
     color: #475569 !important;
+  }
+  .student-history-print-header {
+    display: none !important;
   }
 
   /* Keep print header compact */
@@ -320,39 +277,8 @@ function emailStudentHistoryReport(btnEl) {
     color: #64748b !important;
   }
 
-  /* Excel-style one-page print table */
   .student-history-print-table {
     margin-top: 0.25rem !important;
-  }
-  .student-history-print-table table {
-    width: 100% !important;
-    table-layout: fixed !important;
-    border-collapse: collapse !important;
-    font-size: 10px !important;
-    line-height: 1.05 !important;
-    color: #0f172a !important;
-  }
-  .student-history-print-table th,
-  .student-history-print-table td {
-    border: 1px solid #1f2937 !important;
-    padding: 2px 4px !important;
-    background: #ffffff !important;
-    color: #0f172a !important;
-  }
-  .student-history-print-table th {
-    font-weight: 700 !important;
-    text-align: center !important;
-  }
-  .student-history-print-table th:first-child,
-  .student-history-print-table td.assignment-name {
-    width: 26% !important;
-    text-align: left !important;
-    font-weight: 600 !important;
-  }
-  .student-history-print-table td.grade-cell {
-    text-align: center !important;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-    font-weight: 700 !important;
   }
 }
 </style>

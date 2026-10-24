@@ -1,0 +1,91 @@
+{% extends "app_base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/student_history_table.css') }}">
+<div class="history-print-back print:hidden mb-4">
+  <a href="{{ url_for('main.class_reports', class_id=class_id) }}"
+    class="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm bg-slate-600 text-white hover:bg-slate-700">
+    Back to Reports
+  </a>
+</div>
+<div class="history-batch">
+  {% for sheet in sheets %}
+  <section class="history-batch-student">
+    {% with student_name=sheet.student_name, class_name=class_name, learning_objectives=sheet.learning_objectives, history_assignments=sheet.history_assignments %}
+    {% include "student_history_table.html" %}
+    {% endwith %}
+  </section>
+  {% endfor %}
+</div>
+<script>
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get("print") !== "1") {
+    return;
+  }
+  window.addEventListener("load", function () {
+    window.setTimeout(function () {
+      window.print();
+      params.delete("print");
+      var query = params.toString();
+      var next = window.location.pathname + (query ? "?" + query : "") + window.location.hash;
+      history.replaceState(null, "", next);
+    }, 250);
+  });
+})();
+</script>
+<style>
+.history-batch-student {
+  background: #fff;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+@media print {
+  @page { size: letter portrait; margin: 0; }
+  html, body, main,
+  .history-batch-student {
+    background: #fff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  nav, .history-print-back { display: none !important; }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  .history-batch-student {
+    border: 0 !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    break-after: page;
+    page-break-after: always;
+  }
+  .history-batch-student:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  .history-print-spacer { display: table-row !important; }
+  .history-print-frame .history-print-spacer td {
+    height: 0.2in;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+  .history-print-frame thead td,
+  .history-print-frame thead th,
+  .history-print-frame tbody td {
+    padding-left: 0.2in !important;
+    padding-right: 0.2in !important;
+  }
+  .history-print-frame tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+</style>
+{% endblock %}

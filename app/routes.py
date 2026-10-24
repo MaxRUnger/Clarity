@@ -4311,6 +4311,110 @@ def api_send_revision_reminders(class_id):
     })
 
 
+_HISTORY_PACKET_COLS = (
+    "student_id, learning_objective_id, assignment_id, top_score, second_score"
+)
+_HISTORY_LO_CHUNK = 100
+_HISTORY_PRINT_ERROR = "Could not load student history. Please try again."
+
+
+def _history_packet_grades(lo_ids: List[str]) -> List[Dict[str, Any]]:
+    """Every grade for these objectives, in id order. One page-set per 100 ids."""
+    ids: List[str] = []
+    seen = set()
+    for raw in lo_ids:
+        lo_id = str(raw or "").strip()
+        if not lo_id or lo_id in seen:
+            continue
+        seen.add(lo_id)
+        ids.append(lo_id)
+    if not ids:
+        return []
+    rows: List[Dict[str, Any]] = []
+    for start in range(0, len(ids), _HISTORY_LO_CHUNK):
+        chunk = ids[start:start + _HISTORY_LO_CHUNK]
+        rows.extend(fetch_all_rows(
+            supabase_admin.table("grades")
+            .select(_HISTORY_PACKET_COLS)
+            .in_("learning_objective_id", chunk)
+            .order("id")
+        ))
+    return rows
+
+
+def student_history_sheet(learning_objectives, assignments, student_grades):
+    """One student's grades in class assignment order, plus print rows.
+
+    Grade lists follow the class assignment list, then grades whose assignment
+    is not in that list, then grades with a null assignment_id. Duplicates stay
+    in the order they were loaded. Print rows are class assignments that have
+    a grade. Each print row's cells are the objective texts in that same order.
+    """
+    shown_lo_ids = {str(lo.get('id')) for lo in learning_objectives}
+    class_assignment_ids = {str(assignment.get('id')) for assignment in assignments}
+    grades_by_pair = {}
+    outside_by_lo = {}
+    unscoped_by_lo = {}
+    for grade in student_grades:
+        raw_lo = grade.get('learning_objective_id')
+        if raw_lo is None:
+            continue
+        lo_id = str(raw_lo)
+        if lo_id not in shown_lo_ids:
+            continue
+        # save_grades and api_import_grades store a null assignment_id when
+        # the request omits one. Legacy rows are the same case.
+        if grade.get('assignment_id') is None:
+            unscoped_by_lo.setdefault(lo_id, []).append(grade)
+            continue
+        aid = str(grade.get('assignment_id'))
+        if aid not in class_assignment_ids:
+            outside_by_lo.setdefault(lo_id, []).append(grade)
+            continue
+        grades_by_pair.setdefault((lo_id, aid), []).append(grade)
+
+    lo_grade_data = []
+    for lo in learning_objectives:
+        lo_id = str(lo.get('id'))
+        grades = []
+        for assignment in assignments:
+            aid = str(assignment.get('id'))
+            grades.extend(grades_by_pair.get((lo_id, aid), []))
+        # Covers a failed or partial assignment load.
+        grades.extend(outside_by_lo.get(lo_id, []))
+        grades.extend(unscoped_by_lo.get(lo_id, []))
+        lo_info = {
+            'id': lo_id,
+            'vendor_code': lo.get('vendor_code'),
+            'description': lo.get('description'),
+            'grades': grades
+        }
+        lo_grade_data.append(lo_info)
+
+    used_assignment_ids = {pair[1] for pair in grades_by_pair}
+    history_assignments = []
+    for assignment in assignments:
+        aid = str(assignment.get('id'))
+        if aid not in used_assignment_ids:
+            continue
+        cells = []
+        for lo in learning_objectives:
+            lo_id = str(lo.get('id'))
+            scores = []
+            for grade in grades_by_pair.get((lo_id, aid), []):
+                top_score = grade.get('top_score')
+                second_score = grade.get('second_score')
+                if top_score:
+                    scores.append(top_score)
+                if second_score:
+                    scores.append(second_score)
+            cells.append(", ".join(scores) if scores else "—")
+        printed = dict(assignment)
+        printed['cells'] = cells
+        history_assignments.append(printed)
+    return lo_grade_data, history_assignments
+
+
 @main_bp.route("/class/<class_id>/student/<student_id>/history")
 @login_required
 def student_history(class_id, student_id):
@@ -4339,6 +4443,8 @@ def student_history(class_id, student_id):
     student_email = (profile.get("email") or "").strip()
     profile_id = profile.get('id')
 
+    assignments = load_assignments_for_class(class_id)
+
     # Get all grades for this student with assignment names
     try:
         grades_resp = supabase_admin.table("grades").select(
@@ -4348,31 +4454,13 @@ def student_history(class_id, student_id):
     except Exception as e:
         logger.error("Error loading grades: %s", e)
         all_grades = []
-    
+
     learning_objectives = objectives_attached_to_assignments(
         class_id, class_data.get("learning_objectives") or []
     )
-    
-    # Organize grades by learning objective
-    student_grades = {}
-    for grade in all_grades:
-        lo_id = str(grade.get('learning_objective_id')) if grade.get('learning_objective_id') is not None else None
-        if lo_id not in student_grades:
-            student_grades[lo_id] = []
-        student_grades[lo_id].append(grade)
-
-    # Build grade data for template
-    lo_grade_data = []
-    for lo in learning_objectives:
-        lo_id = str(lo.get('id'))
-        grades = student_grades.get(lo_id, [])
-        lo_info = {
-            'id': lo_id,
-            'vendor_code': lo.get('vendor_code'),
-            'description': lo.get('description'),
-            'grades': grades
-        }
-        lo_grade_data.append(lo_info)
+    lo_grade_data, history_assignments = student_history_sheet(
+        learning_objectives, assignments, all_grades
+    )
 
     return render_template(
         "student_history.html",
@@ -4385,7 +4473,85 @@ def student_history(class_id, student_id):
         student_email=student_email,
         instructor_title=instructor_title(_report_sender_name()),
         learning_objectives=lo_grade_data,
+        history_assignments=history_assignments,
     )
+
+@main_bp.route("/class/<class_id>/student-history/print")
+@login_required
+def student_history_print(class_id):
+    if not _instructor_owns_class(class_id):
+        return "Forbidden", 403
+    try:
+        class_resp = (
+            supabase_admin.table("classes")
+            .select("id, name, days, section_number")
+            .eq("id", class_id)
+            .limit(1)
+            .execute()
+        )
+        class_row = (class_resp.data or [None])[0]
+        if not class_row:
+            return redirect(url_for("main.instructor_dashboard"))
+        objectives = Course.get_learning_objectives(class_id) or []
+        enrollments = fetch_all_rows(
+            supabase_admin.table("enrollments")
+            .select(
+                "id, class_id, student_id, muted, "
+                "profiles(id, full_name, role, email)"
+            )
+            .eq("class_id", class_id)
+            .order("id")
+        )
+        class_data = {
+            "id": class_row.get("id") or class_id,
+            "name": class_row.get("name"),
+            "days": class_row.get("days"),
+            "section_number": class_row.get("section_number"),
+            "learning_objectives": objectives,
+            "enrollments": enrollments,
+        }
+        progress = _class_data_for_progress(class_data)
+        students, _, _ = _process_enrollments(progress or class_data)
+        learning_objectives = (progress or class_data).get("learning_objectives") or []
+        assignments = load_assignments_for_class(class_id)
+        packet = _history_packet_grades(
+            [lo.get("id") for lo in learning_objectives if lo.get("id")]
+        )
+    except Exception as e:
+        logger.error("student history print load failed: %s", type(e).__name__)
+        return _HISTORY_PRINT_ERROR, 500
+
+    active_ids = {
+        str(student.get("id")) for student in students if student.get("id")
+    }
+    grades_by_student: Dict[str, List[Dict[str, Any]]] = {}
+    for grade in packet:
+        student_id = str(grade.get("student_id") or "")
+        if student_id not in active_ids:
+            continue
+        grades_by_student.setdefault(student_id, []).append(grade)
+
+    sheets = []
+    for student in students:
+        student_id = str(student.get("id") or "")
+        lo_grade_data, history_assignments = student_history_sheet(
+            learning_objectives,
+            assignments,
+            grades_by_student.get(student_id, []),
+        )
+        sheets.append({
+            "student_name": student.get("name") or "",
+            "learning_objectives": lo_grade_data,
+            "history_assignments": history_assignments,
+        })
+
+    return render_template(
+        "student_history_print.html",
+        class_id=class_id,
+        class_name=class_data["name"],
+        sheets=sheets,
+    )
+
 
 @main_bp.route("/class/<class_id>/speed_grader", endpoint='class_speed_grader')
 @login_required
