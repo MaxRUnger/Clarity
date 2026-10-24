@@ -9171,6 +9171,8 @@ class TestArchivedClasses(unittest.TestCase):
     ARCHIVE_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     OTHER_ID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
     MISSING_ID = "cccccccc-dddd-eeee-ffff-000000000000"
+    NEW_CLASS_ID = "dddddddd-eeee-ffff-0000-111111111111"
+    FAILED = "Could not restore the class. Nothing was changed."
 
     def _row(self, archive_id, instructor_id, name="Algebra"):
         return {
@@ -9187,6 +9189,43 @@ class TestArchivedClasses(unittest.TestCase):
             "storage_path": f"{instructor_id}/{archive_id}.zip",
         }
 
+    def _snapshot(self, grades=1, version=1):
+        import gzip
+        import json
+        document = {
+            "format_version": version,
+            "archived_at": "2026-10-24T00:00:00+00:00",
+            "classes": [{"id": "old-class", "name": "Algebra"}],
+            "learning_objectives": [],
+            "assignments": [],
+            "assignment_objectives": [],
+            "enrollments": [],
+            "grades": [{"id": "g%s" % index, "top_score": "M"} for index in range(grades)],
+            "homework_scores": [],
+            "free_passes": [],
+            "students": [],
+        }
+        return gzip.compress(json.dumps(document).encode("utf-8"))
+
+    def _restore_row(self):
+        row = self._row(self.ARCHIVE_ID, "inst-a", "Algebra")
+        row["snapshot_path"] = f"inst-a/{self.ARCHIVE_ID}.snapshot.json.gz"
+        row["restored_at"] = None
+        return row
+
+    def _restore(self, rows, snapshot, **kwargs):
+        bucket = _ArchiveBucket()
+        if snapshot is not None:
+            bucket.objects[rows[0]["snapshot_path"]] = snapshot
+        return self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/restore",
+            rows,
+            data={},
+            bucket=bucket,
+            **kwargs,
+        )
+
     def _request(
         self,
         method,
@@ -9199,17 +9238,21 @@ class TestArchivedClasses(unittest.TestCase):
         bucket=None,
         fail_first_row_delete=False,
         shared=None,
+        fail_insert=None,
+        rpc_error=None,
+        rpc_data=None,
+        monotonic=None,
     ):
         from app import routes as r
         import app.archive_storage as storage
 
         log = []
-        seen = {"columns": "", "orders": []}
+        seen = {"columns": "", "orders": [], "rpc": []}
         shared = shared if shared is not None else {"row_deletes": 0}
         bucket = bucket or _ArchiveBucket(download_bytes=b"PK\x03\x04archive")
 
         def table(name):
-            query = _RemovalQuery(log, name, rows, None)
+            query = _RemovalQuery(log, name, rows, None, fail_insert=fail_insert)
             real_select = query.select
             real_order = query.order
             real_execute = query.execute
@@ -9249,8 +9292,17 @@ class TestArchivedClasses(unittest.TestCase):
             query.execute = execute
             return query
 
+        def rpc(fn_name, params):
+            seen["rpc"].append((fn_name, params))
+            if rpc_error is not None:
+                raise rpc_error
+            query = unittest.mock.MagicMock()
+            query.execute.return_value = unittest.mock.MagicMock(data=rpc_data)
+            return query
+
         admin = unittest.mock.MagicMock()
         admin.table.side_effect = table
+        admin.rpc.side_effect = rpc
         admin.storage.from_.return_value = bucket
         client = create_app().test_client()
         with client.session_transaction() as sess:
@@ -9258,12 +9310,22 @@ class TestArchivedClasses(unittest.TestCase):
             sess["role"] = role
             sess["csrf_token"] = "test-csrf"
         headers = {"X-CSRF-Token": "test-csrf"} if send_csrf and method != "GET" else {}
-        with unittest.mock.patch.object(r, "supabase_admin", admin), \
-                unittest.mock.patch.object(storage, "supabase_admin", admin):
+        patches = [
+            unittest.mock.patch.object(r, "supabase_admin", admin),
+            unittest.mock.patch.object(storage, "supabase_admin", admin),
+        ]
+        if monotonic is not None:
+            patches.append(unittest.mock.patch.object(r.time, "monotonic", side_effect=monotonic))
+        for item in patches:
+            item.start()
+        try:
             if method == "GET":
                 response = client.get(path)
             else:
                 response = client.post(path, data=data or {}, headers=headers)
+        finally:
+            for item in patches:
+                item.stop()
         return response, log, bucket, seen
 
     def test_list_is_limited_to_the_signed_in_instructor_and_uses_archived_at(self):
@@ -9590,6 +9652,246 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertIn(f'data-archive-id="{self.ARCHIVE_ID}"', buttons[0])
         self.assertIn('datetime="2026-10-15T18:04:00+00:00"', page)
         self.assertIn("This permanently deletes the saved zip. It cannot be undone.", page)
+
+    def test_another_instructor_cannot_restore(self):
+        row = self._restore_row()
+        row["instructor_id"] = "inst-b"
+        response, log, bucket, seen = self._restore([row], self._snapshot())
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()["error"], "This archive was not found.")
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(seen["rpc"], [])
+        self.assertFalse(any(entry["op"] == "insert" for entry in log))
+
+    def test_null_snapshot_path_is_not_restorable(self):
+        row = self._row(self.ARCHIVE_ID, "inst-a", "Algebra")
+        response, log, bucket, seen = self._request(
+            "POST",
+            f"/archived-classes/{self.ARCHIVE_ID}/restore",
+            [row],
+            data={},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["error"], "This archive is not restorable.")
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(seen["rpc"], [])
+        self.assertFalse(any(entry["op"] == "insert" for entry in log))
+
+    def test_already_restored_does_not_stage(self):
+        row = self._restore_row()
+        row["restored_at"] = "2026-10-24T00:00:00+00:00"
+        response, log, bucket, seen = self._restore([row], self._snapshot())
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["error"], "This archive has already been restored.")
+        self.assertEqual(bucket.calls, [])
+        self.assertEqual(seen["rpc"], [])
+        self.assertFalse(any(entry["op"] == "insert" for entry in log))
+
+    def test_wrong_format_version_does_not_stage(self):
+        response, log, bucket, seen = self._restore(
+            [self._restore_row()], self._snapshot(version=2)
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["error"], "This archive is not restorable.")
+        self.assertEqual([call[0] for call in bucket.calls], ["download"])
+        self.assertEqual(seen["rpc"], [])
+        self.assertFalse(any(entry["op"] == "insert" for entry in log))
+
+    def test_happy_path_stages_grades_in_two_requests_and_calls_rpc_once(self):
+        response, log, bucket, seen = self._restore(
+            [self._restore_row()],
+            self._snapshot(grades=401),
+            rpc_data={"class_id": self.NEW_CLASS_ID, "counts": {}},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["success"], True)
+        self.assertTrue(response.get_json()["redirect"].endswith(f"/class/{self.NEW_CLASS_ID}"))
+        grade_inserts = [
+            entry["rows"] for entry in log
+            if entry["table"] == "archive_restore_stage"
+            and entry["op"] == "insert"
+            and entry["rows"][0]["table_name"] == "grades"
+        ]
+        self.assertEqual(len(grade_inserts), 2)
+        self.assertEqual(len(grade_inserts[0]), 400)
+        self.assertEqual(len(grade_inserts[1]), 1)
+        self.assertEqual(grade_inserts[0][0]["seq"], 1)
+        self.assertEqual(grade_inserts[0][-1]["seq"], 400)
+        self.assertEqual(grade_inserts[1][0]["seq"], 401)
+        self.assertEqual(len(seen["rpc"]), 1)
+        self.assertEqual(seen["rpc"][0][0], "restore_archived_class")
+        expected = seen["rpc"][0][1]["p_expected"]
+        self.assertEqual(expected["classes"], 1)
+        self.assertEqual(expected["grades"], 401)
+        self.assertEqual(expected["students"], 0)
+        self.assertEqual(expected["learning_objectives"], 0)
+        self.assertEqual(expected["assignments"], 0)
+        self.assertEqual(expected["assignment_objectives"], 0)
+        self.assertEqual(expected["enrollments"], 0)
+        self.assertEqual(expected["homework_scores"], 0)
+        self.assertEqual(expected["free_passes"], 0)
+        self.assertEqual(seen["rpc"][0][1]["p_archive_id"], self.ARCHIVE_ID)
+        self.assertEqual(seen["rpc"][0][1]["p_instructor_id"], "inst-a")
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_staging_insert_failure_deletes_the_attempt_and_skips_rpc(self):
+        response, log, bucket, seen = self._restore(
+            [self._restore_row()],
+            self._snapshot(),
+            fail_insert="archive_restore_stage",
+            rpc_data={"class_id": self.NEW_CLASS_ID},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json()["error"], self.FAILED)
+        self.assertEqual(seen["rpc"], [])
+        self.assertTrue(any(
+            entry["op"] == "delete" and entry["table"] == "archive_restore_stage" for entry in log
+        ))
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_rpc_error_deletes_the_attempt(self):
+        response, log, bucket, seen = self._restore(
+            [self._restore_row()],
+            self._snapshot(),
+            rpc_error=RuntimeError("database unavailable"),
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json()["error"], self.FAILED)
+        self.assertNotIn("database unavailable", response.get_data(as_text=True))
+        self.assertEqual(len(seen["rpc"]), 1)
+        self.assertTrue(any(
+            entry["op"] == "delete" and entry["table"] == "archive_restore_stage" for entry in log
+        ))
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_known_restore_messages_pass_through(self):
+        messages = [
+            "This archive was not found.",
+            "This archive is not restorable.",
+            "This archive has already been restored.",
+            "A class with this name, days, and section already exists. Archive or rename it first.",
+            "A student in this archive no longer has a profile: Lee, Ana",
+            "The saved archive could not be read completely.",
+            "The restored class did not match the archive. Nothing was restored.",
+        ]
+        for message in messages:
+            response, log, bucket, _seen = self._restore(
+                [self._restore_row()],
+                self._snapshot(),
+                rpc_error=RuntimeError(message),
+            )
+            self.assertEqual(response.status_code, 409, message)
+            self.assertEqual(response.get_json()["error"], message)
+            self.assertTrue(any(
+                entry["op"] == "delete" and entry["table"] == "archive_restore_stage"
+                for entry in log
+            ))
+            self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+            self.assertFalse(any(
+                entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+            ))
+
+    def test_unknown_rpc_message_is_generic(self):
+        response, _log, _bucket, _seen = self._restore(
+            [self._restore_row()],
+            self._snapshot(),
+            rpc_error=RuntimeError("duplicate key value violates unique constraint"),
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json()["error"], self.FAILED)
+        self.assertNotIn("duplicate key", response.get_data(as_text=True))
+
+    def test_a_staged_row_over_256_kb_returns_the_generic_error(self):
+        import gzip
+        import json
+        document = json.loads(gzip.decompress(self._snapshot(grades=0)))
+        document["grades"] = [{"id": "g0", "blob": "x" * (256 * 1024)}]
+        snapshot = gzip.compress(json.dumps(document).encode("utf-8"))
+        response, log, bucket, seen = self._restore(
+            [self._restore_row()],
+            snapshot,
+            rpc_data={"class_id": self.NEW_CLASS_ID},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json()["error"], self.FAILED)
+        self.assertEqual(seen["rpc"], [])
+        self.assertTrue(any(
+            entry["op"] == "delete" and entry["table"] == "archive_restore_stage" for entry in log
+        ))
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_unreadable_rpc_result_redirects_to_the_dashboard(self):
+        response, log, bucket, seen = self._restore(
+            [self._restore_row()],
+            self._snapshot(),
+            rpc_data={"counts": {}},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["success"], True)
+        self.assertTrue(response.get_json()["redirect"].endswith("/instructor/dashboard"))
+        self.assertEqual(len(seen["rpc"]), 1)
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archive_restore_stage" for entry in log
+        ))
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_budget_after_the_first_chunk_deletes_the_attempt(self):
+        response, log, bucket, seen = self._restore(
+            [self._restore_row()],
+            self._snapshot(grades=1),
+            monotonic=[0, 100, 241],
+            rpc_data={"class_id": self.NEW_CLASS_ID},
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_json()["error"],
+            "The restore took too long. Nothing was changed.",
+        )
+        self.assertEqual(seen["rpc"], [])
+        self.assertTrue(any(
+            entry["op"] == "delete" and entry["table"] == "archive_restore_stage" for entry in log
+        ))
+        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+
+class TestRestoreChunks(unittest.TestCase):
+    def test_row_cap_byte_cap_and_one_huge_record(self):
+        import json
+        from app.routes import _RESTORE_BYTE_CAP, _restore_chunks
+
+        small = [{"n": index} for index in range(401)]
+        sized = _restore_chunks(small)
+        self.assertEqual([len(chunk) for chunk in sized], [400, 1])
+
+        wide = [{"blob": "x" * 87370} for _index in range(3)]
+        together = json.dumps(wide, ensure_ascii=False).encode("utf-8")
+        self.assertGreater(len(together), _RESTORE_BYTE_CAP)
+        split = _restore_chunks(wide)
+        self.assertGreater(len(split), 1)
+        for chunk in split:
+            encoded = json.dumps(chunk, ensure_ascii=False).encode("utf-8")
+            self.assertLessEqual(len(encoded), _RESTORE_BYTE_CAP)
+
+        with self.assertRaises(ValueError):
+            _restore_chunks([{"blob": "x" * _RESTORE_BYTE_CAP}])
 
 
 class _SnapshotResponse:

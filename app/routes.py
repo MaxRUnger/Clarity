@@ -435,7 +435,7 @@ def _owned_archive_row(archive_id, instructor_id):
         return None
     resp = (
         supabase_admin.table("archived_classes")
-        .select("id, class_name, storage_path, snapshot_path, instructor_id")
+        .select("id, class_name, storage_path, snapshot_path, restored_at, instructor_id")
         .eq("id", archive_id)
         .eq("instructor_id", instructor_id)
         .limit(1)
@@ -2892,6 +2892,224 @@ def delete_archived_class(archive_id):
     return jsonify({
         "success": True,
         "redirect": url_for("main.archived_classes"),
+    })
+
+
+_RESTORE_TABLES = (
+    "classes",
+    "learning_objectives",
+    "assignments",
+    "assignment_objectives",
+    "enrollments",
+    "homework_scores",
+    "free_passes",
+    "students",
+    "grades",
+)
+_RESTORE_ROW_CAP = 400
+_RESTORE_BYTE_CAP = 256 * 1024
+_RESTORE_PROFILE_PREFIX = "A student in this archive no longer has a profile:"
+_RESTORE_EXACT_ERRORS = frozenset({
+    "This archive was not found.",
+    "This archive is not restorable.",
+    "This archive has already been restored.",
+    "A class with this name, days, and section already exists. Archive or rename it first.",
+    "The saved archive could not be read completely.",
+    "The restored class did not match the archive. Nothing was restored.",
+})
+_RESTORE_FAILED = "Could not restore the class. Nothing was changed."
+
+
+def _restore_error_text(exc: BaseException) -> str:
+    message = getattr(exc, "message", None)
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    detail = exc.args[0] if exc.args else None
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    if isinstance(detail, dict):
+        for key in ("message", "error"):
+            value = detail.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _restore_known_message(text: str):
+    if text in _RESTORE_EXACT_ERRORS or text.startswith(_RESTORE_PROFILE_PREFIX):
+        return text
+    return None
+
+
+def _restore_chunks(records: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    import json
+    chunks: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+    running = 2
+    for record in records:
+        encoded = json.dumps(record, ensure_ascii=False).encode("utf-8")
+        addition = len(encoded) + 1
+        if 2 + addition > _RESTORE_BYTE_CAP:
+            raise ValueError("restore staging row exceeds 256 KB")
+        if current and (len(current) + 1 > _RESTORE_ROW_CAP or running + addition > _RESTORE_BYTE_CAP):
+            chunks.append(current)
+            current = [record]
+            running = 2 + addition
+        else:
+            current.append(record)
+            running += addition
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _restore_class_id(data: Any):
+    import json
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            return None
+    if isinstance(data, list):
+        data = data[0] if data else None
+    if not isinstance(data, dict):
+        return None
+    class_id = str(data.get("class_id") or "").strip()
+    if _ARCHIVE_ID.fullmatch(class_id) is None:
+        return None
+    return class_id
+
+
+def _delete_restore_attempt(attempt_id: str) -> None:
+    try:
+        supabase_admin.table("archive_restore_stage").delete().eq(
+            "attempt_id", attempt_id
+        ).execute()
+    except Exception as exc:
+        logger.error("Could not delete restore attempt %s: %s", attempt_id, exc)
+
+
+@main_bp.route("/archived-classes/<archive_id>/restore", methods=["POST"])
+@api_instructor_required
+def restore_archived_class(archive_id):
+    import gzip
+    import json
+    from app.archive_storage import download_archive
+
+    start = time.monotonic()
+    if _ARCHIVE_ID.fullmatch(str(archive_id or "")) is None:
+        return jsonify({"success": False, "error": "This archive was not found."}), 404
+    instructor_id = session["user_id"]
+    row = _owned_archive_row(archive_id, instructor_id)
+    if row is None:
+        return jsonify({"success": False, "error": "This archive was not found."}), 404
+    if not str(row.get("snapshot_path") or "").strip():
+        return jsonify({
+            "success": False,
+            "error": "This archive is not restorable.",
+        }), 409
+    if row.get("restored_at"):
+        return jsonify({
+            "success": False,
+            "error": "This archive has already been restored.",
+        }), 409
+
+    try:
+        blob = download_archive(row.get("snapshot_path") or "")
+        try:
+            raw = gzip.decompress(blob)
+        finally:
+            del blob
+        try:
+            document = json.loads(raw.decode("utf-8"))
+        finally:
+            del raw
+    except Exception as exc:
+        logger.error("Could not read snapshot for archive %s: %s", archive_id, exc)
+        return jsonify({"success": False, "error": _RESTORE_FAILED}), 500
+    if not isinstance(document, dict) or document.get("format_version") != 1:
+        return jsonify({
+            "success": False,
+            "error": "This archive is not restorable.",
+        }), 409
+
+    loaded = {}
+    for table_name in _RESTORE_TABLES:
+        rows = document.pop(table_name, [])
+        if rows is None:
+            rows = []
+        if not isinstance(rows, list):
+            return jsonify({
+                "success": False,
+                "error": "This archive is not restorable.",
+            }), 409
+        loaded[table_name] = rows
+    del document
+
+    attempt_id = str(uuid4())
+    staged = False
+    counts = {}
+    try:
+        for table_name in _RESTORE_TABLES:
+            rows = loaded.pop(table_name)
+            records = [
+                {
+                    "attempt_id": attempt_id,
+                    "table_name": table_name,
+                    "seq": index,
+                    "row_data": item,
+                }
+                for index, item in enumerate(rows, start=1)
+            ]
+            counts[table_name] = len(records)
+            del rows
+            for chunk in _restore_chunks(records):
+                if time.monotonic() - start > 240:
+                    _delete_restore_attempt(attempt_id)
+                    return jsonify({
+                        "success": False,
+                        "error": "The restore took too long. Nothing was changed.",
+                    }), 500
+                staged = True
+                supabase_admin.table("archive_restore_stage").insert(chunk).execute()
+            del records
+        if time.monotonic() - start > 240:
+            _delete_restore_attempt(attempt_id)
+            return jsonify({
+                "success": False,
+                "error": "The restore took too long. Nothing was changed.",
+            }), 500
+        result = supabase_admin.rpc(
+            "restore_archived_class",
+            {
+                "p_archive_id": archive_id,
+                "p_instructor_id": instructor_id,
+                "p_attempt_id": attempt_id,
+                "p_expected": counts,
+            },
+        ).execute()
+        class_id = _restore_class_id(result.data)
+        if class_id is None:
+            logger.error(
+                "Restore of archive %s returned no class id: %s",
+                archive_id,
+                result.data,
+            )
+            return jsonify({
+                "success": True,
+                "redirect": url_for("main.instructor_dashboard"),
+            })
+    except Exception as exc:
+        if staged:
+            _delete_restore_attempt(attempt_id)
+        known = _restore_known_message(_restore_error_text(exc))
+        if known:
+            return jsonify({"success": False, "error": known}), 409
+        logger.error("Could not restore archive %s: %s", archive_id, exc)
+        return jsonify({"success": False, "error": _RESTORE_FAILED}), 500
+    return jsonify({
+        "success": True,
+        "redirect": url_for("main.class_detail", class_id=class_id),
     })
 
 
