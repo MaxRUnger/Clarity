@@ -2807,7 +2807,8 @@ def archived_classes():
         supabase_admin.table("archived_classes")
         .select(
             "id, class_name, semester, days, section_number, "
-            "student_count, assignment_count, size_bytes, archived_at"
+            "student_count, assignment_count, size_bytes, archived_at, "
+            "snapshot_path, restored_at, restored_class_id"
         )
         .eq("instructor_id", instructor_id)
         .order("archived_at", desc=True)
@@ -2816,6 +2817,9 @@ def archived_classes():
     archives = []
     for row in rows:
         parts = [row.get("semester"), row.get("days"), row.get("section_number")]
+        snapshot_path = str(row.get("snapshot_path") or "").strip()
+        restored_at = row.get("restored_at") or ""
+        restored_class_id = str(row.get("restored_class_id") or "").strip()
         archives.append({
             "id": row.get("id"),
             "class_name": row.get("class_name") or "",
@@ -2824,6 +2828,10 @@ def archived_classes():
             "assignment_count": row.get("assignment_count") or 0,
             "archived_at": row.get("archived_at") or "",
             "size_label": _archive_size_label(row.get("size_bytes")),
+            "restored": bool(restored_at),
+            "restorable": bool(snapshot_path) and not restored_at,
+            "restored_at": restored_at,
+            "restored_class_id": restored_class_id if restored_at else "",
         })
     return render_template("archived_classes.html", archives=archives)
 

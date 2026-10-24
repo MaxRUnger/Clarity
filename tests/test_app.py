@@ -9345,6 +9345,115 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertEqual(seen["orders"][1][0], ("id",))
         self.assertEqual(bucket.calls, [])
 
+    def _card(self, page, class_name):
+        marker = ">%s</h2>" % class_name
+        start = page.index(marker)
+        end = page.find('id="deleteArchiveModal"', start)
+        region = page[start:end if end != -1 else None]
+        nxt = region.find("<h2", len(marker))
+        if nxt == -1:
+            return region
+        return region[:nxt]
+
+    def test_archive_rows_show_one_restore_state_and_hide_storage_paths(self):
+        restored_class_id = "dddddddd-eeee-ffff-0000-111111111111"
+        old_id = "eeeeeeee-ffff-0000-1111-222222222222"
+        restorable = self._row(self.ARCHIVE_ID, "inst-a", "Restorable Algebra")
+        restorable["snapshot_path"] = "inst-a/secret-snapshot.json.gz"
+        restorable["storage_path"] = "inst-a/secret-storage.zip"
+        restorable["restored_at"] = None
+        restorable["restored_class_id"] = None
+        restored = self._row(self.OTHER_ID, "inst-a", "Restored Algebra")
+        restored["snapshot_path"] = "inst-a/restored-snapshot.json.gz"
+        restored["storage_path"] = "inst-a/restored-storage.zip"
+        restored["restored_at"] = "2026-10-20T12:00:00+00:00"
+        restored["restored_class_id"] = restored_class_id
+        deleted_class = self._row(self.MISSING_ID, "inst-a", "Deleted Algebra")
+        deleted_class["snapshot_path"] = "inst-a/deleted-snapshot.json.gz"
+        deleted_class["storage_path"] = "inst-a/deleted-storage.zip"
+        deleted_class["restored_at"] = "2026-10-21T12:00:00+00:00"
+        deleted_class["restored_class_id"] = None
+        plain = self._row(old_id, "inst-a", "Old Algebra")
+        plain["snapshot_path"] = None
+        plain["storage_path"] = "inst-a/plain-storage.zip"
+        plain["restored_at"] = None
+        plain["restored_class_id"] = None
+        response, _log, _bucket, seen = self._request(
+            "GET",
+            "/archived-classes",
+            [restorable, restored, deleted_class, plain],
+        )
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+        self.assertIn("snapshot_path", seen["columns"])
+        self.assertIn("restored_at", seen["columns"])
+        self.assertIn("restored_class_id", seen["columns"])
+        self.assertNotIn("storage_path", seen["columns"])
+        for secret in (
+            "secret-snapshot.json.gz",
+            "secret-storage.zip",
+            "restored-snapshot.json.gz",
+            "restored-storage.zip",
+            "deleted-snapshot.json.gz",
+            "deleted-storage.zip",
+            "plain-storage.zip",
+            "snapshot_path",
+            "storage_path",
+        ):
+            self.assertNotIn(secret, page)
+        restorable_card = self._card(page, "Restorable Algebra")
+        restored_card = self._card(page, "Restored Algebra")
+        deleted_card = self._card(page, "Deleted Algebra")
+        plain_card = self._card(page, "Old Algebra")
+        self.assertIn("restore-archive-btn", restorable_card)
+        self.assertNotIn("Cannot be restored", restorable_card)
+        self.assertNotIn("Restored on", restorable_card)
+        self.assertIn("Restored on", restored_card)
+        self.assertIn('datetime="2026-10-20T12:00:00+00:00"', restored_card)
+        self.assertIn("Open class", restored_card)
+        self.assertIn("/class/%s" % restored_class_id, restored_card)
+        self.assertNotIn("restore-archive-btn", restored_card)
+        self.assertIn("Restored on", deleted_card)
+        self.assertIn('datetime="2026-10-21T12:00:00+00:00"', deleted_card)
+        self.assertNotIn("Open class", deleted_card)
+        self.assertNotIn("restore-archive-btn", deleted_card)
+        self.assertIn("Cannot be restored", plain_card)
+        self.assertNotIn("restore-archive-btn", plain_card)
+        self.assertNotIn("Open class", plain_card)
+        self.assertEqual(page.count('class="delete-archive-btn'), 4)
+        self.assertEqual(page.count(">Download<"), 4)
+        self.assertIn('restoreArchiveTitle.textContent = "Restore " + className + "?"', page)
+        self.assertNotIn("restoreArchiveTitle.innerHTML", page)
+        self.assertIn("if (restoreArchiveBusy || !restoreArchiveModal) return;", page)
+        self.assertIn("if (restoreArchiveBusy || !restoreArchiveId || !restoreArchiveSubmit) return;", page)
+        self.assertIn("restoreArchiveSubmit.disabled = true;", page)
+        self.assertIn(
+            'fetch("/archived-classes/" + encodeURIComponent(restoreArchiveId) + "/restore"',
+            page,
+        )
+        self.assertIn(
+            "We couldn't confirm the result. Reload this page to see whether the class was restored.",
+            page,
+        )
+        self.assertNotIn("Could not reach the server. Nothing was changed.", page)
+        self.assertNotIn("restoreArchiveClose", page)
+        script = page.split("const restoreNetworkError", 1)[1]
+        network_branch = script.split("catch (networkError)", 1)[1].split("catch (parseError)", 1)[0]
+        parse_branch = script.split("catch (parseError)", 1)[1].split("payload.success", 1)[0]
+        self.assertIn("restoreReloadOnClose = true;", network_branch)
+        self.assertIn("showRestoreArchiveError(restoreNetworkError);", network_branch)
+        self.assertIn("restoreReloadOnClose = true;", parse_branch)
+        self.assertIn("showRestoreArchiveError(restoreNetworkError);", parse_branch)
+        branch = script.split("restoreError === restoreAlreadyRestored", 1)[1]
+        branch = branch.split("releaseRestoreArchiveSubmit();", 1)[0]
+        self.assertIn("showRestoreArchiveError(restoreError);", branch)
+        self.assertIn("restoreReloadOnClose = true;", branch)
+        self.assertIn("restoreArchiveCancel.disabled = false;", branch)
+        self.assertIn("restoreArchiveSubmit.disabled = true;", branch)
+        self.assertIn('restoreArchiveSubmit.textContent = "Restore";', branch)
+        self.assertNotIn("restoreArchiveSubmit.disabled = false;", branch)
+        self.assertIn("if (!restoreError) restoreReloadOnClose = true;", branch)
+
     def test_another_instructor_or_a_missing_id_cannot_download_or_delete(self):
         rows = [self._row(self.ARCHIVE_ID, "inst-a"), self._row(self.OTHER_ID, "inst-b", "Secret Class")]
         download, _log, bucket, _seen = self._request(
