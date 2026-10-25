@@ -3115,6 +3115,14 @@ def restore_archived_class(archive_id):
             return jsonify({"success": False, "error": known}), 409
         logger.error("Could not restore archive %s: %s", archive_id, exc)
         return jsonify({"success": False, "error": _RESTORE_FAILED}), 500
+    try:
+        _remove_archive_object(row.get("snapshot_path") or "")
+        _remove_archive_object(row.get("storage_path") or "")
+        supabase_admin.table("archived_classes").delete().eq(
+            "id", archive_id
+        ).eq("instructor_id", instructor_id).execute()
+    except Exception as exc:
+        logger.error("Could not remove restored archive %s: %s", archive_id, exc)
     return jsonify({
         "success": True,
         "redirect": url_for("main.class_detail", class_id=class_id),

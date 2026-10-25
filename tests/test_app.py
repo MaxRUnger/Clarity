@@ -8583,7 +8583,7 @@ class TestClassArchiveExport(unittest.TestCase):
 
 
 class _ArchiveBucket:
-    def __init__(self, fail=None, download_bytes=None, missing_after=None, remove_error=None):
+    def __init__(self, fail=None, download_bytes=None, missing_after=None, remove_error=None, fail_remove_path=None):
         self.calls = []
         self.events = []
         self.fail = fail
@@ -8593,6 +8593,7 @@ class _ArchiveBucket:
         self.built = 0
         self.missing_after = missing_after
         self.remove_error = remove_error
+        self.fail_remove_path = fail_remove_path
         self.remove_count = 0
 
     def upload(self, path, data, options):
@@ -8622,6 +8623,8 @@ class _ArchiveBucket:
         self.events.append("remove")
         self.calls.append(("remove", list(paths)))
         self.remove_count += 1
+        if self.fail_remove_path is not None and self.fail_remove_path in list(paths):
+            raise RuntimeError("remove failed")
         if self.remove_error is not None:
             raise self.remove_error
         if self.fail == "remove":
@@ -9242,6 +9245,7 @@ class TestArchivedClasses(unittest.TestCase):
         rpc_error=None,
         rpc_data=None,
         monotonic=None,
+        fail_delete=None,
     ):
         from app import routes as r
         import app.archive_storage as storage
@@ -9252,7 +9256,7 @@ class TestArchivedClasses(unittest.TestCase):
         bucket = bucket or _ArchiveBucket(download_bytes=b"PK\x03\x04archive")
 
         def table(name):
-            query = _RemovalQuery(log, name, rows, None, fail_insert=fail_insert)
+            query = _RemovalQuery(log, name, rows, fail_delete, fail_insert=fail_insert)
             real_select = query.select
             real_order = query.order
             real_execute = query.execute
@@ -9436,6 +9440,11 @@ class TestArchivedClasses(unittest.TestCase):
             page,
         )
         self.assertNotIn("Could not reach the server. Nothing was changed.", page)
+        self.assertIn(
+            "The archive is removed from Archived Classes once the class is restored.",
+            page,
+        )
+        self.assertNotIn("The archive stays in Archived Classes.", page)
         self.assertNotIn("restoreArchiveClose", page)
         script = page.split("const restoreNetworkError", 1)[1]
         network_branch = script.split("catch (networkError)", 1)[1].split("catch (parseError)", 1)[0]
@@ -9841,7 +9850,87 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertEqual(expected["free_passes"], 0)
         self.assertEqual(seen["rpc"][0][1]["p_archive_id"], self.ARCHIVE_ID)
         self.assertEqual(seen["rpc"][0][1]["p_instructor_id"], "inst-a")
-        self.assertFalse(any(call[0] == "remove" for call in bucket.calls))
+        removes = [call for call in bucket.calls if call[0] == "remove"]
+        self.assertEqual(removes, [
+            ("remove", [f"inst-a/{self.ARCHIVE_ID}.snapshot.json.gz"]),
+            ("remove", [f"inst-a/{self.ARCHIVE_ID}.zip"]),
+        ])
+        deletes = [
+            entry for entry in log
+            if entry["op"] == "delete" and entry["table"] == "archived_classes"
+        ]
+        self.assertEqual(len(deletes), 1)
+        self.assertIn(("eq", "id", self.ARCHIVE_ID), deletes[0]["filters"])
+        self.assertIn(("eq", "instructor_id", "inst-a"), deletes[0]["filters"])
+
+    def test_snapshot_remove_failure_keeps_the_zip_and_the_row(self):
+        row = self._restore_row()
+        bucket = _ArchiveBucket(fail_remove_path=row["snapshot_path"])
+        bucket.objects[row["snapshot_path"]] = self._snapshot()
+        with self.assertLogs("app.routes", level="ERROR") as captured:
+            response, log, bucket, _seen = self._request(
+                "POST",
+                f"/archived-classes/{self.ARCHIVE_ID}/restore",
+                [row],
+                data={},
+                bucket=bucket,
+                rpc_data={"class_id": self.NEW_CLASS_ID},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["redirect"].endswith(f"/class/{self.NEW_CLASS_ID}"))
+        removes = [call for call in bucket.calls if call[0] == "remove"]
+        self.assertEqual(removes, [("remove", [row["snapshot_path"]])])
+        self.assertFalse(any(call[1] == [row["storage_path"]] for call in removes))
+        self.assertTrue(any(self.ARCHIVE_ID in line for line in captured.output))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_zip_remove_failure_keeps_the_row(self):
+        row = self._restore_row()
+        bucket = _ArchiveBucket(fail_remove_path=row["storage_path"])
+        bucket.objects[row["snapshot_path"]] = self._snapshot()
+        with self.assertLogs("app.routes", level="ERROR") as captured:
+            response, log, bucket, _seen = self._request(
+                "POST",
+                f"/archived-classes/{self.ARCHIVE_ID}/restore",
+                [row],
+                data={},
+                bucket=bucket,
+                rpc_data={"class_id": self.NEW_CLASS_ID},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["redirect"].endswith(f"/class/{self.NEW_CLASS_ID}"))
+        removes = [call for call in bucket.calls if call[0] == "remove"]
+        self.assertEqual(removes, [
+            ("remove", [row["snapshot_path"]]),
+            ("remove", [row["storage_path"]]),
+        ])
+        self.assertTrue(any(self.ARCHIVE_ID in line for line in captured.output))
+        self.assertFalse(any(
+            entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
+        ))
+
+    def test_row_delete_failure_logs_and_still_redirects(self):
+        with self.assertLogs("app.routes", level="ERROR") as captured:
+            response, log, bucket, _seen = self._restore(
+                [self._restore_row()],
+                self._snapshot(),
+                rpc_data={"class_id": self.NEW_CLASS_ID},
+                fail_delete="archived_classes",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["redirect"].endswith(f"/class/{self.NEW_CLASS_ID}"))
+        removes = [call for call in bucket.calls if call[0] == "remove"]
+        self.assertEqual(removes, [
+            ("remove", [f"inst-a/{self.ARCHIVE_ID}.snapshot.json.gz"]),
+            ("remove", [f"inst-a/{self.ARCHIVE_ID}.zip"]),
+        ])
+        self.assertTrue(any(self.ARCHIVE_ID in line for line in captured.output))
+        self.assertTrue(any(
+            entry["op"] == "delete-failed" and entry["table"] == "archived_classes"
+            for entry in log
+        ))
         self.assertFalse(any(
             entry["op"] == "delete" and entry["table"] == "archived_classes" for entry in log
         ))
