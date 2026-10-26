@@ -246,7 +246,7 @@ class Grade:
         return None
 
     @staticmethod
-    def get_revision_candidates(class_id, today):
+    def get_revision_candidates(class_id, today, lo_ids: Optional[List[str]] = None):
         """Return eligible R and RQ grades whose revision_due is on or before today+7.
 
         `today` is the calendar date for this report. Overdue, due today, and due
@@ -258,7 +258,10 @@ class Grade:
         """
         horizon = (today + timedelta(days=7)).isoformat()
         try:
-            lo_ids = Course.get_all_lo_ids_for_class(class_id)
+            if lo_ids is None:
+                lo_ids = Course.get_all_lo_ids_for_class(class_id)
+            else:
+                lo_ids = [str(lo_id) for lo_id in lo_ids if lo_id]
             if not lo_ids:
                 return []
             grade_rows = fetch_all_rows(
@@ -685,6 +688,69 @@ class Homework:
                 column, assignment_id, e,
             )
             return {}
+
+    @staticmethod
+    def load_hw_score_and_prev_maps(class_id, assignment_id, assignment_row):
+        """Both homework maps from one read.
+
+        Sibling-id rows are applied first, in homework_scores.id order.
+        Group-string rows are applied second and replace a sibling value
+        for that student. A blank group uses the assignment id only.
+        """
+        try:
+            hg = (assignment_row.get("homework_group") or "").strip()
+            sibling_ids = []
+            if hg:
+                sibling_rows = fetch_all_rows(
+                    supabase_admin.table("assignments")
+                    .select("id")
+                    .eq("class_id", class_id)
+                    .eq("homework_group", hg)
+                    .order("id")
+                )
+                sibling_ids = [row["id"] for row in sibling_rows if row.get("id")]
+                keys = list(sibling_ids)
+                if hg not in keys:
+                    keys.append(hg)
+            else:
+                keys = [str(assignment_id)]
+            rows = fetch_all_rows(
+                supabase_admin.table("homework_scores")
+                .select("student_id, homework_group, score_pct, prev_score_pct")
+                .eq("class_id", class_id)
+                .in_("homework_group", keys)
+                .order("id")
+            )
+            sibling_set = set(sibling_ids)
+            first = []
+            second = []
+            for row in rows:
+                key = row.get("homework_group")
+                if hg and key == hg:
+                    second.append(row)
+                elif key in sibling_set or (not hg and key == str(assignment_id)):
+                    first.append(row)
+            scores = {}
+            prev = {}
+
+            def merge(batch, column, dest):
+                for row in batch:
+                    student_id = str(row.get("student_id") or "").strip()
+                    if student_id:
+                        dest[student_id] = row.get(column)
+
+            merge(first, "score_pct", scores)
+            merge(second, "score_pct", scores)
+            merge(first, "prev_score_pct", prev)
+            merge(second, "prev_score_pct", prev)
+            return scores, prev
+        except Exception as exc:
+            logger.error(
+                "Error loading homework maps for assignment %s: %s",
+                assignment_id,
+                exc,
+            )
+            return {}, {}
 
     @staticmethod
     def get_hw_scores_map_for_assignment(class_id, assignment_id):

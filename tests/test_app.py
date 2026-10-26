@@ -13,6 +13,7 @@ import io
 import re
 import unittest
 import unittest.mock
+from datetime import date
 from unittest.mock import MagicMock
 
 _mock_supabase = MagicMock()
@@ -1728,6 +1729,268 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         self.assertIn("Sent ", reports_src)
         self.assertIn("Skipped ", reports_src)
         self.assertIn("Failed ", reports_src)
+
+
+class _GradesApiQuery:
+    def __init__(self, rows, calls, table):
+        self._rows = [dict(row) for row in rows]
+        self._calls = calls
+        self._table = table
+        self._order = None
+        self._window = None
+        self._filters = []
+
+    def select(self, *args, **kwargs):
+        return self
+
+    def eq(self, col, val):
+        self._filters.append(("eq", col, val))
+        self._rows = [row for row in self._rows if row.get(col) == val]
+        return self
+
+    def is_(self, col, val):
+        self._filters.append(("is", col, val))
+        if val is None:
+            self._rows = [row for row in self._rows if row.get(col) is None]
+        else:
+            self._rows = [row for row in self._rows if row.get(col) is val]
+        return self
+
+    def in_(self, col, values):
+        self._filters.append(("in", col, list(values)))
+        allowed = set(values)
+        self._rows = [row for row in self._rows if row.get(col) in allowed]
+        return self
+
+    def limit(self, count):
+        self._rows = self._rows[:count]
+        return self
+
+    def order(self, column, desc=False):
+        self._order = (column, desc)
+        return self
+
+    def range(self, start, end):
+        self._window = (start, end)
+        return self
+
+    def execute(self):
+        self._calls.append({"table": self._table, "filters": list(self._filters)})
+        rows = list(self._rows)
+        if self._order:
+            column, desc = self._order
+            rows.sort(
+                key=lambda row: (row.get(column) is None, str(row.get(column))),
+                reverse=desc,
+            )
+        if self._window:
+            start, end = self._window
+            rows = rows[start:end + 1]
+        result = unittest.mock.MagicMock()
+        result.data = rows
+        return result
+
+
+def _grades_api_client(store, calls):
+    admin = unittest.mock.MagicMock()
+
+    def table(name):
+        return _GradesApiQuery(store.get(name, []), calls, name)
+
+    admin.table.side_effect = table
+    return admin
+
+
+class TestAssignmentGradesResponse(unittest.TestCase):
+    CLASS_ID = "class-grades"
+    LINKED = "asg-linked"
+    SIB_A = "asg-sib-a"
+    SIB_B = "asg-sib-b"
+    NO_LINK = "asg-nolink"
+    NO_GROUP = "asg-nogroup"
+    LO_LINK = "lo-link"
+    LO_CLASS = "lo-class"
+    LO_OTHER = "lo-other"
+    STU_IN = "stu-in"
+    STU_OUT = "stu-out"
+    STU_LEGACY = "stu-legacy"
+    STU_BLANK = "stu-blank"
+    STU_SIB = "stu-sib"
+    STU_PASS = "stu-pass"
+    STU_LOW = "stu-low"
+    STU_MARK = "stu-mark"
+
+    def _store(self):
+        return {
+            "assignments": [
+                {"id": self.LINKED, "class_id": self.CLASS_ID, "homework_group": "HW 1", "assignment_type": "exam"},
+                {"id": self.SIB_A, "class_id": self.CLASS_ID, "homework_group": "HW 1", "assignment_type": "mastery_opp"},
+                {"id": self.SIB_B, "class_id": self.CLASS_ID, "homework_group": "HW 1", "assignment_type": "mastery_opp"},
+                {"id": self.NO_LINK, "class_id": self.CLASS_ID, "homework_group": "", "assignment_type": "mastery_opp"},
+                {"id": self.NO_GROUP, "class_id": self.CLASS_ID, "homework_group": None, "assignment_type": "project"},
+            ],
+            "assignment_objectives": [
+                {"assignment_id": self.LINKED, "learning_objective_id": self.LO_LINK},
+                {"assignment_id": self.NO_GROUP, "learning_objective_id": self.LO_LINK},
+            ],
+            "learning_objectives": [
+                {"id": self.LO_LINK, "class_id": self.CLASS_ID},
+                {"id": self.LO_CLASS, "class_id": self.CLASS_ID},
+                {"id": self.LO_OTHER, "class_id": "class-other"},
+            ],
+            "grades": [
+                {"student_id": self.STU_IN, "learning_objective_id": self.LO_LINK, "top_score": "M", "counts_for_mastery": True, "assignment_id": self.LINKED},
+                {"student_id": self.STU_IN, "learning_objective_id": self.LO_LINK, "top_score": "R", "counts_for_mastery": False, "assignment_id": None},
+                {"student_id": self.STU_OUT, "learning_objective_id": self.LO_LINK, "top_score": "P", "counts_for_mastery": None, "assignment_id": self.LINKED},
+                {"student_id": self.STU_LEGACY, "learning_objective_id": self.LO_LINK, "top_score": "X", "counts_for_mastery": False, "assignment_id": None},
+                {"student_id": self.STU_BLANK, "learning_objective_id": self.LO_LINK, "top_score": "", "counts_for_mastery": False, "assignment_id": self.LINKED},
+                {"student_id": self.STU_IN, "learning_objective_id": self.LO_CLASS, "top_score": "R", "counts_for_mastery": True, "assignment_id": None},
+                {"student_id": self.STU_OUT, "learning_objective_id": self.LO_OTHER, "top_score": "M", "counts_for_mastery": True, "assignment_id": None},
+                {"student_id": self.STU_IN, "learning_objective_id": self.LO_LINK, "top_score": "A", "counts_for_mastery": True, "assignment_id": self.NO_GROUP},
+            ],
+            "homework_scores": [
+                {"id": "hs-1", "class_id": self.CLASS_ID, "student_id": self.STU_IN, "homework_group": self.SIB_A, "score_pct": 10, "prev_score_pct": 1},
+                {"id": "hs-9", "class_id": self.CLASS_ID, "student_id": self.STU_IN, "homework_group": self.SIB_B, "score_pct": 99, "prev_score_pct": 98},
+                {"id": "hs-2", "class_id": self.CLASS_ID, "student_id": self.STU_IN, "homework_group": "HW 1", "score_pct": 40, "prev_score_pct": 4},
+                {"id": "hs-1b", "class_id": self.CLASS_ID, "student_id": self.STU_SIB, "homework_group": self.SIB_A, "score_pct": 11, "prev_score_pct": 8},
+                {"id": "hs-9b", "class_id": self.CLASS_ID, "student_id": self.STU_SIB, "homework_group": self.SIB_B, "score_pct": 22, "prev_score_pct": 9},
+                {"id": "hs-pass", "class_id": self.CLASS_ID, "student_id": self.STU_PASS, "homework_group": "HW 1", "score_pct": -1, "prev_score_pct": 5},
+                {"id": "hs-low", "class_id": self.CLASS_ID, "student_id": self.STU_LOW, "homework_group": "HW 1", "score_pct": 64, "prev_score_pct": 64},
+                {"id": "hs-mark", "class_id": self.CLASS_ID, "student_id": self.STU_MARK, "homework_group": "HW 1", "score_pct": 65, "prev_score_pct": None},
+                {"id": "hs-nolink", "class_id": self.CLASS_ID, "student_id": self.STU_IN, "homework_group": self.NO_LINK, "score_pct": 70, "prev_score_pct": 3},
+                {"id": "hs-nogroup", "class_id": self.CLASS_ID, "student_id": self.STU_IN, "homework_group": self.NO_GROUP, "score_pct": 80, "prev_score_pct": 7},
+            ],
+        }
+
+    def _get(self, assignment_id):
+        from app import models
+        from app import routes as r
+        calls = []
+        admin = _grades_api_client(self._store(), calls)
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst-1"
+            sess["role"] = "instructor"
+        with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch.object(models, "supabase_admin", admin), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
+            response = client.get(
+                "/api/class/%s/assignment/%s/grades" % (self.CLASS_ID, assignment_id)
+            )
+        return response, calls
+
+    def test_group_legacy_null_and_outsider(self):
+        response, _calls = self._get(self.LINKED)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {
+            "success": True,
+            "grades": {
+                "%s|%s" % (self.STU_IN, self.LO_LINK): "M",
+                "%s|%s" % (self.STU_OUT, self.LO_LINK): "P",
+                "%s|%s" % (self.STU_LEGACY, self.LO_LINK): "X",
+                "%s|%s" % (self.STU_BLANK, self.LO_LINK): "",
+            },
+            "has_assignment_grades": True,
+            "counts_for_mastery_map": {
+                "%s|%s" % (self.STU_IN, self.LO_LINK): True,
+                "%s|%s" % (self.STU_OUT, self.LO_LINK): True,
+                "%s|%s" % (self.STU_LEGACY, self.LO_LINK): False,
+                "%s|%s" % (self.STU_BLANK, self.LO_LINK): False,
+            },
+            "hw_scores": {
+                self.STU_IN: 40,
+                self.STU_SIB: 22,
+                self.STU_PASS: -1,
+                self.STU_LOW: 64,
+                self.STU_MARK: 65,
+            },
+            "hw_prev_scores": {
+                self.STU_IN: 4,
+                self.STU_SIB: 9,
+                self.STU_PASS: 5,
+                self.STU_LOW: 64,
+                self.STU_MARK: None,
+            },
+            "revision_eligible": {
+                self.STU_IN: False,
+                self.STU_SIB: False,
+                self.STU_PASS: True,
+                self.STU_LOW: False,
+                self.STU_MARK: True,
+            },
+            "assignment_type": "exam",
+        })
+
+    def test_no_objective_links_use_class_objectives(self):
+        response, _calls = self._get(self.NO_LINK)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {
+            "success": True,
+            "grades": {
+                "%s|%s" % (self.STU_IN, self.LO_LINK): "R",
+                "%s|%s" % (self.STU_IN, self.LO_CLASS): "R",
+                "%s|%s" % (self.STU_LEGACY, self.LO_LINK): "X",
+            },
+            "has_assignment_grades": False,
+            "counts_for_mastery_map": {
+                "%s|%s" % (self.STU_IN, self.LO_LINK): False,
+                "%s|%s" % (self.STU_IN, self.LO_CLASS): True,
+                "%s|%s" % (self.STU_LEGACY, self.LO_LINK): False,
+            },
+            "hw_scores": {self.STU_IN: 70},
+            "hw_prev_scores": {self.STU_IN: 3},
+            "revision_eligible": {self.STU_IN: True},
+            "assignment_type": "mastery_opp",
+        })
+
+    def test_no_homework_group_uses_the_assignment_id(self):
+        response, _calls = self._get(self.NO_GROUP)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {
+            "success": True,
+            "grades": {
+                "%s|%s" % (self.STU_IN, self.LO_LINK): "A",
+                "%s|%s" % (self.STU_LEGACY, self.LO_LINK): "X",
+            },
+            "has_assignment_grades": True,
+            "counts_for_mastery_map": {
+                "%s|%s" % (self.STU_IN, self.LO_LINK): True,
+                "%s|%s" % (self.STU_LEGACY, self.LO_LINK): False,
+            },
+            "hw_scores": {self.STU_IN: 80},
+            "hw_prev_scores": {self.STU_IN: 7},
+            "revision_eligible": {self.STU_IN: True},
+            "assignment_type": "project",
+        })
+
+    def test_group_fixture_reads_each_table_once_for_its_job(self):
+        _response, calls = self._get(self.LINKED)
+        self.assertEqual(
+            [call["table"] for call in calls],
+            [
+                "assignments",
+                "grades",
+                "assignment_objectives",
+                "grades",
+                "assignments",
+                "homework_scores",
+            ],
+        )
+
+    def test_no_group_fixture_skips_the_sibling_read(self):
+        _response, calls = self._get(self.NO_GROUP)
+        self.assertEqual(
+            [call["table"] for call in calls],
+            [
+                "assignments",
+                "grades",
+                "assignment_objectives",
+                "grades",
+                "homework_scores",
+            ],
+        )
 
 
 class TestInstructorTitleAndReportEmail(unittest.TestCase):
@@ -11278,6 +11541,451 @@ class TestRevisionReminders(unittest.TestCase):
             encoding="utf-8",
         ).read())
         self.assertNotIn("over_limit", src)
+
+
+class _ClassDetailQuery:
+    def __init__(self, rows, calls, selects, table):
+        self._rows = [dict(row) for row in rows]
+        self._calls = calls
+        self._selects = selects
+        self._table = table
+        self._order = None
+        self._window = None
+
+    def select(self, *args, **kwargs):
+        self._selects.append((self._table, " ".join(str(arg) for arg in args)))
+        return self
+
+    def eq(self, col, val):
+        if "." in col:
+            head, tail = col.split(".", 1)
+            self._rows = [
+                row for row in self._rows
+                if isinstance(row.get(head), dict) and row.get(head).get(tail) == val
+            ]
+        else:
+            self._rows = [row for row in self._rows if row.get(col) == val]
+        return self
+
+    def in_(self, col, values):
+        allowed = set(values)
+        self._rows = [row for row in self._rows if row.get(col) in allowed]
+        return self
+
+    def limit(self, count):
+        self._rows = self._rows[:count]
+        return self
+
+    def order(self, column, desc=False):
+        self._order = (column, desc)
+        return self
+
+    def range(self, start, end):
+        self._window = (start, end)
+        return self
+
+    def execute(self):
+        self._calls.append(self._table)
+        rows = list(self._rows)
+        if self._order:
+            column, desc = self._order
+            rows.sort(
+                key=lambda row: (row.get(column) is None, str(row.get(column))),
+                reverse=desc,
+            )
+        if self._window:
+            start, end = self._window
+            rows = rows[start:end + 1]
+        result = unittest.mock.MagicMock()
+        result.data = rows
+        return result
+
+
+def _class_detail_client(store, calls, selects):
+    admin = unittest.mock.MagicMock()
+
+    def table(name):
+        return _ClassDetailQuery(store.get(name, []), calls, selects, name)
+
+    admin.table.side_effect = table
+    return admin
+
+
+class TestClassDetailReads(unittest.TestCase):
+    TODAY = date(2026, 10, 21)
+    CLASS_ID = "class-full"
+    NONE_ID = "class-none"
+    EMPTY_ID = "class-empty"
+    NULL_ID = "class-null"
+    FULL_CALLS = [
+        "classes", "classes", "learning_objectives", "enrollments", "grades",
+        "assignment_objectives", "assignments", "grades",
+        "assignments", "assignments", "homework_scores",
+        "revision_reminders_sent",
+    ]
+
+    def _class_row(self, class_id, name):
+        return {
+            "id": class_id, "instructor_id": "inst-1", "name": name,
+            "semester": "Fall", "days": "MWF", "section_number": "1",
+            "auto_convert_m": False, "is_online": False,
+        }
+
+    def _enrollment(self, class_id, student_id, full_name, email, muted=False):
+        return {
+            "id": "enr-%s" % student_id, "class_id": class_id,
+            "student_id": student_id, "muted": muted,
+            "profiles": {
+                "id": student_id, "full_name": full_name,
+                "role": "student", "email": email,
+            },
+        }
+
+    def _objective(self, lo_id, class_id, vendor_code, name, required_ms):
+        return {
+            "id": lo_id, "class_id": class_id, "vendor_code": vendor_code,
+            "name": name, "description": "%s text" % name,
+            "required_ms": required_ms,
+        }
+
+    def _assignment(self, assignment_id, class_id, name, homework_group, revision_due, links):
+        return {
+            "id": assignment_id, "class_id": class_id, "name": name,
+            "homework_group": homework_group, "date_returned": "2026-10-17",
+            "revision_due": revision_due, "created_at": "2026-10-01T00:00:00",
+            "assignment_type": "mastery_opp", "assignment_objectives": links,
+        }
+
+    def _link(self, assignment_id, lo_id, vendor_code, class_id):
+        return {
+            "assignment_id": assignment_id,
+            "learning_objective_id": lo_id,
+            "assignments": {"class_id": class_id},
+            "learning_objectives": {
+                "id": lo_id, "vendor_code": vendor_code,
+                "description": "%s text" % vendor_code,
+            },
+        }
+
+    def _grade(self, grade_id, student_id, lo_id, top_score, assignment, lo_name, lo_code):
+        row = {
+            "id": grade_id, "student_id": student_id,
+            "learning_objective_id": lo_id, "top_score": top_score,
+            "second_score": None, "counts_for_mastery": True,
+            "assignment_id": None if assignment is None else assignment["id"],
+            "hw_score_at_entry": None,
+            "learning_objectives": {
+                "id": lo_id, "name": lo_name, "vendor_code": lo_code,
+            },
+        }
+        if assignment is not None:
+            row["assignments"] = {
+                "id": assignment["id"], "name": assignment["name"],
+                "revision_due": assignment["revision_due"],
+                "homework_group": assignment["homework_group"],
+                "class_id": assignment["class_id"],
+            }
+        return row
+
+    def _full_store(self, reminded=False):
+        live = self._assignment("asg-live", self.CLASS_ID, "Quiz Live", "HW 1", "2026-10-24", [
+            self._link("asg-live", "lo-2", "A1", self.CLASS_ID)])
+        sibling = self._assignment("asg-sib", self.CLASS_ID, "Quiz Sibling", "HW 1", "2026-10-24", [])
+        exam = self._assignment("asg-rq", self.CLASS_ID, "Exam RQ", "", "2026-10-20", [
+            self._link("asg-rq", "lo-1", "B2", self.CLASS_ID)])
+        passed = self._assignment("asg-pass", self.CLASS_ID, "Free Pass Quiz", "", "2026-10-24", [])
+        other = self._assignment("asg-other", "class-other", "Other Class Quiz", "HW 1", "2026-10-24", [])
+        mastery = self._assignment("asg-m", self.CLASS_ID, "Mastery Check", "", "2026-11-01", [
+            self._link("asg-m", "lo-1", "B2", self.CLASS_ID)])
+        una = self._assignment("asg-una", self.CLASS_ID, "Unattached Quiz", "", "2026-10-21", [])
+        ada_r = self._grade("g-ada-r", "stu-ada", "lo-2", "R", live, "Alpha", "A1")
+        bea_rq = self._grade("g-bea-rq", "stu-bea", "lo-1", "RQ", exam, "Beta", "B2")
+        bea_rq["hw_score_at_entry"] = 80
+        mute_r = self._grade("g-mute-r", "stu-mute", "lo-2", "R", live, "Alpha", "A1")
+        mute_r["hw_score_at_entry"] = 90
+        out_r = self._grade("g-out-r", "stu-out", "lo-2", "R", live, "Alpha", "A1")
+        out_r["hw_score_at_entry"] = 90
+        ott_r = self._grade("g-ott-r", "stu-ott", "lo-2", "R", other, "Alpha", "A1")
+        pass_r = self._grade("g-pass-r", "stu-pass", "lo-2", "R", passed, "Alpha", "A1")
+        pass_r["hw_score_at_entry"] = -1
+        null_r = self._grade("g-null-r", "stu-null", "lo-2", "R", None, "Alpha", "A1")
+        null_r["hw_score_at_entry"] = 90
+        una_r = self._grade("g-una-r", "stu-una", "lo-9", "R", una, "Gamma", "C3")
+        una_r["hw_score_at_entry"] = 90
+        reminders = []
+        if reminded:
+            reminders.append({
+                "class_id": self.CLASS_ID, "student_id": "stu-ada",
+                "assignment_id": "asg-live", "learning_objective_id": "lo-2",
+                "revision_due": "2026-10-24",
+            })
+        return {
+            "classes": [self._class_row(self.CLASS_ID, "Algebra")],
+            "learning_objectives": [
+                self._objective("lo-1", self.CLASS_ID, "B2", "Beta", 2),
+                self._objective("lo-2", self.CLASS_ID, "A1", "Alpha", 1),
+                self._objective("lo-9", self.CLASS_ID, "C3", "Gamma", 2),
+                self._objective("lo-out", "class-other", "Z9", "Outside", 1),
+            ],
+            "enrollments": [
+                self._enrollment(self.CLASS_ID, "stu-ada", "Ada, Ann", "ada@example.edu"),
+                self._enrollment(self.CLASS_ID, "stu-bea", "Bea, Bo", "bea@example.edu"),
+                self._enrollment(self.CLASS_ID, "stu-mute", "Mute, Mo", "mo@example.edu", muted=True),
+                self._enrollment(self.CLASS_ID, "stu-ott", "Ott, Oz", "ott@example.edu"),
+                self._enrollment(self.CLASS_ID, "stu-pass", "Pass, Pat", "pat@example.edu"),
+                self._enrollment(self.CLASS_ID, "stu-null", "Null, Ned", "ned@example.edu"),
+                self._enrollment(self.CLASS_ID, "stu-una", "Una, Jo", "una@example.edu"),
+            ],
+            "assignment_objectives": [
+                self._link("asg-live", "lo-2", "A1", self.CLASS_ID),
+                self._link("asg-rq", "lo-1", "B2", self.CLASS_ID),
+            ],
+            "assignments": [live, sibling, exam, passed, other, mastery, una],
+            "grades": [
+                self._grade("g-ada-m-a", "stu-ada", "lo-2", "M", mastery, "Alpha", "A1"),
+                ada_r,
+                self._grade("g-ada-m-b", "stu-ada", "lo-1", "M", mastery, "Beta", "B2"),
+                self._grade("g-ada-free", "stu-ada", "lo-9", "M", mastery, "Gamma", "C3"),
+                self._grade("g-ada-out", "stu-ada", "lo-out", "M", mastery, "Outside", "Z9"),
+                bea_rq,
+                self._grade("g-bea-m", "stu-bea", "lo-1", "M", mastery, "Beta", "B2"),
+                mute_r, out_r, ott_r,
+                self._grade("g-ott-m", "stu-ott", "lo-1", "M", mastery, "Beta", "B2"),
+                pass_r, null_r, una_r,
+            ],
+            "homework_scores": [
+                {"id": "hs-sib", "class_id": self.CLASS_ID, "student_id": "stu-ada", "homework_group": "asg-sib", "score_pct": 10},
+                {"id": "hs-group", "class_id": self.CLASS_ID, "student_id": "stu-ada", "homework_group": "HW 1", "score_pct": 80},
+                {"id": "hs-ott", "class_id": self.CLASS_ID, "student_id": "stu-ott", "homework_group": "HW 1", "score_pct": 95},
+                {"id": "hs-pass", "class_id": self.CLASS_ID, "student_id": "stu-pass", "homework_group": "asg-pass", "score_pct": 90},
+            ],
+            "revision_reminders_sent": reminders,
+        }
+
+    def _page(self, store, class_id):
+        from flask import template_rendered
+        from app import models
+        from app import routes as r
+        calls, selects = [], []
+        admin = _class_detail_client(store, calls, selects)
+        app = create_app()
+        app.config["TESTING"] = True
+        captured = {}
+
+        def grab(sender, template, context, **kwargs):
+            if getattr(template, "name", "") == "class_detail.html":
+                captured["context"] = context
+
+        template_rendered.connect(grab, app)
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst-1"
+            sess["role"] = "instructor"
+        try:
+            with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                    unittest.mock.patch.object(models, "supabase_admin", admin), \
+                    unittest.mock.patch.object(r, "local_today", return_value=self.TODAY):
+                response = client.get("/class/%s" % class_id)
+        finally:
+            template_rendered.disconnect(grab, app)
+        return response, calls, captured.get("context"), selects
+
+    def _cells(self, student):
+        return [{
+            "id": item["learning_objective_id"],
+            "vendor_code": item["vendor_code"],
+            "required_ms": item["required_ms"],
+            "m_count": item["m_count"],
+            "is_passed": item["is_passed"],
+        } for item in student.get("learning_objectives") or []]
+
+    def _by_id(self, students):
+        return {student["id"]: student for student in students}
+
+    def _revision_rows(self, report):
+        rows = []
+        for view in report["views"]:
+            for student in view["students"]:
+                for assignment in student["assignments"]:
+                    for obj in assignment["objectives"]:
+                        rows.append((
+                            view["key"], student["student_name"],
+                            assignment["assignment_name"], assignment["revision_due"],
+                            obj["lo_code"], obj["lo_name"], obj["top_score"],
+                        ))
+        return rows
+
+    def _item_html(self, page, name):
+        marker = ">%s</span>" % name
+        start = page.find(marker)
+        self.assertGreaterEqual(start, 0)
+        stop = page.find('class="student-item', start)
+        if stop < 0:
+            stop = start + 800
+        return page[start:stop]
+
+    def test_full_class_pins_revisions_mastery_and_call_order(self):
+        response, calls, context, _selects = self._page(self._full_store(), self.CLASS_ID)
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.FULL_CALLS)
+        self.assertNotIn("all_los", context)
+        self.assertEqual(
+            [(item["id"], item["name"]) for item in context["learning_objectives"]],
+            [("lo-2", "Alpha"), ("lo-1", "Beta")],
+        )
+        active = self._by_id(context["students"])
+        everyone = self._by_id(context["all_students"])
+        self.assertEqual(
+            [student["id"] for student in context["students"]],
+            ["stu-ada", "stu-bea", "stu-null", "stu-ott", "stu-pass", "stu-una"],
+        )
+        self.assertNotIn("stu-mute", active)
+        self.assertNotIn("stu-out", everyone)
+        self.assertEqual(active["stu-ada"]["objective_total"], 2)
+        self.assertEqual(self._cells(active["stu-ada"]), [
+            {"id": "lo-2", "vendor_code": "A1", "required_ms": 1, "m_count": 1, "is_passed": True},
+            {"id": "lo-1", "vendor_code": "B2", "required_ms": 2, "m_count": 1, "is_passed": False},
+        ])
+        self.assertEqual(active["stu-bea"]["objective_total"], 2)
+        self.assertEqual(self._cells(active["stu-bea"]), [
+            {"id": "lo-1", "vendor_code": "B2", "required_ms": 2, "m_count": 1, "is_passed": False},
+        ])
+        self.assertEqual(active["stu-una"]["objective_total"], 2)
+        self.assertEqual(self._cells(active["stu-una"]), [])
+        self.assertEqual(context["revision_report"]["overdue_revision_count"], 1)
+        self.assertEqual(self._revision_rows(context["revision_report"]), [
+            ("overdue", "Bea, Bo", "Exam RQ", "2026-10-20", "B2", "Beta", "RQ"),
+            ("today", "Una, Jo", "Unattached Quiz", "2026-10-21", "C3", "Gamma", "R"),
+            ("3", "Ada, Ann", "Quiz Live", "2026-10-24", "A1", "Alpha", "R"),
+        ])
+        self.assertEqual(context["revision_unsent_count"], 1)
+        self.assertEqual(context["revision_email_note"], "")
+        self.assertIn("Algebra | MWF | 1", page)
+        self.assertIn('id="activeStudentsCount" class="text-3xl font-semibold text-slate-900 dark:text-white">6</p>', page)
+        self.assertIn("6 active students (7 total)", page)
+        self.assertIn('text-orange-400">1</p>', page)
+        self.assertIn("Overdue (1)", page)
+        self.assertIn("Due today (1)", page)
+        self.assertIn("Due 2026-10-20", page)
+        self.assertIn("Due 2026-10-21", page)
+        self.assertIn("Unattached Quiz", page)
+        self.assertIn("Due in 3 days ★ (1 not emailed)", page)
+        self.assertIn("Due 2026-10-24", page)
+        self.assertIn("Quiz Live", page)
+        self.assertIn("Exam RQ", page)
+        self.assertIn("Printed 2026-10-21", page)
+        self.assertIn(">50%</span>", self._item_html(page, "Ada, Ann"))
+        self.assertIn(">0%</span>", self._item_html(page, "Bea, Bo"))
+        self.assertIn(">0%</span>", self._item_html(page, "Una, Jo"))
+        self.assertIn('line-through">Mute, Mo', page)
+        self.assertNotIn("Outsider, Sid", page)
+        revision_html = page.split('id="overdueRevisionsModal"', 1)[1].split(
+            'id="dashboardAllStudentsJson"', 1
+        )[0]
+        self.assertIn("Quiz Live", revision_html)
+        self.assertIn("Unattached Quiz", revision_html)
+        self.assertIn("Exam RQ", revision_html)
+        self.assertNotIn("Other Class Quiz", revision_html)
+        self.assertNotIn("All students have been emailed.", page)
+        self.assertNotIn("No students have a usable email address.", page)
+
+    def test_reminded_student_sets_the_email_note(self):
+        response, calls, context, _selects = self._page(self._full_store(reminded=True), self.CLASS_ID)
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.FULL_CALLS)
+        self.assertEqual(context["revision_unsent_count"], 0)
+        self.assertEqual(context["revision_email_note"], "All students have been emailed.")
+        self.assertIn("All students have been emailed.", page)
+        self.assertNotIn("not emailed", page)
+
+    def test_class_with_no_objectives_skips_revision_grade_reads(self):
+        store = {
+            "classes": [self._class_row(self.NONE_ID, "Empty")],
+            "learning_objectives": [],
+            "enrollments": [self._enrollment(self.NONE_ID, "stu-zoe", "Zoe, Ann", "zoe@example.edu")],
+            "assignment_objectives": [], "assignments": [], "grades": [],
+            "homework_scores": [], "revision_reminders_sent": [],
+        }
+        response, calls, context, _selects = self._page(store, self.NONE_ID)
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [
+            "classes", "classes", "learning_objectives", "enrollments",
+            "assignments", "revision_reminders_sent",
+        ])
+        student = context["students"][0]
+        self.assertEqual(student["objective_total"], 0)
+        self.assertEqual(student["learning_objectives"], [])
+        self.assertEqual(context["learning_objectives"], [])
+        self.assertEqual(context["revision_report"]["overdue_revision_count"], 0)
+        self.assertEqual(context["revision_unsent_count"], 0)
+        self.assertEqual(context["revision_email_note"], "")
+        self.assertIn(">0%</span>", self._item_html(page, "Zoe, Ann"))
+        self.assertNotIn("homework_scores", calls)
+        self.assertEqual(calls.count("grades"), 0)
+
+    def test_class_with_no_grades_still_reads_grades_and_skips_homework(self):
+        store = {
+            "classes": [self._class_row(self.EMPTY_ID, "No Grades")],
+            "learning_objectives": [self._objective("lo-2", self.EMPTY_ID, "A1", "Alpha", 1)],
+            "enrollments": [self._enrollment(self.EMPTY_ID, "stu-ada", "Ada, Ann", "ada@example.edu")],
+            "assignment_objectives": [self._link("asg-live", "lo-2", "A1", self.EMPTY_ID)],
+            "assignments": [self._assignment("asg-live", self.EMPTY_ID, "Quiz Live", "HW 1", "2026-10-24", [
+                self._link("asg-live", "lo-2", "A1", self.EMPTY_ID)])],
+            "grades": [], "homework_scores": [], "revision_reminders_sent": [],
+        }
+        response, calls, context, _selects = self._page(store, self.EMPTY_ID)
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [
+            "classes", "classes", "learning_objectives", "enrollments", "grades",
+            "assignment_objectives", "assignments", "grades",
+            "revision_reminders_sent",
+        ])
+        student = context["students"][0]
+        self.assertEqual(student["objective_total"], 1)
+        self.assertEqual(student["learning_objectives"], [])
+        self.assertEqual(
+            [(item["id"], item["name"]) for item in context["learning_objectives"]],
+            [("lo-2", "Alpha")],
+        )
+        self.assertEqual(self._revision_rows(context["revision_report"]), [])
+        self.assertEqual(context["revision_unsent_count"], 0)
+        self.assertEqual(context["revision_email_note"], "")
+        self.assertIn(">0%</span>", self._item_html(page, "Ada, Ann"))
+        self.assertNotIn("homework_scores", calls)
+
+    def test_null_assignment_id_is_left_out_of_the_report(self):
+        store = {
+            "classes": [self._class_row(self.NULL_ID, "Null Only")],
+            "learning_objectives": [self._objective("lo-2", self.NULL_ID, "A1", "Alpha", 1)],
+            "enrollments": [self._enrollment(self.NULL_ID, "stu-null", "Null, Ned", "ned@example.edu")],
+            "assignment_objectives": [self._link("asg-live", "lo-2", "A1", self.NULL_ID)],
+            "assignments": [],
+            "grades": [self._grade("g-null-r", "stu-null", "lo-2", "R", None, "Alpha", "A1")],
+            "homework_scores": [{
+                "id": "hs-null", "class_id": self.NULL_ID, "student_id": "stu-null",
+                "homework_group": "HW 1", "score_pct": 95,
+            }],
+            "revision_reminders_sent": [],
+        }
+        store["grades"][0]["hw_score_at_entry"] = 90
+        response, calls, context, _selects = self._page(store, self.NULL_ID)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [
+            "classes", "classes", "learning_objectives", "enrollments", "grades",
+            "assignment_objectives", "assignments", "grades",
+            "revision_reminders_sent",
+        ])
+        self.assertEqual(self._revision_rows(context["revision_report"]), [])
+        self.assertEqual(context["students"][0]["objective_total"], 1)
+        self.assertEqual(self._cells(context["students"][0]), [
+            {"id": "lo-2", "vendor_code": "A1", "required_ms": 1, "m_count": 0, "is_passed": False},
+        ])
+        self.assertNotIn("homework_scores", calls)
+        self.assertEqual(calls.count("assignments"), 1)
 
 
 if __name__ == '__main__':

@@ -1955,7 +1955,12 @@ def class_detail(class_id):
     assignments = load_assignments_for_class(class_id)
 
     today = local_today()
-    revision_raw = Grade.get_revision_candidates(class_id, today)
+    pool_los = class_data.get("learning_objectives") or []
+    revision_raw = Grade.get_revision_candidates(
+        class_id,
+        today,
+        [str(lo.get("id")) for lo in pool_los if lo.get("id")],
+    )
     student_name_map = {
         s["id"]: display_name(s.get("full_name") or "")
         for s in students_for_template
@@ -1987,12 +1992,6 @@ def class_detail(class_id):
             else:
                 revision_email_note = "All students have been emailed."
 
-    try:
-        all_los = Course.get_learning_objectives(class_id)
-    except Exception as e:
-        logger.error("Error loading LOs for dashboard %s: %s", class_id, e)
-        all_los = []
-
     return render_template('class_detail.html', 
                             class_id=class_id, 
                             class_name=class_data.get('name'),
@@ -2001,7 +2000,6 @@ def class_detail(class_id):
                             students=students_for_template, 
                             all_students=all_students_for_modal,
                             learning_objectives=summary,
-                            all_los=all_los,
                             assignments=assignments,
                             revision_report=revision_report,
                             revision_printed_on=today.isoformat(),
@@ -5164,8 +5162,22 @@ def api_assignment_grades(class_id, assignment_id):
     """Return grades for a specific assignment, keyed by student_id|lo_id."""
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
-    if not _assignment_belongs_to_class(class_id, assignment_id):
+    try:
+        assignment_resp = (
+            supabase_admin.table("assignments")
+            .select("id, homework_group, assignment_type")
+            .eq("id", assignment_id)
+            .eq("class_id", class_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
         return jsonify({"success": False, "error": "Invalid assignment for class"}), 400
+    assignment_row = (assignment_resp.data or [None])[0] or {}
+    if not assignment_row.get("id"):
+        return jsonify({"success": False, "error": "Invalid assignment for class"}), 400
+    raw_type = assignment_row.get("assignment_type") or "mastery_opp"
+    assignment_type = raw_type if raw_type in ASSIGNMENT_TYPES else "mastery_opp"
     try:
         result = (
             supabase_admin.table("grades")
@@ -5225,41 +5237,22 @@ def api_assignment_grades(class_id, assignment_id):
                     flag = grade.get('counts_for_mastery')
                     counts_for_mastery_map[key] = True if flag is None else bool(flag)
 
-        # HW % is shared by all assignments in the same homework_group (see Homework.get_hw_scores_map_for_assignment)
-        hw_map = Homework.get_hw_scores_map_for_assignment(class_id, assignment_id)
-
-        # Compute revision eligibility per student (HW >= 65% or pass used)
+        hw_scores, hw_prev_scores = Homework.load_hw_score_and_prev_maps(
+            class_id, assignment_id, assignment_row
+        )
         eligibility = {}
-        for sid, score in hw_map.items():
+        for sid, score in hw_scores.items():
             eligibility[sid] = score == -1 or (
                 score is not None and score >= Homework.EXAM_GRADE_HW_THRESHOLD
             )
-
-        assignment_type = "mastery_opp"
-        try:
-            asg_resp = (
-                supabase_admin.table("assignments")
-                .select("id, assignment_type")
-                .eq("id", assignment_id)
-                .eq("class_id", class_id)
-                .limit(1)
-                .execute()
-            )
-            asg_row = (asg_resp.data or [None])[0] or {}
-            raw_type = asg_row.get("assignment_type") or "mastery_opp"
-            assignment_type = raw_type if raw_type in ASSIGNMENT_TYPES else "mastery_opp"
-        except Exception as type_err:
-            logger.debug("api_assignment_grades: could not load assignment_type: %s", type_err)
 
         return jsonify({
             "success": True,
             "grades": grades_map,
             "has_assignment_grades": has_assignment_grades,
             "counts_for_mastery_map": counts_for_mastery_map,
-            "hw_scores": hw_map,
-            "hw_prev_scores": Homework.get_hw_prev_scores_map_for_assignment(
-                class_id, assignment_id
-            ),
+            "hw_scores": hw_scores,
+            "hw_prev_scores": hw_prev_scores,
             "revision_eligible": eligibility,
             "assignment_type": assignment_type,
         })
