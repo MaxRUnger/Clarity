@@ -11619,9 +11619,8 @@ class TestClassDetailReads(unittest.TestCase):
     NULL_ID = "class-null"
     FULL_CALLS = [
         "classes", "classes", "learning_objectives", "enrollments", "grades",
-        "assignment_objectives", "assignments", "grades",
-        "assignments", "assignments", "homework_scores",
-        "revision_reminders_sent",
+        "assignment_objectives", "assignments", "grades", "assignments",
+        "homework_scores", "revision_reminders_sent",
     ]
 
     def _class_row(self, class_id, name):
@@ -11986,6 +11985,19 @@ class TestClassDetailReads(unittest.TestCase):
         ])
         self.assertNotIn("homework_scores", calls)
         self.assertEqual(calls.count("assignments"), 1)
+
+    def test_revision_grades_select_includes_homework_group_and_class_id(self):
+        _response, _calls, _context, selects = self._page(self._full_store(), self.CLASS_ID)
+        revision_selects = [
+            text for table, text in selects
+            if table == "grades" and "hw_score_at_entry" in text
+        ]
+        self.assertEqual(len(revision_selects), 1)
+        text = revision_selects[0]
+        embed_at = text.find("assignments(")
+        embed = text[embed_at:text.find(")", embed_at) + 1]
+        self.assertIn("homework_group", embed)
+        self.assertIn("class_id", embed)
 
 
 if __name__ == '__main__':

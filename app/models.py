@@ -259,7 +259,11 @@ class Grade:
         horizon = (today + timedelta(days=7)).isoformat()
         try:
             if lo_ids is None:
-                lo_ids = Course.get_all_lo_ids_for_class(class_id)
+                lo_ids = [
+                    str(lo_id)
+                    for lo_id in Course.get_all_lo_ids_for_class(class_id)
+                    if lo_id
+                ]
             else:
                 lo_ids = [str(lo_id) for lo_id in lo_ids if lo_id]
             if not lo_ids:
@@ -267,7 +271,7 @@ class Grade:
             grade_rows = fetch_all_rows(
                 supabase_admin.table("grades").select(
                     "student_id, top_score, assignment_id, hw_score_at_entry, "
-                    "assignments(id, name, revision_due), "
+                    "assignments(id, name, revision_due, homework_group, class_id), "
                     "learning_objectives(id, name, vendor_code)"
                 ).in_("top_score", ["R", "RQ"]).in_(
                     "learning_objective_id", lo_ids
@@ -280,24 +284,18 @@ class Grade:
             if not assignment_ids:
                 return []
 
-            # Load homework_group for every needed assignment in one query.
-            try:
-                hg_resp = (
-                    supabase_admin.table("assignments")
-                    .select("id, homework_group, class_id")
-                    .in_("id", assignment_ids)
-                    .eq("class_id", class_id)
-                    .execute()
-                )
-            except Exception as e:
-                logger.error("Bulk assignment homework_group lookup failed: %s", e)
-                hg_resp = None
             hg_by_assignment: Dict[str, str] = {}
-            for row in ((hg_resp.data if hg_resp else None) or []):
-                aid = row.get('id')
-                hg = (row.get('homework_group') or '').strip() or (aid or '')
-                if aid:
-                    hg_by_assignment[aid] = hg
+            wanted = set(assignment_ids)
+            for grade in grade_rows:
+                aid = grade.get("assignment_id")
+                if aid not in wanted or aid in hg_by_assignment:
+                    continue
+                assignment = grade.get("assignments") or {}
+                if assignment.get("class_id") != class_id:
+                    continue
+                hg_by_assignment[aid] = (
+                    (assignment.get("homework_group") or "").strip() or aid
+                )
 
             # Determine sibling assignment IDs (legacy keys) for each homework group, in one query per class.
             unique_groups = sorted({v for v in hg_by_assignment.values() if v})
