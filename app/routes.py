@@ -3306,18 +3306,21 @@ def class_student_detail(class_id, student_id):
 def class_assignments(class_id):
     if not _instructor_owns_class(class_id):
         return redirect(url_for('main.instructor_dashboard'))
-    class_data = Course.get_full_class_data(class_id)
-    
+    try:
+        class_data = Course.load_class_record(class_id)
+    except Exception as e:
+        logger.error("class_assignments: could not load class %s: %s", class_id, e)
+        return redirect(url_for('main.instructor_dashboard'))
     if not class_data:
         return redirect(url_for('main.instructor_dashboard'))
-
-    assignments = load_assignments_for_class(class_id)
 
     try:
         all_los = Course.get_learning_objectives(class_id)
     except Exception as e:
         logger.error("Error loading LOs for class %s: %s", class_id, e)
         all_los = []
+
+    assignments = load_assignments_for_class(class_id)
 
     attached_ids = {
         str(lo.get("id") or "")

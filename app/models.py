@@ -96,6 +96,22 @@ class Course:
             return []
 
     @staticmethod
+    def load_class_record(class_id):
+        """Return the class row, or None when that id has no row."""
+        response = (
+            supabase_admin.table("classes")
+            .select(
+                "id, name, semester, days, section_number, "
+                "auto_convert_m, is_online"
+            )
+            .eq("id", class_id)
+            .execute()
+        )
+        if not response.data:
+            return None
+        return response.data[0]
+
+    @staticmethod
     def get_full_class_data(class_id):
         """Fetches a class, its learning objectives, and all enrolled students with their grades.
 
@@ -103,19 +119,10 @@ class Course:
         ``classes → learning_objectives`` embeds are not used for the pool.
         """
         try:
-            response = (
-                supabase_admin.table("classes")
-                .select(
-                    "id, name, semester, days, section_number, "
-                    "auto_convert_m, is_online"
-                )
-                .eq("id", class_id)
-                .execute()
-            )
-            if not response.data:
+            class_data = Course.load_class_record(class_id)
+            if not class_data:
                 return None
 
-            class_data = response.data[0]
             pool_los = Course.get_learning_objectives(class_id) or []
             class_data["learning_objectives"] = pool_los
             class_lo_ids = {
