@@ -12573,5 +12573,335 @@ class TestUploadPageReads(unittest.TestCase):
         self.assertIsNone(context)
 
 
+class TestSpeedGraderReads(unittest.TestCase):
+    CLASS_ID = "class-sg"
+    MUTED_ID = "class-sg-muted"
+    EMPTY_ID = "class-sg-empty"
+    NONE_ID = "class-sg-none"
+    CALLS = [
+        "classes", "classes", "enrollments", "assignments",
+        "free_passes", "learning_objectives",
+    ]
+    MUTED_CALLS = [
+        "classes", "classes", "enrollments", "assignments", "learning_objectives",
+    ]
+    EMPTY_CALLS = [
+        "classes", "classes", "enrollments", "assignments", "learning_objectives",
+    ]
+    NONE_CALLS = [
+        "classes", "classes", "enrollments", "assignments",
+        "free_passes", "learning_objectives",
+    ]
+
+    def _class_row(self, class_id, name, auto_convert_m=False, instructor_id="inst-1"):
+        return {
+            "id": class_id, "instructor_id": instructor_id, "name": name,
+            "semester": "Fall", "days": "MWF", "section_number": "1",
+            "auto_convert_m": auto_convert_m, "is_online": False,
+        }
+
+    def _objective(self, lo_id, class_id, vendor_code, name):
+        return {
+            "id": lo_id, "class_id": class_id, "vendor_code": vendor_code,
+            "name": name, "description": "%s text" % name, "required_ms": 2,
+        }
+
+    def _link(self, assignment_id, lo_id):
+        return {
+            "assignment_id": assignment_id,
+            "learning_objective_id": lo_id,
+            "assignments": {"class_id": self.CLASS_ID},
+            "learning_objectives": {
+                "id": lo_id, "vendor_code": lo_id, "description": "",
+            },
+        }
+
+    def _assignment(self, assignment_id, name, homework_group, created_at, links, assignment_type, class_id=None):
+        return {
+            "id": assignment_id, "class_id": class_id or self.CLASS_ID, "name": name,
+            "homework_group": homework_group, "date_returned": "2026-10-17",
+            "revision_due": "2026-10-24", "created_at": created_at,
+            "assignment_type": assignment_type, "assignment_objectives": links,
+        }
+
+    def _enrollment(self, class_id, enrollment_id, student_id, muted, profiles):
+        return {
+            "id": enrollment_id, "class_id": class_id, "student_id": student_id,
+            "muted": muted, "profiles": profiles,
+        }
+
+    def _profile(self, student_id, full_name):
+        return {
+            "id": student_id, "full_name": full_name,
+            "role": "student", "email": "student@example.edu",
+        }
+
+    def _store(self, auto_convert_m=False):
+        link_b = self._link("asg-linked", "lo-1")
+        link_a = self._link("asg-linked", "lo-2")
+        return {
+            "classes": [self._class_row(self.CLASS_ID, "Speed Class", auto_convert_m)],
+            "learning_objectives": [
+                self._objective("lo-1", self.CLASS_ID, "B2", "Beta"),
+                self._objective("lo-2", self.CLASS_ID, "A1", "Alpha"),
+                self._objective("lo-9", self.CLASS_ID, "C3", "Gamma"),
+            ],
+            "enrollments": [
+                self._enrollment(self.CLASS_ID, "enr-0-ghost", "stu-ghost", False, None),
+                self._enrollment(
+                    self.CLASS_ID, "enr-1-bea", "stu-bea", False,
+                    self._profile("stu-bea", "Bea, Bo"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-2-ada", "stu-ada", False,
+                    self._profile("stu-ada", "Ada, Ann"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-3-mute", "stu-mute", True,
+                    self._profile("stu-mute", "Mute, Mo"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-4-pad", "stu-pad", False,
+                    self._profile(" stu-pad ", "Pad, Pat"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-5-blank", "stu-blank", False,
+                    self._profile("stu-blank", "  "),
+                ),
+            ],
+            "grades": [{
+                "id": "g-ada", "student_id": "stu-ada",
+                "learning_objective_id": "lo-2", "top_score": "ZQ",
+                "second_score": None, "counts_for_mastery": True,
+            }],
+            "free_passes": [
+                {"class_id": self.CLASS_ID, "student_id": "stu-bea", "passes_used": 1},
+                {"class_id": self.CLASS_ID, "student_id": "stu-mute", "passes_used": 2},
+            ],
+            "assignment_objectives": [link_b, link_a],
+            "assignments": [
+                self._assignment("asg-bare", "Bare Exam", "", "2026-10-02", [], "exam"),
+                self._assignment(
+                    "asg-linked", "Linked Quiz", "HW 1", "2026-10-01",
+                    [link_b, link_a], "mastery_opp",
+                ),
+            ],
+        }
+
+    def _page(self, store, class_id):
+        from flask import template_rendered
+        from app import models
+        from app import routes as r
+        calls = []
+        admin = _class_detail_client(store, calls, [])
+        app = create_app()
+        app.config["TESTING"] = True
+        captured = {}
+
+        def grab(sender, template, context, **kwargs):
+            if getattr(template, "name", "") == "class_speed_grader.html":
+                captured["context"] = context
+
+        template_rendered.connect(grab, app)
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst-1"
+            sess["role"] = "instructor"
+        try:
+            with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                    unittest.mock.patch.object(models, "supabase_admin", admin):
+                response = client.get("/class/%s/speed_grader" % class_id)
+        finally:
+            template_rendered.disconnect(grab, app)
+        return response, calls, captured.get("context")
+
+    def _student_fields(self, students):
+        return [
+            {
+                "id": student.get("id"),
+                "name": student.get("name"),
+                "passes_remaining": student.get("passes_remaining"),
+            }
+            for student in students
+        ]
+
+    def _headers(self, page):
+        import re
+        return re.findall(
+            r'data-lo="([^"]*)" data-lo-id="([^"]*)" data-lo-subtitle="([^"]*)"',
+            page,
+        )
+
+    def _vendor_codes(self, page):
+        import re
+        return re.findall(
+            r'text-xs font-bold text-slate-800 dark:text-white">([^<]*)</div>',
+            page,
+        )
+
+    def _assignment_json(self, page):
+        import json
+        raw = page.split('id="assignmentData" type="application/json">', 1)[1]
+        raw = raw.split("</script>", 1)[0]
+        return json.loads(raw)
+
+    def _assignment_fields(self, assignment):
+        return {
+            "id": assignment["id"],
+            "name": assignment["name"],
+            "homework_group": assignment.get("homework_group"),
+            "assignment_type": assignment.get("assignment_type"),
+            "learning_objective_ids": [
+                link.get("learning_objective_id")
+                for link in (assignment.get("assignment_objectives") or [])
+            ],
+        }
+
+    def _expected_students(self):
+        return [
+            {"id": "stu-ada", "name": "Ada, Ann", "passes_remaining": 2},
+            {"id": "stu-bea", "name": "Bea, Bo", "passes_remaining": 1},
+            {"id": " stu-pad ", "name": "Pad, Pat", "passes_remaining": 2},
+            {"id": "stu-blank", "name": "Unnamed student", "passes_remaining": 2},
+        ]
+
+    def _expected_assignments(self):
+        return [
+            {
+                "id": "asg-linked", "name": "Linked Quiz", "homework_group": "HW 1",
+                "assignment_type": "mastery_opp",
+                "learning_objective_ids": ["lo-1", "lo-2"],
+            },
+            {
+                "id": "asg-bare", "name": "Bare Exam", "homework_group": "",
+                "assignment_type": "exam", "learning_objective_ids": [],
+            },
+        ]
+
+    def test_active_students_full_pool_and_convert_flag_off(self):
+        import re
+        response, calls, context = self._page(self._store(False), self.CLASS_ID)
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.CALLS)
+        self.assertEqual(context["class_name"], "Speed Class")
+        self.assertNotIn("Speed Class", page)
+        self.assertEqual(context["auto_convert_m"], False)
+        self.assertIn("const AUTO_CONVERT_M = JSON.parse('false');", page)
+        self.assertEqual(self._student_fields(context["students"]), self._expected_students())
+        self.assertEqual(
+            re.findall(r'data-student-row data-student-id="([^"]*)"', page),
+            ["stu-ada", "stu-bea", " stu-pad ", "stu-blank"],
+        )
+        self.assertIn("Unnamed student", page)
+        self.assertNotIn("Mute, Mo", page)
+        self.assertNotIn("stu-ghost", page)
+        self.assertNotIn("ZQ", page)
+        self.assertEqual(
+            [(lo["id"], lo["name"], lo["vendor_code"]) for lo in context["lo_names"]],
+            [("lo-2", "Alpha", "A1"), ("lo-1", "Beta", "B2"), ("lo-9", "Gamma", "C3")],
+        )
+        self.assertEqual(self._headers(page), [
+            ("Alpha", "lo-2", "Alpha"),
+            ("Beta", "lo-1", "Beta"),
+            ("Gamma", "lo-9", "Gamma"),
+        ])
+        self.assertEqual(self._vendor_codes(page), ["A1", "B2", "C3"])
+        self.assertEqual(
+            [self._assignment_fields(row) for row in self._assignment_json(page)],
+            self._expected_assignments(),
+        )
+        self.assertEqual(
+            [self._assignment_fields(row) for row in context["assignments"]],
+            self._expected_assignments(),
+        )
+
+    def test_convert_flag_on_does_not_change_the_students(self):
+        response, calls, context = self._page(self._store(True), self.CLASS_ID)
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.CALLS)
+        self.assertEqual(context["auto_convert_m"], True)
+        self.assertIn("const AUTO_CONVERT_M = JSON.parse('true');", page)
+        self.assertEqual(self._student_fields(context["students"]), self._expected_students())
+
+    def test_every_muted_enrollment_skips_free_passes(self):
+        store = {
+            "classes": [self._class_row(self.MUTED_ID, "Speed Class")],
+            "learning_objectives": [
+                self._objective("lo-2", self.MUTED_ID, "A1", "Alpha"),
+            ],
+            "enrollments": [self._enrollment(
+                self.MUTED_ID, "enr-mute", "stu-mute", True,
+                self._profile("stu-mute", "Mute, Mo"),
+            )],
+            "grades": [],
+            "free_passes": [
+                {"class_id": self.MUTED_ID, "student_id": "stu-mute", "passes_used": 2},
+            ],
+            "assignment_objectives": [],
+            "assignments": [],
+        }
+        response, calls, context = self._page(store, self.MUTED_ID)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.MUTED_CALLS)
+        self.assertEqual(context["students"], [])
+        self.assertNotIn("free_passes", calls)
+
+    def test_no_enrollments_skips_grades_and_free_passes(self):
+        store = {
+            "classes": [self._class_row(self.EMPTY_ID, "Speed Class")],
+            "learning_objectives": [
+                self._objective("lo-2", self.EMPTY_ID, "A1", "Alpha"),
+            ],
+            "enrollments": [],
+            "grades": [],
+            "free_passes": [],
+            "assignment_objectives": [],
+            "assignments": [self._assignment(
+                "asg-bare", "Bare Exam", "", "2026-10-02", [], "exam", self.EMPTY_ID,
+            )],
+        }
+        response, calls, context = self._page(store, self.EMPTY_ID)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.EMPTY_CALLS)
+        self.assertEqual(context["students"], [])
+        self.assertNotIn("grades", calls)
+        self.assertNotIn("free_passes", calls)
+
+    def test_no_objectives_still_reads_free_passes(self):
+        store = {
+            "classes": [self._class_row(self.NONE_ID, "Speed Class")],
+            "learning_objectives": [],
+            "enrollments": [self._enrollment(
+                self.NONE_ID, "enr-ada", "stu-ada", False,
+                self._profile("stu-ada", "Ada, Ann"),
+            )],
+            "grades": [],
+            "free_passes": [],
+            "assignment_objectives": [],
+            "assignments": [],
+        }
+        response, calls, context = self._page(store, self.NONE_ID)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.NONE_CALLS)
+        self.assertEqual(context["lo_names"], [])
+        self.assertEqual(self._student_fields(context["students"]), [
+            {"id": "stu-ada", "name": "Ada, Ann", "passes_remaining": 2},
+        ])
+        self.assertNotIn("grades", calls)
+
+    def test_other_instructors_class_redirects_home(self):
+        store = {
+            "classes": [self._class_row(self.CLASS_ID, "Speed Class", instructor_id="inst-other")],
+            "learning_objectives": [], "enrollments": [], "grades": [],
+            "free_passes": [], "assignment_objectives": [], "assignments": [],
+        }
+        response, calls, context = self._page(store, self.CLASS_ID)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/instructor/dashboard", response.headers["Location"])
+        self.assertEqual(calls, ["classes"])
+        self.assertIsNone(context)
+
 if __name__ == '__main__':
     unittest.main()

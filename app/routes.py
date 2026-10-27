@@ -4836,17 +4836,25 @@ def student_history_print(class_id):
 def class_speed_grader(class_id):
     if not _instructor_owns_class(class_id):
         return redirect(url_for('main.instructor_dashboard'))
-    class_data = Course.get_full_class_data(class_id)
 
+    try:
+        class_data = Course.load_class_record(class_id)
+    except Exception as e:
+        logger.error("class_speed_grader: could not load class %s: %s", class_id, e)
+        return redirect(url_for('main.instructor_dashboard'))
     if not class_data:
         return redirect(url_for('main.instructor_dashboard'))
 
     hw_passes_allowed = FREE_PASSES_ALLOWED
 
-    # Load assignments with their linked LOs
+    try:
+        raw_enrollments = Course.load_enrollments(class_id)
+    except Exception as e:
+        logger.error("class_speed_grader: could not load enrollments for %s: %s", class_id, e)
+        return redirect(url_for('main.instructor_dashboard'))
+
     assignments = load_assignments_for_class(class_id)
 
-    raw_enrollments = class_data.get('enrollments', [])
     students = []
     for enrollment in raw_enrollments:
         prof = normalize_profile(enrollment)
@@ -4857,7 +4865,6 @@ def class_speed_grader(class_id):
             continue
         students.append(prof)
 
-    # Batch-fetch free passes for all students in one query (fixes N+1)
     if students:
         students.sort(key=row_sort_key)
         student_ids = [s['id'] for s in students if s.get('id')]
