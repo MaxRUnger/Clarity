@@ -4974,10 +4974,6 @@ def create_lo_handler(class_id):
     # GET requests just redirect back to the objectives page (modal handles creation)
     return redirect(url_for('main.class_assignments', class_id=class_id))
 
-@main_bp.route("/support")
-def support():
-    return render_template("support.html")
-
 # ============================================================================
 # API & ACTION ROUTES
 # ============================================================================
