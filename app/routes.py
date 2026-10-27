@@ -4885,9 +4885,18 @@ def update_grade_handler(class_id):
     if not _instructor_owns_class(class_id):
         return redirect(url_for('main.instructor_dashboard'))
 
-    class_data = Course.get_full_class_data(class_id)
-
+    try:
+        class_data = Course.load_class_record(class_id)
+    except Exception as e:
+        logger.error("update_grade_handler: could not load class %s: %s", class_id, e)
+        return redirect(url_for('main.instructor_dashboard'))
     if not class_data:
+        return redirect(url_for('main.instructor_dashboard'))
+
+    try:
+        enrollments = Course.load_enrollments(class_id)
+    except Exception as e:
+        logger.error("update_grade_handler: could not load enrollments for %s: %s", class_id, e)
         return redirect(url_for('main.instructor_dashboard'))
 
     assignments = load_assignments_for_class(class_id)
@@ -4898,7 +4907,7 @@ def update_grade_handler(class_id):
     }
 
     roster = []
-    for enrollment in class_data.get("enrollments") or []:
+    for enrollment in enrollments or []:
         prof = normalize_profile(enrollment)
         sid = str(prof.get("id") or "").strip()
         if not sid:

@@ -3103,7 +3103,12 @@ class TestUpdateGradeRoster(unittest.TestCase):
         with client.session_transaction() as sess:
             sess["user_id"] = "inst1"
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r.Course, "get_full_class_data", return_value=class_data), \
+                unittest.mock.patch.object(
+                    r.Course, "load_class_record", return_value={"name": "Algebra"},
+                ), \
+                unittest.mock.patch.object(
+                    r.Course, "load_enrollments", return_value=class_data["enrollments"],
+                ), \
                 unittest.mock.patch.object(r, "load_assignments_for_class", return_value=[]), \
                 unittest.mock.patch.object(r, "render_template", side_effect=fake_render):
             rv = client.get("/class/class-a/update_grade")
@@ -12257,6 +12262,302 @@ class TestAssignmentsPageReads(unittest.TestCase):
         self.assertEqual(self._checkbox_rows(page), [])
         self.assertNotIn("not attached to an assignment yet", page)
         self.assertNotIn("assignment_objectives", calls)
+        self.assertNotIn("grades", calls)
+
+    def test_other_instructors_class_redirects_home(self):
+        store = {
+            "classes": [self._class_row(self.CLASS_ID, "Algebra", instructor_id="inst-other")],
+            "learning_objectives": [], "enrollments": [], "grades": [],
+            "assignment_objectives": [], "assignments": [],
+        }
+        response, calls, context = self._page(store, self.CLASS_ID)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/instructor/dashboard", response.headers["Location"])
+        self.assertEqual(calls, ["classes"])
+        self.assertIsNone(context)
+
+
+class TestUploadPageReads(unittest.TestCase):
+    CLASS_ID = "class-up"
+    EMPTY_ID = "class-up-empty"
+    NONE_ID = "class-up-none"
+    CALLS = [
+        "classes", "classes", "enrollments", "assignments",
+    ]
+    NO_GRADE_CALLS = [
+        "classes", "classes", "enrollments", "assignments",
+    ]
+
+    def _class_row(self, class_id, name, instructor_id="inst-1"):
+        return {
+            "id": class_id, "instructor_id": instructor_id, "name": name,
+            "semester": "Fall", "days": "MWF", "section_number": "1",
+            "auto_convert_m": False, "is_online": False,
+        }
+
+    def _objective(self, lo_id, class_id, vendor_code, name):
+        return {
+            "id": lo_id, "class_id": class_id, "vendor_code": vendor_code,
+            "name": name, "description": "%s text" % name, "required_ms": 2,
+        }
+
+    def _link(self, assignment_id, lo_id, vendor_code):
+        return {
+            "assignment_id": assignment_id,
+            "learning_objective_id": lo_id,
+            "assignments": {"class_id": self.CLASS_ID},
+            "learning_objectives": {
+                "id": lo_id, "vendor_code": vendor_code, "description": "%s text" % vendor_code,
+            },
+        }
+
+    def _assignment(self, assignment_id, name, homework_group, created_at, links, assignment_type, class_id=None):
+        return {
+            "id": assignment_id, "class_id": class_id or self.CLASS_ID, "name": name,
+            "homework_group": homework_group, "date_returned": "2026-10-17",
+            "revision_due": "2026-10-24", "created_at": created_at,
+            "assignment_type": assignment_type, "assignment_objectives": links,
+        }
+
+    def _enrollment(self, class_id, enrollment_id, student_id, muted, profiles):
+        return {
+            "id": enrollment_id, "class_id": class_id, "student_id": student_id,
+            "muted": muted, "profiles": profiles,
+        }
+
+    def _profile(self, student_id, full_name, role="student"):
+        return {
+            "id": student_id, "full_name": full_name,
+            "role": role, "email": "%s@example.edu" % student_id,
+        }
+
+    def _store(self):
+        link_b = self._link("asg-linked", "lo-1", "B2")
+        link_a = self._link("asg-linked", "lo-2", "A1")
+        return {
+            "classes": [self._class_row(self.CLASS_ID, "Algebra")],
+            "learning_objectives": [
+                self._objective("lo-1", self.CLASS_ID, "B2", "Beta"),
+                self._objective("lo-2", self.CLASS_ID, "A1", "Alpha"),
+                self._objective("lo-9", self.CLASS_ID, "C3", "Gamma"),
+            ],
+            "enrollments": [
+                self._enrollment(
+                    self.CLASS_ID, "enr-0-ghost", "stu-ghost", False, None,
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-1-zoe", "stu-zoe", False,
+                    self._profile("stu-zoe", "Zoe, Ann"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-2-ada", "stu-ada", False,
+                    self._profile("stu-ada", "Ada, Ann"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-2b-ada", "stu-ada", False,
+                    self._profile("stu-ada", "Ada, Ann"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-3-mute", "stu-mute", True,
+                    self._profile("stu-mute", "Mute, Mo"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-4-blank", "stu-blank", False,
+                    self._profile("stu-blank", "  "),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-5-null", "stu-null", False,
+                    self._profile("stu-null", None),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-6-pad", "stu-pad", False,
+                    self._profile(" stu-pad ", "Pad, Pat"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-7-quinn", "stu-quinn", False,
+                    self._profile("stu-quinn", "Quinn, Pat", role="instructor"),
+                ),
+                self._enrollment(
+                    self.CLASS_ID, "enr-8-list", "stu-lee", False,
+                    [
+                        self._profile("stu-lee", "Lee, Ann"),
+                        self._profile("stu-skip", "Skip, Sue"),
+                    ],
+                ),
+            ],
+            "grades": [{
+                "id": "g-ada", "student_id": "stu-ada",
+                "learning_objective_id": "lo-2", "top_score": "ZQ",
+                "second_score": None, "counts_for_mastery": True,
+            }],
+            "assignment_objectives": [link_b, link_a],
+            "assignments": [
+                self._assignment(
+                    "asg-bare", "Bare Exam", "", "2026-10-02", [], "exam",
+                ),
+                self._assignment(
+                    "asg-linked", "Linked Quiz", "HW 1", "2026-10-01",
+                    [link_b, link_a], "mastery_opp",
+                ),
+            ],
+        }
+
+    def _page(self, store, class_id):
+        from flask import template_rendered
+        from app import models
+        from app import routes as r
+        calls = []
+        admin = _class_detail_client(store, calls, [])
+        app = create_app()
+        app.config["TESTING"] = True
+        captured = {}
+
+        def grab(sender, template, context, **kwargs):
+            if getattr(template, "name", "") == "update_grade.html":
+                captured["context"] = context
+
+        template_rendered.connect(grab, app)
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst-1"
+            sess["role"] = "instructor"
+        try:
+            with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                    unittest.mock.patch.object(models, "supabase_admin", admin):
+                response = client.get("/class/%s/update_grade" % class_id)
+        finally:
+            template_rendered.disconnect(grab, app)
+        return response, calls, captured.get("context")
+
+    def _roster_json(self, page):
+        import json
+        raw = page.split('id="classRosterJson">', 1)[1].split("</script>", 1)[0]
+        return raw, json.loads(raw)
+
+    def _assignments_json(self, page):
+        import json
+        marker = "window.ASSIGNMENTS_DATA = JSON.parse('"
+        start = page.find(marker) + len(marker)
+        end = page.find("');", start)
+        return json.loads(page[start:end])
+
+    def _assignment_fields(self, assignment):
+        return {
+            "id": assignment["id"],
+            "name": assignment["name"],
+            "homework_group": assignment.get("homework_group"),
+            "assignment_type": assignment.get("assignment_type"),
+            "vendor_codes": [
+                ((link.get("learning_objectives") or {}).get("vendor_code"))
+                for link in (assignment.get("assignment_objectives") or [])
+            ],
+        }
+
+    def _options(self, page):
+        import re
+        return re.findall(r'<option value="([^"]+)">([^<]+)</option>', page)
+
+    def test_roster_keeps_muted_and_stored_names_and_ignores_grades(self):
+        import json
+        response, calls, context = self._page(self._store(), self.CLASS_ID)
+        page = response.get_data(as_text=True)
+        expected_roster = [
+            {"id": "stu-ada", "full_name": "Ada, Ann"},
+            {"id": "stu-ada", "full_name": "Ada, Ann"},
+            {"id": "stu-lee", "full_name": "Lee, Ann"},
+            {"id": "stu-mute", "full_name": "Mute, Mo"},
+            {"id": "stu-pad", "full_name": "Pad, Pat"},
+            {"id": "stu-quinn", "full_name": "Quinn, Pat"},
+            {"id": "stu-zoe", "full_name": "Zoe, Ann"},
+            {"id": "stu-blank", "full_name": "  "},
+            {"id": "stu-null", "full_name": ""},
+        ]
+        expected_assignments = [
+            {
+                "id": "asg-linked", "name": "Linked Quiz", "homework_group": "HW 1",
+                "assignment_type": "mastery_opp", "vendor_codes": ["A1", "B2"],
+            },
+            {
+                "id": "asg-bare", "name": "Bare Exam", "homework_group": "",
+                "assignment_type": "exam", "vendor_codes": [],
+            },
+        ]
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.CALLS)
+        self.assertEqual(context["class_name"], "Algebra")
+        self.assertIn(">Upload Grades</h1>", page)
+        self.assertNotIn("Algebra", page)
+        self.assertNotIn("Unnamed student", page)
+        self.assertNotIn("stu-ghost", page)
+        self.assertNotIn("stu-skip", page)
+        self.assertNotIn("Skip, Sue", page)
+        self.assertNotIn("ZQ", page)
+        self.assertNotIn("Gamma", page)
+        raw_roster, roster = self._roster_json(page)
+        self.assertEqual(roster, expected_roster)
+        self.assertEqual(raw_roster, json.dumps(expected_roster, sort_keys=True))
+        self.assertEqual(list(roster[0].keys()), ["full_name", "id"])
+        self.assertEqual(
+            [self._assignment_fields(row) for row in self._assignments_json(page)],
+            expected_assignments,
+        )
+        self.assertEqual(
+            [self._assignment_fields(row) for row in context["assignments"]],
+            expected_assignments,
+        )
+        self.assertEqual(self._options(page), [
+            ("asg-linked", "Linked Quiz"),
+            ("asg-bare", "Bare Exam"),
+        ])
+
+    def test_no_enrollments_has_an_empty_roster(self):
+        link = self._link("asg-linked", "lo-2", "A1")
+        store = {
+            "classes": [self._class_row(self.EMPTY_ID, "Algebra")],
+            "learning_objectives": [
+                self._objective("lo-2", self.EMPTY_ID, "A1", "Alpha"),
+            ],
+            "enrollments": [],
+            "grades": [],
+            "assignment_objectives": [link],
+            "assignments": [self._assignment(
+                "asg-linked", "Linked Quiz", "HW 1", "2026-10-01", [link], "mastery_opp",
+                self.EMPTY_ID,
+            )],
+        }
+        response, calls, context = self._page(store, self.EMPTY_ID)
+        page = response.get_data(as_text=True)
+        raw_roster, roster = self._roster_json(page)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.NO_GRADE_CALLS)
+        self.assertEqual(roster, [])
+        self.assertEqual(raw_roster, "[]")
+        self.assertEqual(context["roster"], [])
+        self.assertNotIn("grades", calls)
+
+    def test_no_objectives_skips_the_grades_read(self):
+        store = {
+            "classes": [self._class_row(self.NONE_ID, "Algebra")],
+            "learning_objectives": [],
+            "enrollments": [self._enrollment(
+                self.NONE_ID, "enr-ada", "stu-ada", False,
+                self._profile("stu-ada", "Ada, Ann"),
+            )],
+            "grades": [],
+            "assignment_objectives": [],
+            "assignments": [self._assignment(
+                "asg-bare", "Bare Exam", "", "2026-10-02", [], "exam",
+                self.NONE_ID,
+            )],
+        }
+        response, calls, context = self._page(store, self.NONE_ID)
+        page = response.get_data(as_text=True)
+        _raw, roster = self._roster_json(page)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, self.NO_GRADE_CALLS)
+        self.assertEqual(calls.count("learning_objectives"), 0)
+        self.assertEqual(roster, [{"id": "stu-ada", "full_name": "Ada, Ann"}])
+        self.assertEqual(context["assignments"][0]["assignment_objectives"], [])
         self.assertNotIn("grades", calls)
 
     def test_other_instructors_class_redirects_home(self):

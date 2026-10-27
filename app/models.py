@@ -112,6 +112,15 @@ class Course:
         return response.data[0]
 
     @staticmethod
+    def load_enrollments(class_id):
+        """Enrollment rows for the class, with profiles and no grades."""
+        return fetch_all_rows(
+            supabase_admin.table("enrollments").select(
+                "id, class_id, student_id, muted, profiles(id, full_name, role, email)"
+            ).eq("class_id", class_id).order("id")
+        )
+
+    @staticmethod
     def get_full_class_data(class_id):
         """Fetches a class, its learning objectives, and all enrolled students with their grades.
 
@@ -131,11 +140,7 @@ class Course:
                 if lo.get("id")
             }
 
-            enrollments = fetch_all_rows(
-                supabase_admin.table("enrollments").select(
-                    "id, class_id, student_id, muted, profiles(id, full_name, role, email)"
-                ).eq("class_id", class_id).order("id")
-            )
+            enrollments = Course.load_enrollments(class_id)
 
             # One in_() instead of one query per enrolled student. Grades are
             # limited to this class's learning objectives in the query below.
