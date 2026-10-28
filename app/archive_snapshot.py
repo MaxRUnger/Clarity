@@ -10,9 +10,8 @@ from app.authentication import supabase_admin
 from app.paging import fetch_all_rows
 
 FORMAT_VERSION = 1
-# A single OR filter puts every id in the request URL. Fifty ids on a side
-# stays short. Longer lists use the chunked reads below.
-_OR_LIMIT = 50
+# Each .in_() list holds at most this many ids.
+_IN_CHUNK_SIZE = 50
 _ID_CHUNK = 100
 _SCOPED_TABLES = (
     "learning_objectives",
@@ -150,15 +149,6 @@ def _read_in(
     return rows
 
 
-def _or_expr(assignment_ids: Sequence[str], objective_ids: Sequence[str]) -> str:
-    parts = []
-    if assignment_ids:
-        parts.append("assignment_id.in.(" + ",".join(assignment_ids) + ")")
-    if objective_ids:
-        parts.append("learning_objective_id.in.(" + ",".join(objective_ids) + ")")
-    return ",".join(parts)
-
-
 def _row_key(row: Dict[str, Any]):
     if row.get("id"):
         return ("id", str(row.get("id")))
@@ -178,31 +168,14 @@ def _read_linked(
 ) -> List[Dict[str, Any]]:
     if not assignment_ids and not objective_ids:
         return []
-    if (
-        assignment_ids
-        and objective_ids
-        and len(assignment_ids) <= _OR_LIMIT
-        and len(objective_ids) <= _OR_LIMIT
-    ):
-        expr = _or_expr(assignment_ids, objective_ids)
-        counted = _exact_count(
-            supabase_admin.table(table)
-            .select(count_column, count="exact", head=True)
-            .or_(expr)
-        )
-        rows = fetch_all_rows(
-            _ordered(supabase_admin.table(table).select("*").or_(expr), order)
-        )
-        if len(rows) != counted:
-            raise SnapshotCountError(table)
-        return rows
     found: List[Dict[str, Any]] = []
     seen = set()
     for column, values in (
         ("assignment_id", assignment_ids),
         ("learning_objective_id", objective_ids),
     ):
-        for group in _chunks(values):
+        for start in range(0, len(values), _IN_CHUNK_SIZE):
+            group = list(values[start:start + _IN_CHUNK_SIZE])
             for row in _read_in(table, column, group, order, count_column):
                 key = _row_key(row)
                 if key in seen:

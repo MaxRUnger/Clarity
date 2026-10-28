@@ -49,7 +49,7 @@ from werkzeug.utils import secure_filename
 from app.authentication import supabase, supabase_admin
 from app.lo_order import lo_sort_key
 from app.local_time import local_today
-from app.archive_snapshot import _OR_LIMIT
+from app.archive_snapshot import _IN_CHUNK_SIZE
 from app.paging import fetch_all_rows
 from app.models import (
     Course,
@@ -2612,6 +2612,26 @@ def api_student_removal_counts(class_id, student_id):
     })
 
 
+def _profile_used_by_another_instructor(student_id, owner_id) -> bool:
+    rows = fetch_all_rows(
+        supabase_admin.table("enrollments")
+        .select("class_id, classes(instructor_id)")
+        .eq("student_id", student_id)
+        .order("id")
+    )
+    owner = str(owner_id or "")
+    for row in rows:
+        classes = row.get("classes") or {}
+        if isinstance(classes, list):
+            classes = classes[0] if classes else {}
+        if not isinstance(classes, dict):
+            return True
+        instructor_id = str(classes.get("instructor_id") or "")
+        if instructor_id != owner:
+            return True
+    return False
+
+
 @main_bp.route("/api/class/<class_id>/students/<student_id>/update", methods=["POST"])
 @api_instructor_required
 def api_update_student(class_id, student_id):
@@ -2646,6 +2666,14 @@ def api_update_student(class_id, student_id):
             return jsonify({
                 "success": False,
                 "error": "That email already belongs to another student in your classes",
+            }), 409
+        if _profile_used_by_another_instructor(student_id, owner_id):
+            return jsonify({
+                "success": False,
+                "error": (
+                    "This student is enrolled in another instructor's class. "
+                    "Nothing was changed."
+                ),
             }), 409
         current = (
             supabase_admin.table("profiles")
@@ -4455,8 +4483,8 @@ def _email_cap_counts(instructor_id: str, hashes):
         instructor_count = _count_email_sends("instructor_id", instructor_id, start, end)
         unique = list(dict.fromkeys(hashes))
         per_hash = {value: 0 for value in unique}
-        for index in range(0, len(unique), _OR_LIMIT):
-            chunk = unique[index:index + _OR_LIMIT]
+        for index in range(0, len(unique), _IN_CHUNK_SIZE):
+            chunk = unique[index:index + _IN_CHUNK_SIZE]
             query = (
                 supabase_admin.table("email_sends")
                 .select("recipient_hash")
@@ -4944,8 +4972,37 @@ def api_send_revision_reminders(class_id):
 _HISTORY_PACKET_COLS = (
     "student_id, learning_objective_id, assignment_id, top_score, second_score"
 )
+_HISTORY_GRADE_COLS = (
+    "learning_objective_id, assignment_id, top_score, second_score, assignments(name)"
+)
 _HISTORY_LO_CHUNK = 100
 _HISTORY_PRINT_ERROR = "Could not load student history. Please try again."
+
+
+def _history_objective_ids(learning_objectives) -> List[str]:
+    ids: List[str] = []
+    seen = set()
+    for lo in learning_objectives or []:
+        lo_id = str(lo.get("id") or "").strip()
+        if not lo_id or lo_id in seen:
+            continue
+        seen.add(lo_id)
+        ids.append(lo_id)
+    return ids
+
+
+def _grades_for_this_class(rows, assignments) -> List[Dict[str, Any]]:
+    allowed = {
+        str(assignment.get("id"))
+        for assignment in assignments or []
+        if assignment.get("id")
+    }
+    kept = []
+    for grade in rows or []:
+        raw = grade.get("assignment_id")
+        if raw is None or str(raw) in allowed:
+            kept.append(grade)
+    return kept
 
 
 def _history_packet_grades(lo_ids: List[str]) -> List[Dict[str, Any]]:
@@ -5074,20 +5131,25 @@ def student_history(class_id, student_id):
     profile_id = profile.get('id')
 
     assignments = load_assignments_for_class(class_id)
-
-    # Get all grades for this student with assignment names
-    try:
-        grades_resp = supabase_admin.table("grades").select(
-            "*, assignments(name)"
-        ).eq("student_id", profile_id).execute()
-        all_grades = grades_resp.data or []
-    except Exception as e:
-        logger.error("Error loading grades: %s", e)
-        all_grades = []
-
     learning_objectives = objectives_attached_to_assignments(
         class_id, class_data.get("learning_objectives") or []
     )
+    lo_ids = _history_objective_ids(learning_objectives)
+    all_grades: List[Dict[str, Any]] = []
+    try:
+        for start in range(0, len(lo_ids), _HISTORY_LO_CHUNK):
+            chunk = lo_ids[start:start + _HISTORY_LO_CHUNK]
+            all_grades.extend(fetch_all_rows(
+                supabase_admin.table("grades")
+                .select(_HISTORY_GRADE_COLS)
+                .eq("student_id", profile_id)
+                .in_("learning_objective_id", chunk)
+                .order("id")
+            ))
+    except Exception as e:
+        logger.error("Error loading grades: %s", e)
+        all_grades = []
+    all_grades = _grades_for_this_class(all_grades, assignments)
     lo_grade_data, history_assignments = student_history_sheet(
         learning_objectives, assignments, all_grades
     )
@@ -5144,8 +5206,11 @@ def student_history_print(class_id):
         students, _, _ = _process_enrollments(progress or class_data)
         learning_objectives = (progress or class_data).get("learning_objectives") or []
         assignments = load_assignments_for_class(class_id)
-        packet = _history_packet_grades(
-            [lo.get("id") for lo in learning_objectives if lo.get("id")]
+        packet = _grades_for_this_class(
+            _history_packet_grades(
+                [lo.get("id") for lo in learning_objectives if lo.get("id")]
+            ),
+            assignments,
         )
     except Exception as e:
         logger.error("student history print load failed: %s", type(e).__name__)

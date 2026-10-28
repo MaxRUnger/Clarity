@@ -4147,6 +4147,137 @@ class TestMaxLengthValidation(unittest.TestCase):
         self.assertEqual(payload["email"], "cali@example.edu")
         self.assertEqual(set(payload), {"full_name", "email", "email_set_at"})
 
+    def _post_shared_profile_update(self, enrollments, classes):
+        from app import routes as r
+        updates = []
+        store = {
+            "classes": classes,
+            "enrollments": enrollments,
+            "profiles": [{
+                "id": "s1",
+                "email": "ana@school.edu",
+                "full_name": "Lee, Ana",
+            }],
+        }
+
+        class _Table:
+            def __init__(self, name):
+                self.name = name
+                self.filters = []
+                self.payload = None
+                self.op = "select"
+
+            def select(self, *args, **kwargs):
+                return self
+
+            def update(self, row):
+                self.op = "update"
+                self.payload = row
+                return self
+
+            def eq(self, col, val):
+                self.filters.append((col, val))
+                return self
+
+            def in_(self, col, values):
+                self.filters.append((col, list(values)))
+                return self
+
+            def order(self, *args, **kwargs):
+                return self
+
+            def limit(self, count):
+                return self
+
+            def range(self, start, end):
+                return self
+
+            def execute(self):
+                if self.op == "update":
+                    updates.append((self.name, self.payload))
+                    result = MagicMock()
+                    result.data = [self.payload]
+                    return result
+                rows = []
+                for row in store.get(self.name, []):
+                    keep = True
+                    for col, val in self.filters:
+                        if isinstance(val, list):
+                            if row.get(col) not in val:
+                                keep = False
+                        elif row.get(col) != val:
+                            keep = False
+                    if keep:
+                        rows.append(dict(row))
+                result = MagicMock()
+                result.data = rows
+                result.count = len(rows)
+                return result
+
+        admin = MagicMock()
+        admin.table.side_effect = lambda name: _Table(name)
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst-a"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
+            response = self.client.post(
+                "/api/class/c1/students/s1/update",
+                json={"name": "Lee, Ana", "email": "ana@school.edu"},
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        return response, updates
+
+    def _enrollment(self, enrollment_id, class_id, instructor_id):
+        return {
+            "id": enrollment_id,
+            "class_id": class_id,
+            "student_id": "s1",
+            "profiles": {
+                "id": "s1",
+                "full_name": "Lee, Ana",
+                "email": "ana@school.edu",
+            },
+            "classes": {"instructor_id": instructor_id},
+        }
+
+    def test_update_refuses_a_profile_shared_with_another_instructor(self):
+        response, updates = self._post_shared_profile_update(
+            [
+                self._enrollment("e1", "c1", "inst-a"),
+                self._enrollment("e2", "c-other", "inst-b"),
+            ],
+            [
+                {"id": "c1", "instructor_id": "inst-a"},
+                {"id": "c-other", "instructor_id": "inst-b"},
+            ],
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.get_json()["error"],
+            "This student is enrolled in another instructor's class. Nothing was changed.",
+        )
+        self.assertEqual(updates, [])
+
+    def test_update_allows_a_profile_enrolled_only_in_the_callers_classes(self):
+        response, updates = self._post_shared_profile_update(
+            [
+                self._enrollment("e1", "c1", "inst-a"),
+                self._enrollment("e2", "c2", "inst-a"),
+            ],
+            [
+                {"id": "c1", "instructor_id": "inst-a"},
+                {"id": "c2", "instructor_id": "inst-a"},
+            ],
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0][0], "profiles")
+        self.assertEqual(updates[0][1]["full_name"], "Lee, Ana")
+        self.assertEqual(updates[0][1]["email"], "ana@school.edu")
+
     # ── api_update_learning_objective ─────────────────────────────────────
 
     def _lo_update_sa_mock(self):
@@ -6028,6 +6159,11 @@ class TestStudentHistoryOrder(unittest.TestCase):
         from unittest.mock import MagicMock, patch
         from app.routes import student_history
 
+        self.grade_selects = []
+        self.grade_eqs = []
+        self.grade_orders = []
+        self.grade_ranges = []
+
         def table(name):
             chain = MagicMock()
             if name == "enrollments":
@@ -6036,7 +6172,35 @@ class TestStudentHistoryOrder(unittest.TestCase):
                     "profiles": {"id": "p1", "full_name": "Lee, Ana", "email": "a@b.edu"},
                 }
             elif name == "grades":
-                chain.select.return_value.eq.return_value.execute.return_value.data = grades
+                def select(cols):
+                    self.grade_selects.append(cols)
+                    return chain
+
+                def eq(col, val):
+                    self.grade_eqs.append((col, val))
+                    return chain
+
+                def order(col, desc=False):
+                    self.grade_orders.append(col)
+                    return chain
+
+                def range_call(start, end):
+                    self.grade_ranges.append((start, end))
+                    chain._page = (start, end)
+                    return chain
+
+                def execute():
+                    start, end = chain._page
+                    result = MagicMock()
+                    result.data = grades[start:end + 1]
+                    return result
+
+                chain.select.side_effect = select
+                chain.eq.side_effect = eq
+                chain.in_.return_value = chain
+                chain.order.side_effect = order
+                chain.range.side_effect = range_call
+                chain.execute.side_effect = execute
             return chain
 
         app = create_app()
@@ -6208,7 +6372,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         )
         self.assertEqual([grade.get("top_score") for grade in emailed], ["M", "R", "X"])
 
-    def test_empty_assignment_list_still_renders_every_grade(self):
+    def test_empty_assignment_list_keeps_only_the_null_assignment_grade(self):
         grades = [
             {
                 "learning_objective_id": "lo1",
@@ -6235,16 +6399,16 @@ class TestStudentHistoryOrder(unittest.TestCase):
         html, load_assignments, emailed = self._render_history(grades, [])
         load_assignments.assert_called_once_with("c1")
         names, scores = self._screen_names_and_scores(html)
-        self.assertEqual(names, ["Quiz", "Later", "Assignment"])
-        self.assertEqual(scores, ["M", "R", "X"])
+        self.assertEqual(names, ["Assignment"])
+        self.assertEqual(scores, ["X"])
         self.assertEqual(self._print_rows(html), [])
         self.assertEqual(
             [grade.get("assignment_id") for grade in emailed],
-            ["a-early", "a-late", None],
+            [None],
         )
-        self.assertEqual([grade.get("top_score") for grade in emailed], ["M", "R", "X"])
+        self.assertEqual([grade.get("top_score") for grade in emailed], ["X"])
 
-    def test_missing_assignment_id_sits_between_listed_and_null_grades(self):
+    def test_outside_assignment_is_absent_and_null_assignment_stays_last(self):
         grades = [
             {
                 "learning_objective_id": "lo1",
@@ -6273,14 +6437,64 @@ class TestStudentHistoryOrder(unittest.TestCase):
         ]
         html, _load_assignments, emailed = self._render_history(grades, assignments)
         names, scores = self._screen_names_and_scores(html)
-        self.assertEqual(names, ["Quiz", "Outside", "Assignment"])
-        self.assertEqual(scores, ["M", "P", "X"])
+        self.assertEqual(names, ["Quiz", "Assignment"])
+        self.assertEqual(scores, ["M", "X"])
         self.assertEqual(self._print_rows(html), [("Quiz", "M")])
+        self.assertNotIn("Outside", html)
         self.assertEqual(
             [grade.get("assignment_id") for grade in emailed],
-            ["a-early", "z-out", None],
+            ["a-early", None],
         )
-        self.assertEqual([grade.get("top_score") for grade in emailed], ["M", "P", "X"])
+        self.assertEqual([grade.get("top_score") for grade in emailed], ["M", "X"])
+
+    def test_history_grade_read_pages_across_two_pages(self):
+        from app.paging import PAGE_SIZE
+        grades = [
+            {
+                "id": "g%04d" % index,
+                "learning_objective_id": "lo1",
+                "assignment_id": "a1",
+                "top_score": "M",
+                "second_score": None,
+                "assignments": {"name": "Quiz"},
+            }
+            for index in range(PAGE_SIZE)
+        ]
+        grades.append({
+            "id": "g-last",
+            "learning_objective_id": "lo1",
+            "assignment_id": "a1",
+            "top_score": "R",
+            "second_score": None,
+            "assignments": {"name": "Quiz"},
+        })
+        grades.append({
+            "id": "g-other",
+            "learning_objective_id": "lo1",
+            "assignment_id": "a-other",
+            "top_score": "P",
+            "second_score": None,
+            "assignments": {"name": "Other Class"},
+        })
+        assignments = [{"id": "a1", "name": "Quiz", "created_at": "2026-01-01"}]
+        _html, _load_assignments, emailed = self._render_history(grades, assignments)
+        self.assertEqual(
+            self.grade_selects,
+            [(
+                "learning_objective_id, assignment_id, top_score, "
+                "second_score, assignments(name)"
+            )],
+        )
+        self.assertEqual(self.grade_eqs, [("student_id", "p1")])
+        self.assertEqual(self.grade_orders, ["id"])
+        self.assertEqual(
+            self.grade_ranges,
+            [(0, PAGE_SIZE - 1), (PAGE_SIZE, (PAGE_SIZE * 2) - 1)],
+        )
+        self.assertEqual(len(emailed), PAGE_SIZE + 1)
+        self.assertEqual(emailed[-1]["id"], "g-last")
+        self.assertEqual(emailed[-1]["top_score"], "R")
+        self.assertNotIn("a-other", [grade.get("assignment_id") for grade in emailed])
 
     def _batch_supabase(self, reads, enrollments, grades, assignments, objectives, fail=None):
         from unittest.mock import MagicMock
@@ -10623,7 +10837,10 @@ class TestArchiveSnapshot(unittest.TestCase):
         self.assertNotIn("revision_reminders_sent", admin.table_names)
         self.assertEqual(
             [column for table, column in admin.orders if table == "assignment_objectives"],
-            ["assignment_id", "learning_objective_id"],
+            [
+                "assignment_id", "learning_objective_id",
+                "assignment_id", "learning_objective_id",
+            ],
         )
         self.assertIn(("grades", "id"), admin.orders)
         self.assertIn(("classes", "id"), admin.orders)
@@ -10698,6 +10915,61 @@ class TestArchiveSnapshot(unittest.TestCase):
         self.assertIn(("learning_objective_id", ["lo1"]), admin.in_calls)
         self.assertEqual(sorted(ids), ["assignment-only", "both"])
         self.assertEqual(len(ids), 2)
+
+    def test_punctuation_in_ids_stays_inside_one_in_list(self):
+        import gzip
+        import json
+        tables = self._tables(grade_count=0)
+        tables["assignments"] = [{
+            "id": "a,1)",
+            "class_id": "c1",
+            "name": "Quiz",
+            "homework_group": "Exam",
+            "date_returned": "2026-08-20",
+            "revision_due": None,
+            "assignment_type": "exam",
+        }]
+        tables["learning_objectives"] = [{
+            "id": 'lo"1',
+            "class_id": "c1",
+            "name": "Factor",
+            "description": "Factor expressions",
+        }]
+        tables["assignment_objectives"] = [{
+            "assignment_id": "a,1)",
+            "learning_objective_id": 'lo"1',
+        }]
+        tables["grades"] = [
+            {
+                "id": "kept",
+                "student_id": "s1",
+                "learning_objective_id": 'lo"1',
+                "assignment_id": "a,1)",
+                "top_score": "M",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+            {
+                "id": "decoy",
+                "student_id": "s1",
+                "learning_objective_id": "lo-other",
+                "assignment_id": "a",
+                "top_score": "R",
+                "second_score": None,
+                "counts_for_mastery": True,
+            },
+        ]
+        payload, admin = self._build(tables, students=1, assignments=1)
+        document = json.loads(gzip.decompress(payload).decode("utf-8"))
+        self.assertEqual([row["id"] for row in document["grades"]], ["kept"])
+        self.assertEqual(admin.or_calls, [])
+        flat = [value for _column, values in admin.in_calls for value in values]
+        self.assertIn("a,1)", flat)
+        self.assertIn('lo"1', flat)
+        self.assertNotIn("a", flat)
+        self.assertNotIn("1)", flat)
+        for _column, values in admin.in_calls:
+            self.assertEqual(len(values), 1)
 
     def test_one_student_with_two_enrollment_rows_is_one_student(self):
         import gzip
