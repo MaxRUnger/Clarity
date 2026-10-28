@@ -89,16 +89,13 @@ _rate_limit_lock = threading.Lock()
 _rate_limit_events = defaultdict(deque)
 
 
-def _public_base_url():
-    """Return the base URL for links placed in emails.
+_INSTRUCTOR_HOME = "/instructor/dashboard"
 
-    PUBLIC_BASE_URL is used when it is set. Otherwise the scheme and host of
-    the current request are used.
-    """
-    base = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
-    if base:
-        return base
-    return request.host_url.rstrip("/")
+
+def _public_base_url():
+    """Return the configured public base URL, or an empty string."""
+    from config import Config
+    return (Config.PUBLIC_BASE_URL or "").strip().rstrip("/")
 
 
 def _consume_one_time_form_token(namespace: str, token: str) -> bool:
@@ -1368,17 +1365,6 @@ def login():
         })
         if result.user:
             user_id = result.user.id
-            metadata_role = result.user.user_metadata.get('role', 'student')
-
-            # profiles.role is the DB-authoritative source for authorization
-            # decorators (@api_instructor_required etc). Trusting the JWT's
-            # embedded user_metadata directly would mean a user who can edit
-            # their own Auth metadata (via the Supabase client SDK) could
-            # self-promote. We only fall back to the metadata role when no
-            # profile row exists yet (a brand-new account); once a profile
-            # exists, its role is authoritative and is never overwritten by
-            # metadata again (see ensure_profile_exists call below).
-            existing_role = None
             try:
                 prof_resp = (
                     supabase_admin.table("profiles")
@@ -1387,26 +1373,22 @@ def login():
                     .limit(1)
                     .execute()
                 )
-                if prof_resp.data:
-                    existing_role = (prof_resp.data[0].get("role") or "").strip() or None
             except Exception as e:
                 logger.error("profiles.role lookup failed for %s: %s", user_id, e)
+                return jsonify({"success": False, "message": "Invalid credentials"}), 401
 
-            actual_role = existing_role or metadata_role
+            role = ""
+            if prof_resp.data:
+                role = (prof_resp.data[0].get("role") or "").strip().lower()
+            if role != "instructor":
+                return jsonify({"success": False, "message": "Invalid credentials"}), 401
+
             session.clear()
             session['user_id'] = user_id
-            session['role'] = actual_role
+            session['role'] = role
             session['full_name'] = result.user.user_metadata.get('full_name', '')
             session['csrf_token'] = secrets.token_urlsafe(32)
-            # Ensure profile exists on every login in case it was missed at signup.
-            # `role` here only matters for the INSERT path (brand-new profile);
-            # for an existing profile it re-affirms the same DB value read above.
-            ensure_profile_exists(
-                user_id,
-                full_name=result.user.user_metadata.get('full_name'),
-                role=actual_role
-            )
-            return jsonify({"success": True, "redirect": f"/{actual_role}/dashboard"})
+            return jsonify({"success": True, "redirect": _INSTRUCTOR_HOME})
         return jsonify({"success": False, "message": "Invalid credentials"})
     except Exception as e:
         return _safe_api_error("Invalid credentials", 401, log_detail=e)
@@ -1419,6 +1401,8 @@ def signup():
     try:
         from config import Config
         invite_code_env = (Config.SIGNUP_INVITE_CODE or "").strip()
+        if Config.IS_PRODUCTION and not invite_code_env:
+            return jsonify({"success": False, "message": "Signup is not available."}), 403
         submitted = (data.get("invite_code") or "").strip()
         if invite_code_env:
             if not submitted or not hmac.compare_digest(submitted, invite_code_env):
@@ -1428,7 +1412,10 @@ def signup():
         if len(signup_name) > 255:
             return jsonify({"success": False, "message": "Name must be 255 characters or fewer."}), 400
 
-        login_redirect_url = f"{_public_base_url()}/login"
+        login_redirect_url = _public_base_url()
+        if not login_redirect_url:
+            return jsonify({"success": False, "message": "Signup is not available."}), 403
+        login_redirect_url = f"{login_redirect_url}/login"
         result = supabase.auth.sign_up({
             "email": data.get("email"),
             "password": data.get("password"),
@@ -1436,7 +1423,6 @@ def signup():
                 "email_redirect_to": login_redirect_url,
                 "data": {
                     "full_name": data.get("name"),
-                    "role": "instructor",
                     "invite_code": submitted
                 }
             }

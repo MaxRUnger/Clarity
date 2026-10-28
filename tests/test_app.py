@@ -10681,40 +10681,161 @@ class TestSignupEmailRedirect(unittest.TestCase):
             "invite_code": "",
         }
 
-    def _redirect(self, *, base_url, public_base=None, headers=None):
+    def _post(self, *, base_url, public_base, headers=None, production=False, invite=None):
         from app.authentication import supabase
         supabase.auth.sign_up.return_value = unittest.mock.MagicMock(user=None)
+        supabase.auth.sign_up.side_effect = None
         supabase.auth.sign_up.reset_mock()
-        env = {"PUBLIC_BASE_URL": "" if public_base is None else public_base}
-        with unittest.mock.patch("config.Config.SIGNUP_INVITE_CODE", ""), \
-                unittest.mock.patch.dict(os.environ, env, clear=False):
-            self.client.post(
+        invite_value = "" if invite is None else invite
+        with unittest.mock.patch("config.Config.IS_PRODUCTION", production), \
+                unittest.mock.patch("config.Config.SIGNUP_INVITE_CODE", invite_value), \
+                unittest.mock.patch(
+                    "config.Config.PUBLIC_BASE_URL", public_base, create=True
+                ), \
+                unittest.mock.patch.dict(os.environ, {"PUBLIC_BASE_URL": ""}, clear=False):
+            response = self.client.post(
                 "/api/signup",
                 json=self.payload,
                 base_url=base_url,
                 headers=headers or {},
             )
-        kwargs = supabase.auth.sign_up.call_args.args[0]
-        return kwargs["options"]["email_redirect_to"]
+        return response, supabase.auth.sign_up
 
-    def test_https_proxy_host_when_public_base_unset(self):
-        url = self._redirect(
+    def test_missing_public_base_does_not_use_the_request_host(self):
+        response, sign_up = self._post(
             base_url="http://grader.example.com",
+            public_base="",
             headers={"X-Forwarded-Proto": "https"},
         )
-        self.assertEqual(url, "https://grader.example.com/login")
+        self.assertEqual(response.status_code, 403)
+        sign_up.assert_not_called()
 
     def test_public_base_url_wins(self):
-        url = self._redirect(
+        response, sign_up = self._post(
             base_url="http://grader.example.com",
-            public_base="https://clarity.example/",
+            public_base="https://clarity.example",
             headers={"X-Forwarded-Proto": "https"},
         )
-        self.assertEqual(url, "https://clarity.example/login")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            sign_up.call_args.args[0]["options"]["email_redirect_to"],
+            "https://clarity.example/login",
+        )
 
-    def test_localhost_uses_request_host(self):
-        url = self._redirect(base_url="http://localhost:5000")
-        self.assertEqual(url, "http://localhost:5000/login")
+    def test_localhost_without_public_base_does_not_call_supabase(self):
+        response, sign_up = self._post(
+            base_url="http://localhost:5000",
+            public_base="",
+        )
+        self.assertEqual(response.status_code, 403)
+        sign_up.assert_not_called()
+
+    def test_production_without_invite_code_does_not_call_supabase(self):
+        response, sign_up = self._post(
+            base_url="http://localhost:5000",
+            public_base="https://clarity.example",
+            production=True,
+            invite="",
+        )
+        self.assertEqual(response.status_code, 403)
+        sign_up.assert_not_called()
+
+    def test_evil_host_uses_only_public_base_url(self):
+        response, sign_up = self._post(
+            base_url="http://evil.example",
+            public_base="https://clarity.example",
+            headers={"Host": "evil.example"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            sign_up.call_args.args[0]["options"]["email_redirect_to"],
+            "https://clarity.example/login",
+        )
+
+
+class TestLoginRole(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+
+    def _login(self, profile_result):
+        from app.authentication import supabase, supabase_admin
+        user = unittest.mock.MagicMock()
+        user.id = "user-1"
+        user.user_metadata = {"role": "/evil.example", "full_name": "Ada"}
+        result = unittest.mock.MagicMock(user=user)
+        supabase.auth.sign_in_with_password.side_effect = None
+        supabase.auth.sign_in_with_password.return_value = result
+        execute = (
+            supabase_admin.table.return_value
+            .select.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute
+        )
+        if isinstance(profile_result, Exception):
+            execute.side_effect = profile_result
+        else:
+            execute.side_effect = None
+            execute.return_value = profile_result
+        supabase_admin.table.return_value.upsert.reset_mock()
+        response = self.client.post(
+            "/api/login",
+            json={"email": "ada@example.com", "password": "secret"},
+        )
+        return response, supabase_admin
+
+    def test_profile_read_error_does_not_open_a_session(self):
+        response, admin = self._login(RuntimeError("db down"))
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("redirect", response.get_json())
+        with self.client.session_transaction() as sess:
+            self.assertNotIn("user_id", sess)
+        admin.table.return_value.upsert.assert_not_called()
+
+    def test_non_instructor_role_is_refused(self):
+        for role in ("student", "/evil.example", ""):
+            response, admin = self._login(
+                unittest.mock.MagicMock(data=[{"role": role}])
+            )
+            self.assertEqual(response.status_code, 401, role)
+            self.assertNotIn("redirect", response.get_json())
+            with self.client.session_transaction() as sess:
+                self.assertNotIn("user_id", sess)
+            admin.table.return_value.upsert.assert_not_called()
+
+    def test_instructor_redirect_is_the_fixed_path(self):
+        response, admin = self._login(
+            unittest.mock.MagicMock(data=[{"role": "Instructor"}])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["redirect"], "/instructor/dashboard")
+        with self.client.session_transaction() as sess:
+            self.assertEqual(sess["role"], "instructor")
+        admin.table.return_value.upsert.assert_not_called()
+
+
+class TestPublicBaseUrlRequired(unittest.TestCase):
+    def test_production_boot_requires_public_base_url(self):
+        import importlib
+        import config
+        env = {
+            "APP_ENV": "production",
+            "SECRET_KEY": "test-secret",
+            "CORS_ALLOWED_ORIGINS": "https://clarity.example",
+            "PUBLIC_BASE_URL": "",
+            "RAILWAY_ENVIRONMENT_ID": "",
+            "RAILWAY_PROJECT_ID": "",
+            "RAILWAY_SERVICE_ID": "",
+        }
+        try:
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaises(RuntimeError) as caught:
+                    importlib.reload(config)
+            self.assertIn("PUBLIC_BASE_URL", str(caught.exception))
+        finally:
+            importlib.reload(config)
 
 
 class TestCsvUploadMarkup(unittest.TestCase):

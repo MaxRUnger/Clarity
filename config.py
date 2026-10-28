@@ -55,7 +55,14 @@ class Config:
         # Development fallback only.
         SECRET_KEY = "dev-secret-key-local-only"
 
-    # If set, signup requires this code. Leave unset to allow open signup.
+    PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if IS_PRODUCTION and not PUBLIC_BASE_URL:
+        raise RuntimeError(
+            "PUBLIC_BASE_URL is required in production."
+        )
+
+    # Production refuses signup when this is unset. Outside production, an
+    # unset code skips the invite check.
     SIGNUP_INVITE_CODE = os.environ.get("SIGNUP_INVITE_CODE")
 
     # Session cookie hardening.
