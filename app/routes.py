@@ -17,6 +17,7 @@ variable ``MULTI_WORKER=1`` to log a one-time warning at startup (see
 """
 
 import csv
+import hashlib
 import hmac
 import io
 import logging
@@ -27,7 +28,7 @@ import requests
 from html import escape as html_escape
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from itsdangerous import BadSignature
 from collections import defaultdict, deque
 from functools import wraps
@@ -48,6 +49,7 @@ from werkzeug.utils import secure_filename
 from app.authentication import supabase, supabase_admin
 from app.lo_order import lo_sort_key
 from app.local_time import local_today
+from app.archive_snapshot import _OR_LIMIT
 from app.paging import fetch_all_rows
 from app.models import (
     Course,
@@ -1640,6 +1642,19 @@ def build_revision_report(rows, today):
 
 _REVISION_EMAIL_BUDGET_SECONDS = 60
 _REVISION_EMAIL_PAUSE_SECONDS = 0.5
+EMAIL_HOLD_HOURS = 24
+EMAIL_INSTRUCTOR_DAILY_CAP = 400
+EMAIL_RECIPIENT_DAILY_CAP = 5
+EMAIL_MAX_RECIPIENTS = 100
+REPORT_BODY_MAX = 5000
+EMAIL_HOLD_MESSAGE = "This address was added or changed less than 24 hours ago."
+EMAIL_INVALID_MESSAGE = "The saved email address is not valid."
+EMAIL_RECIPIENT_CAP_MESSAGE = "The daily limit for this recipient has been reached."
+EMAIL_INSTRUCTOR_CAP_MESSAGE = "The daily limit for this instructor has been reached."
+EMAIL_CAP_UNAVAILABLE = (
+    "Email could not be checked against the daily limit. Nothing was sent."
+)
+EMAIL_TOO_MANY = "Too many recipients in one request."
 _REVISION_FOOTER = (
     "Replies to this email are not monitored. "
     "Contact your instructor directly."
@@ -1763,10 +1778,11 @@ def revision_reminder_partition(class_id, today, named_rows=None, students=None)
     if named_rows is None or students is None:
         named_rows, students = _revision_named_rows(class_id, today)
     email_by_id = {}
+    set_at_by_id = {}
     for student in students or []:
-        email_by_id[str(student.get("id") or "")] = normalize_email(
-            student.get("email") or ""
-        )
+        sid = str(student.get("id") or "")
+        email_by_id[sid] = str(student.get("email") or "").strip()
+        set_at_by_id[sid] = student.get("email_set_at")
     sent = _load_sent_reminder_keys(class_id, due_iso)
     due_rows = [
         row for row in (named_rows or [])
@@ -1788,6 +1804,8 @@ def revision_reminder_partition(class_id, today, named_rows=None, students=None)
     }
     recipients = []
     no_email = []
+    invalid = []
+    held = []
     already_reminded = []
     for student in everyone:
         sid = str(student["student_id"])
@@ -1797,11 +1815,28 @@ def revision_reminder_partition(class_id, today, named_rows=None, students=None)
                 "name": student["student_name"],
             })
             continue
-        email = email_by_id.get(sid)
-        if not email:
+        email, kind = _saved_address_problem(
+            email_by_id.get(sid, ""),
+            set_at_by_id.get(sid),
+        )
+        if kind == "invalid":
+            invalid.append({
+                "student_id": sid,
+                "name": student["student_name"],
+                "message": _ADDRESS_KINDS["invalid"][0],
+            })
+            continue
+        if kind == "missing":
             no_email.append({
                 "student_id": sid,
                 "name": student["student_name"],
+            })
+            continue
+        if kind == "held":
+            held.append({
+                "student_id": sid,
+                "name": student["student_name"],
+                "message": _ADDRESS_KINDS["held"][0],
             })
             continue
         recipients.append({
@@ -1814,6 +1849,8 @@ def revision_reminder_partition(class_id, today, named_rows=None, students=None)
         "due": due_iso,
         "recipients": recipients,
         "no_email": no_email,
+        "invalid": invalid,
+        "held": held,
         "already_reminded": already_reminded,
     }
 
@@ -1853,16 +1890,44 @@ def _insert_reminder_rows(class_id, student, due_iso, sent_by):
 
 
 def _send_revision_reminders(class_id, recipients, due_iso, sender_name, sent_by):
+    hashes = [
+        email_recipient_hash(student["email"])
+        for student in recipients
+        if student.get("email")
+    ]
+    instructor_count = 0
+    per_hash = {}
+    if hashes:
+        loaded = _email_cap_counts(sent_by, hashes)
+        if loaded is None:
+            return None
+        instructor_count, per_hash = loaded
     deadline = time.monotonic() + _REVISION_EMAIL_BUDGET_SECONDS
     results = []
     attempted = 0
+    sent_now = 0
+    hash_sent = {}
     for index, student in enumerate(recipients):
-        if time.monotonic() >= deadline:
+        if index >= EMAIL_MAX_RECIPIENTS or time.monotonic() >= deadline:
             break
         if index:
             time.sleep(_REVISION_EMAIL_PAUSE_SECONDS)
             if time.monotonic() >= deadline:
                 break
+        digest = email_recipient_hash(student["email"])
+        reason = _cap_block_reason(
+            instructor_count + sent_now,
+            per_hash.get(digest, 0) + hash_sent.get(digest, 0),
+        )
+        if reason:
+            results.append({
+                "student_id": student["student_id"],
+                "name": student["name"],
+                "status": "capped",
+                "message": reason,
+            })
+            attempted = index + 1
+            continue
         ok, _err = _send_via_resend(
             student["email"],
             student["subject"],
@@ -1877,6 +1942,11 @@ def _send_revision_reminders(class_id, recipients, due_iso, sender_name, sent_by
             })
             attempted = index + 1
             continue
+        _record_email_send(
+            sent_by, class_id, student["student_id"], digest, "revision"
+        )
+        sent_now += 1
+        hash_sent[digest] = hash_sent.get(digest, 0) + 1
         try:
             _insert_reminder_rows(class_id, student, due_iso, sent_by)
         except Exception:
@@ -1914,6 +1984,9 @@ def _reminder_counts(results):
         "skipped": 0,
         "not_attempted": 0,
         "sent_not_recorded": 0,
+        "held": 0,
+        "invalid": 0,
+        "capped": 0,
     }
     for row in results:
         status = row["status"]
@@ -1971,8 +2044,11 @@ def class_detail(class_id):
     else:
         revision_unsent_count = len(reminder_partition["recipients"])
         day3 = next(view for view in revision_report["views"] if view["key"] == "3")
+        unusable = reminder_partition["no_email"] or reminder_partition.get("invalid")
         if revision_unsent_count == 0 and day3["students"]:
-            if reminder_partition["no_email"] and not reminder_partition["already_reminded"]:
+            if reminder_partition.get("held") and not unusable and not reminder_partition["already_reminded"]:
+                revision_email_note = EMAIL_HOLD_MESSAGE
+            elif unusable and not reminder_partition["already_reminded"]:
                 revision_email_note = "No students have a usable email address."
             else:
                 revision_email_note = "All students have been emailed."
@@ -2270,6 +2346,7 @@ def add_student(class_id):
             "full_name": name,
             "role": "student",
             "email": email,
+            "email_set_at": _email_set_timestamp(),
         }
         supabase_admin.table("profiles").insert(insert_row).execute()
         supabase_admin.table("enrollments").insert({
@@ -2570,10 +2647,23 @@ def api_update_student(class_id, student_id):
                 "success": False,
                 "error": "That email already belongs to another student in your classes",
             }), 409
-        supabase_admin.table("profiles").update({
-            "full_name": name,
-            "email": email,
-        }).eq("id", student_id).execute()
+        current = (
+            supabase_admin.table("profiles")
+            .select("email")
+            .eq("id", student_id)
+            .limit(1)
+            .execute()
+        )
+        stored_raw = ""
+        rows = getattr(current, "data", None)
+        if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+            stored_raw = rows[0].get("email") or ""
+        if not isinstance(stored_raw, str):
+            stored_raw = ""
+        changes = {"full_name": name, "email": email}
+        if normalize_email(stored_raw) != email:
+            changes["email_set_at"] = _email_set_timestamp()
+        supabase_admin.table("profiles").update(changes).eq("id", student_id).execute()
         logger.info(
             "roster edit user_id=%s class_id=%s",
             owner_id,
@@ -4273,7 +4363,10 @@ def _report_body_html(body_text: str, subject: str) -> str:
     paragraphs: List[str] = []
     last = len(blocks) - 1
     for index, lines in enumerate(blocks):
-        is_footer = index == last and lines[0].lstrip().startswith("Sent by")
+        is_footer = index == last and (
+            lines[0].lstrip().startswith("Sent by")
+            or "Replies to this email are not monitored." in "\n".join(lines)
+        )
         style = footer_style if is_footer else paragraph_style
         paragraphs.append(f'<p style="{style}">{"<br>".join(lines)}</p>')
 
@@ -4292,6 +4385,149 @@ def _report_body_html(body_text: str, subject: str) -> str:
         "</body>"
         "</html>"
     )
+
+
+def _email_set_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def email_recipient_hash(address: str) -> str:
+    return hashlib.sha256(address.encode("utf-8")).hexdigest()
+
+
+def email_address_on_hold(email_set_at, now=None) -> bool:
+    """True when the address was stored less than EMAIL_HOLD_HOURS ago."""
+    if email_set_at is None:
+        return False
+    if isinstance(email_set_at, datetime):
+        set_at = email_set_at
+    else:
+        text = str(email_set_at).strip()
+        if not text:
+            return False
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            set_at = datetime.fromisoformat(text)
+        except ValueError:
+            return True
+    if set_at.tzinfo is None:
+        set_at = set_at.replace(tzinfo=timezone.utc)
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (moment - set_at) < timedelta(hours=EMAIL_HOLD_HOURS)
+
+
+def _local_day_utc_bounds(today):
+    from zoneinfo import ZoneInfo
+    name = (current_app.config.get("APP_TIMEZONE") or "America/Los_Angeles").strip()
+    tz = ZoneInfo(name or "America/Los_Angeles")
+    start = datetime.combine(today, datetime.min.time()).replace(tzinfo=tz)
+    end = start + timedelta(days=1)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _response_count(resp) -> int:
+    count = getattr(resp, "count", None)
+    if isinstance(count, int):
+        return count
+    raise RuntimeError("email cap count unavailable")
+
+
+def _count_email_sends(column: str, value: str, start, end) -> int:
+    resp = (
+        supabase_admin.table("email_sends")
+        .select("id", count="exact")
+        .eq(column, value)
+        .gte("created_at", start.isoformat())
+        .lt("created_at", end.isoformat())
+        .limit(1)
+        .execute()
+    )
+    return _response_count(resp)
+
+
+def _email_cap_counts(instructor_id: str, hashes):
+    """Return (instructor_count, hash_counts), or None when the read fails."""
+    try:
+        start, end = _local_day_utc_bounds(local_today())
+        instructor_count = _count_email_sends("instructor_id", instructor_id, start, end)
+        unique = list(dict.fromkeys(hashes))
+        per_hash = {value: 0 for value in unique}
+        for index in range(0, len(unique), _OR_LIMIT):
+            chunk = unique[index:index + _OR_LIMIT]
+            query = (
+                supabase_admin.table("email_sends")
+                .select("recipient_hash")
+                .in_("recipient_hash", chunk)
+                .gte("created_at", start.isoformat())
+                .lt("created_at", end.isoformat())
+                .order("id")
+            )
+            for row in fetch_all_rows(query):
+                digest = str(row.get("recipient_hash") or "")
+                if digest in per_hash:
+                    per_hash[digest] += 1
+    except Exception as exc:
+        logger.error("email cap count failed user_id=%s: %s", instructor_id, exc)
+        return None
+    return instructor_count, per_hash
+
+
+def _record_email_send(instructor_id, class_id, student_id, digest, kind) -> None:
+    try:
+        supabase_admin.table("email_sends").insert({
+            "instructor_id": instructor_id,
+            "class_id": class_id,
+            "student_id": student_id,
+            "recipient_hash": digest,
+            "kind": kind,
+        }).execute()
+    except Exception:
+        logger.error(
+            "email_sends insert failed user_id=%s class_id=%s",
+            instructor_id,
+            class_id,
+        )
+
+
+def _report_footer(sender_name: str, class_title: str) -> str:
+    lines = "\n".join([
+        sender_name,
+        "Class: %s" % class_title,
+        "You are receiving this because you are enrolled in %s." % class_title,
+        "Replies to this email are not monitored. Contact your instructor directly.",
+    ])
+    return "\n\n" + lines
+
+
+_ADDRESS_KINDS = {
+    "missing": ("No email address is saved for this student", 400),
+    "invalid": (EMAIL_INVALID_MESSAGE, 400),
+    "held": (EMAIL_HOLD_MESSAGE, 409),
+}
+
+
+def _saved_address_problem(raw_email, email_set_at):
+    """Return (normalized address, kind). Kind is None when it may be sent."""
+    raw = str(raw_email or "").strip()
+    email = normalize_email(raw) if raw else None
+    if not email:
+        if raw:
+            return None, "invalid"
+        return None, "missing"
+    if email_address_on_hold(email_set_at):
+        return None, "held"
+    return email, None
+
+
+def _cap_block_reason(instructor_count, hash_count) -> Optional[str]:
+    if instructor_count >= EMAIL_INSTRUCTOR_DAILY_CAP:
+        return EMAIL_INSTRUCTOR_CAP_MESSAGE
+    if hash_count >= EMAIL_RECIPIENT_DAILY_CAP:
+        return EMAIL_RECIPIENT_CAP_MESSAGE
+    return None
 
 
 def _send_via_resend(
@@ -4375,13 +4611,13 @@ def api_send_single_report_email(class_id, student_id):
         return jsonify({"success": False, "error": "Missing subject or body"}), 400
     if len(subject) > 255:
         return jsonify({"success": False, "error": "Subject must be 255 characters or fewer."}), 400
-    if len(body) > 10000:
-        return jsonify({"success": False, "error": "Body must be 10,000 characters or fewer."}), 400
+    if len(body) > REPORT_BODY_MAX:
+        return jsonify({"success": False, "error": "Body must be 5,000 characters or fewer."}), 400
 
     try:
         enrollment = (
             supabase_admin.table("enrollments")
-            .select("student_id, profiles(id, email)")
+            .select("student_id, profiles(id, email, email_set_at)")
             .eq("class_id", class_id)
             .eq("student_id", student_id)
             .limit(1)
@@ -4390,24 +4626,39 @@ def api_send_single_report_email(class_id, student_id):
         if not enrollment.data:
             return jsonify({"success": False, "error": "Student is not enrolled in this class"}), 404
         profile = normalize_profile({"profiles": enrollment.data[0].get("profiles")})
-        to_email = (profile.get("email") or "").strip()
-        if not to_email:
-            return jsonify({"success": False, "error": "No email address is saved for this student"}), 400
+        to_email, kind = _saved_address_problem(
+            profile.get("email"), profile.get("email_set_at")
+        )
+        class_title = _revision_class_title(class_id)
     except Exception as e:
         logger.error("Error loading enrollment for report email: %s", e)
         return jsonify({"success": False, "error": "Could not load student email"}), 500
+    if kind:
+        message, status = _ADDRESS_KINDS[kind]
+        return jsonify({"success": False, "error": message}), status
 
+    instructor_id = str(session.get("user_id") or "")
+    digest = email_recipient_hash(to_email)
+    caps = _email_cap_counts(instructor_id, [digest])
+    if caps is None:
+        return jsonify({"success": False, "error": EMAIL_CAP_UNAVAILABLE}), 503
+    reason = _cap_block_reason(caps[0], caps[1].get(digest, 0))
+    if reason:
+        return jsonify({"success": False, "error": reason}), 429
+
+    sender_name = instructor_title(_report_sender_name())
     ok, err = _send_via_resend(
         to_email,
         subject,
-        body,
-        sender_name=instructor_title(_report_sender_name()),
+        body + _report_footer(sender_name, class_title),
+        sender_name=sender_name,
     )
     if not ok:
         return jsonify({"success": False, "error": err}), 502
+    _record_email_send(instructor_id, class_id, student_id, digest, "report")
     logger.info(
         "report send user_id=%s class_id=%s",
-        session.get("user_id"),
+        instructor_id,
         class_id,
     )
     return jsonify({"success": True, "to": to_email})
@@ -4426,8 +4677,8 @@ def api_send_bulk_report_emails(class_id):
     reports = data.get("reports")
     if not isinstance(reports, list) or not reports:
         return jsonify({"success": False, "error": "Missing reports payload"}), 400
-    if len(reports) > 250:
-        return jsonify({"success": False, "error": "Too many reports in one request"}), 400
+    if len(reports) > EMAIL_MAX_RECIPIENTS:
+        return jsonify({"success": False, "error": EMAIL_TOO_MANY}), 400
 
     student_ids: List[str] = []
     for item in reports:
@@ -4442,7 +4693,7 @@ def api_send_bulk_report_emails(class_id):
     try:
         enrollments = (
             supabase_admin.table("enrollments")
-            .select("student_id, profiles(id, full_name, email)")
+            .select("student_id, profiles(id, full_name, email, email_set_at)")
             .eq("class_id", class_id)
             .in_("student_id", list(set(student_ids)))
             .execute()
@@ -4451,19 +4702,19 @@ def api_send_bulk_report_emails(class_id):
         logger.error("Error loading enrollments for bulk report emails: %s", e)
         return jsonify({"success": False, "error": "Could not load student emails"}), 500
 
-    email_by_student: Dict[str, str] = {}
+    profile_by_student: Dict[str, Dict[str, Any]] = {}
     for row in (enrollments.data or []):
         sid = str(row.get("student_id") or "").strip()
-        profile = normalize_profile({"profiles": row.get("profiles")})
-        email = (profile.get("email") or "").strip()
-        if sid and email:
-            email_by_student[sid] = email
+        if sid:
+            profile_by_student[sid] = normalize_profile({"profiles": row.get("profiles")})
 
     sent = 0
     skipped = 0
     failed = 0
     failures: List[str] = []
     sender_name = instructor_title(_report_sender_name())
+    class_title = _revision_class_title(class_id)
+    ready = []
     for item in reports:
         if not isinstance(item, dict):
             skipped += 1
@@ -4475,23 +4726,62 @@ def api_send_bulk_report_emails(class_id):
         if not sid or not subject or not body:
             skipped += 1
             continue
-        if len(subject) > 255 or len(body) > 10000:
+        if len(subject) > 255 or len(body) > REPORT_BODY_MAX:
             skipped += 1
             failures.append(f"{student_name}: email content too long")
             continue
-        to_email = email_by_student.get(sid, "")
-        if not to_email:
+        profile = profile_by_student.get(sid) or {}
+        to_email, kind = _saved_address_problem(
+            profile.get("email"), profile.get("email_set_at")
+        )
+        if kind == "missing":
             skipped += 1
             failures.append(f"{student_name}: no saved email")
             continue
-        ok, err = _send_via_resend(
-            to_email, subject, body, sender_name=sender_name
+        if kind:
+            skipped += 1
+            failures.append(f"{student_name}: {_ADDRESS_KINDS[kind][0]}")
+            continue
+        ready.append((sid, student_name, subject, body, to_email))
+
+    instructor_id = str(session.get("user_id") or "")
+    instructor_count = 0
+    per_hash = {}
+    if ready:
+        caps = _email_cap_counts(
+            instructor_id,
+            [email_recipient_hash(item[4]) for item in ready],
         )
-        if ok:
-            sent += 1
-        else:
+        if caps is None:
+            return jsonify({"success": False, "error": EMAIL_CAP_UNAVAILABLE}), 503
+        instructor_count, per_hash = caps
+
+    sent_now = 0
+    hash_sent = {}
+    for sid, student_name, subject, body, to_email in ready:
+        digest = email_recipient_hash(to_email)
+        reason = _cap_block_reason(
+            instructor_count + sent_now,
+            per_hash.get(digest, 0) + hash_sent.get(digest, 0),
+        )
+        if reason:
+            skipped += 1
+            failures.append(f"{student_name}: {reason}")
+            continue
+        ok, err = _send_via_resend(
+            to_email,
+            subject,
+            body + _report_footer(sender_name, class_title),
+            sender_name=sender_name,
+        )
+        if not ok:
             failed += 1
             failures.append(f"{student_name}: {err}")
+            continue
+        _record_email_send(instructor_id, class_id, sid, digest, "report")
+        sent += 1
+        sent_now += 1
+        hash_sent[digest] = hash_sent.get(digest, 0) + 1
 
     payload = {
         "sent": sent,
@@ -4515,7 +4805,9 @@ def _revision_class_title(class_id):
         .limit(1)
         .execute()
     )
-    row = (resp.data or [{}])[0] or {}
+    row = {}
+    if isinstance(resp.data, list) and resp.data and isinstance(resp.data[0], dict):
+        row = resp.data[0]
     return class_display_title(
         row.get("name"),
         row.get("days"),
@@ -4530,6 +4822,8 @@ def _public_reminder_student(student):
     }
     if student.get("email"):
         item["email"] = student["email"]
+    if student.get("message"):
+        item["message"] = student["message"]
     return item
 
 
@@ -4556,6 +4850,14 @@ def api_preview_revision_reminders(class_id):
         "recipients": [_public_reminder_student(student) for student in recipients],
         "no_email": [
             _public_reminder_student(student) for student in partition["no_email"]
+        ],
+        "invalid": [
+            _public_reminder_student(student)
+            for student in partition.get("invalid") or []
+        ],
+        "held": [
+            _public_reminder_student(student)
+            for student in partition.get("held") or []
         ],
         "already_reminded": [
             _public_reminder_student(student)
@@ -4596,6 +4898,22 @@ def api_send_revision_reminders(class_id):
         sender_name,
         sent_by,
     )
+    if results is None:
+        return jsonify({"success": False, "error": EMAIL_CAP_UNAVAILABLE}), 503
+    for student in partition.get("held") or []:
+        results.append({
+            "student_id": student["student_id"],
+            "name": student["name"],
+            "status": "held",
+            "message": student.get("message") or EMAIL_HOLD_MESSAGE,
+        })
+    for student in partition.get("invalid") or []:
+        results.append({
+            "student_id": student["student_id"],
+            "name": student["name"],
+            "status": "invalid",
+            "message": student.get("message") or EMAIL_INVALID_MESSAGE,
+        })
     for student in partition["already_reminded"]:
         results.append({
             "student_id": student["student_id"],
@@ -5576,6 +5894,7 @@ def api_upload_students_to_class(class_id):
                 "full_name": action["full_name"],
                 "role": "student",
                 "email": action["email"],
+                "email_set_at": _email_set_timestamp(),
             }).execute()
             supabase_admin.table("enrollments").insert({
                 "class_id": class_id,

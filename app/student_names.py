@@ -13,6 +13,7 @@ COMMA_REQUIRED = (
 )
 
 _SIMPLE_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_REJECTED = re.compile(r'[<>(),;:"\[\]\\]|[^\x00-\x7F]')
 _EMAIL_MAX = 255
 
 
@@ -47,6 +48,8 @@ def normalize_email(raw: Optional[str]) -> Optional[str]:
     """Return a lowercased email, or None when blank, too long, or invalid."""
     text = (raw or "").strip().lower()
     if not text or len(text) > _EMAIL_MAX:
+        return None
+    if _EMAIL_REJECTED.search(text):
         return None
     if not _SIMPLE_EMAIL_RE.match(text):
         return None

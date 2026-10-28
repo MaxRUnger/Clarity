@@ -66,17 +66,6 @@
     return given || "student";
   }
 
-  function reportEmailFooter(title, className) {
-    const who = title == null ? "" : String(title);
-    const klass = className == null ? "" : String(className);
-    return [
-      "Sent by " + who + " via Clarity Grader",
-      "Class: " + klass,
-      "You are receiving this because you are enrolled in " + klass + ".",
-      "This is an automated message. Replies are not monitored. Please contact your instructor directly.",
-    ].join("\n");
-  }
-
   let pageScrollLockCount = 0;
 
   function lockPageScroll() {
@@ -102,7 +91,6 @@
     applyInstructorModeVisibility,
     debounce,
     studentGreetingName,
-    reportEmailFooter,
     lockPageScroll,
     unlockPageScroll,
   };

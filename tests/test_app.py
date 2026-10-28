@@ -1278,6 +1278,8 @@ class _FilterQuery:
 
     def __init__(self, rows):
         self._rows = [dict(r) for r in rows]
+        self._limit = None
+        self._range = None
 
     def select(self, *args, **kwargs):
         return self
@@ -1298,13 +1300,34 @@ class _FilterQuery:
         self._rows = [r for r in self._rows if r.get(col) in allowed]
         return self
 
+    def gte(self, col, val):
+        return self
+
+    def lt(self, col, val):
+        return self
+
     def limit(self, n):
-        self._rows = self._rows[:n]
+        self._limit = n
+        return self
+
+    def order(self, *args, **kwargs):
+        return self
+
+    def range(self, start, end):
+        self._range = (start, end)
         return self
 
     def execute(self):
+        matched = list(self._rows)
+        rows = matched
+        if self._range is not None:
+            start, end = self._range
+            rows = matched[start:end + 1]
+        elif self._limit is not None:
+            rows = matched[:self._limit]
         result = MagicMock()
-        result.data = list(self._rows)
+        result.data = rows
+        result.count = len(matched)
         return result
 
 
@@ -1387,6 +1410,12 @@ def _reports_scope_store():
                 },
             }
         ],
+        "classes": [{
+            "id": CLASS_REPORTS_ID,
+            "name": "Algebra 1",
+            "days": "",
+            "section_number": "",
+        }],
         "new_assignment_objectives": new_aos,
         "old_assignment_objectives": old_aos,
     }
@@ -1428,14 +1457,6 @@ def _email_body_from_report_rows(class_name, assignment_label, student_name, row
     for row in rows:
         title = " ".join(str(row.get("title") or "").split())
         lines.append(f"{title}  |  {row.get('grade') or 'Not graded'}")
-    lines.append("")
-    lines.append("Sent by Your instructor via Clarity Grader")
-    lines.append(f"Class: {class_name}")
-    lines.append(f"You are receiving this because you are enrolled in {class_name}.")
-    lines.append(
-        "This is an automated message. Replies are not monitored. "
-        "Please contact your instructor directly."
-    )
     return "\n".join(lines)
 
 
@@ -1608,6 +1629,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
             "Algebra 1", "Test Project", STU_ALEX_NAME, rows
         )
         subject = "Your progress report — Algebra 1"
+        from app import routes as r
         self.assertIn("D1  |  Not graded", body)
         self.assertIn("D2  |  Not graded", body)
         self.assertNotIn("D1  |  M", body)
@@ -1616,12 +1638,12 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         rv, send_mock = self._post_single_email({"subject": subject, "body": body})
         self.assertEqual(rv.status_code, 200)
         self.assertEqual(rv.get_json(), {"success": True, "to": STU_ALEX_EMAIL})
+        sent_body = body + r._report_footer("Your instructor", "Algebra 1")
         send_mock.assert_called_once_with(
-            STU_ALEX_EMAIL, subject, body, sender_name="Your instructor"
+            STU_ALEX_EMAIL, subject, sent_body, sender_name="Your instructor"
         )
-        sent_body = send_mock.call_args[0][2]
-        self.assertIn("D1  |  Not graded", sent_body)
-        self.assertNotIn("D1  |  M", sent_body)
+        self.assertIn("D1  |  Not graded", send_mock.call_args[0][2])
+        self.assertNotIn("D1  |  M", send_mock.call_args[0][2])
 
     def test_send_bulk_report_emails_uses_scoped_content(self):
         self._login()
@@ -1646,11 +1668,12 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         payload = rv.get_json()
         self.assertTrue(payload.get("success"))
         self.assertEqual(payload.get("sent"), 1)
+        from app import routes as r
+        sent_body = body + r._report_footer("Your instructor", "Algebra 1")
         send_mock.assert_called_once_with(
-            STU_ALEX_EMAIL, subject, body, sender_name="Your instructor"
+            STU_ALEX_EMAIL, subject, sent_body, sender_name="Your instructor"
         )
-        sent_body = send_mock.call_args[0][2]
-        self.assertIn("Not graded", sent_body)
+        self.assertIn("Not graded", send_mock.call_args[0][2])
         self.assertNotIn("D1  |  M", sent_body)
         self.assertEqual(payload.get("failed"), 0)
         self.assertEqual(payload.get("skipped"), 0)
@@ -1717,15 +1740,19 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         ]
         for body in builders:
             self.assertIn("studentGreetingName", body)
-            self.assertIn("reportEmailFooter", body)
+            self.assertNotIn("reportEmailFooter", body)
         combined = reports_src + history_src + helpers_src
+        self.assertNotIn("function reportEmailFooter", helpers_src)
         self.assertNotIn("instructorLastName", combined)
         self.assertNotIn("instructorSignoff", combined)
         self.assertNotIn("toTitleCaseWord", combined)
         self.assertNotIn("Hello student,", combined)
         self.assertNotIn("via Project Clarity", combined)
         self.assertNotIn("Email send complete.", reports_src)
-        self.assertIn("Replies are not monitored", helpers_src)
+        self.assertIn(
+            "Replies to this email are not monitored. Contact your instructor directly.",
+            open(os.path.join(os.path.dirname(__file__), "..", "app", "routes.py"), encoding="utf-8").read(),
+        )
         self.assertIn("Sent ", reports_src)
         self.assertIn("Skipped ", reports_src)
         self.assertIn("Failed ", reports_src)
@@ -2148,11 +2175,11 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
             "D1  |  M\n"
             "D2  |  R\n"
             "\n"
-            "Sent by Professor Estes via Clarity Grader\n"
+            "Professor Estes\n"
             "Class: Algebra\n"
             "You are receiving this because you are enrolled in Algebra.\n"
-            "This is an automated message. Replies are not monitored. "
-            "Please contact your instructor directly."
+            "Replies to this email are not monitored. "
+            "Contact your instructor directly."
         )
         html = r._report_body_html(body, "Progress <report> & more")
         paragraphs = html.split("<p ")[1:]
@@ -2167,7 +2194,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         self.assertIn("color:#666666", paragraphs[2])
         self.assertIn("border-top:1px solid #dddddd", paragraphs[2])
         self.assertIn("padding-top:12px", paragraphs[2])
-        self.assertIn("Sent by Professor Estes via Clarity Grader<br>", paragraphs[2])
+        self.assertIn("Professor Estes<br>", paragraphs[2])
         self.assertNotIn("white-space", html)
         self.assertNotIn("pre-wrap", html)
         self.assertNotIn("<Jane>", html)
@@ -4057,7 +4084,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         self.assertEqual(profile_row["full_name"], "Smith, Cali")
         self.assertEqual(profile_row["email"], "cali@example.edu")
         self.assertEqual(profile_row["role"], "student")
-        self.assertEqual(set(profile_row), {"id", "full_name", "role", "email"})
+        self.assertEqual(set(profile_row), {"id", "full_name", "role", "email", "email_set_at"})
 
     def test_add_student_rejects_a_256_character_comma_name_before_the_database(self):
         from app import routes as r
@@ -4118,7 +4145,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         payload = q.update.call_args[0][0]
         self.assertEqual(payload["full_name"], "Smith, Cali")
         self.assertEqual(payload["email"], "cali@example.edu")
-        self.assertEqual(set(payload), {"full_name", "email"})
+        self.assertEqual(set(payload), {"full_name", "email", "email_set_at"})
 
     # ── api_update_learning_objective ─────────────────────────────────────
 
@@ -4235,6 +4262,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, None)):
             rv = self.client.post(
                 "/api/class/c1/student/s1/send-report-email",
@@ -4262,8 +4290,8 @@ class TestMaxLengthValidation(unittest.TestCase):
         self.assertEqual(rv.status_code, 400)
         send_mock.assert_not_called()
 
-    def test_report_email_body_10000_accepted(self):
-        """Exactly 10 000-char body must pass the length check."""
+    def test_report_email_body_5000_accepted(self):
+        """Exactly 5 000-char body must pass the length check."""
         from app import routes as r
         sa = self._report_email_sa_mock()
         with self.client.session_transaction() as sess:
@@ -4273,16 +4301,17 @@ class TestMaxLengthValidation(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, None)):
             rv = self.client.post(
                 "/api/class/c1/student/s1/send-report-email",
-                json={"subject": "subject", "body": "b" * 10000},
+                json={"subject": "subject", "body": "b" * 5000},
                 headers={"X-CSRF-Token": "test-csrf"},
             )
-        self.assertNotEqual(rv.status_code, 400, "10 000-char body must not be length-rejected")
+        self.assertNotEqual(rv.status_code, 400, "5 000-char body must not be length-rejected")
 
-    def test_report_email_body_10001_rejected(self):
-        """10 001-char body must be rejected with 400; _send_via_resend must not be called."""
+    def test_report_email_body_5001_rejected(self):
+        """5 001-char body must be rejected with 400; _send_via_resend must not be called."""
         from app import routes as r
         send_mock = unittest.mock.MagicMock()
         with self.client.session_transaction() as sess:
@@ -4294,7 +4323,7 @@ class TestMaxLengthValidation(unittest.TestCase):
                 unittest.mock.patch.object(r, "_send_via_resend", send_mock):
             rv = self.client.post(
                 "/api/class/c1/student/s1/send-report-email",
-                json={"subject": "subject", "body": "b" * 10001},
+                json={"subject": "subject", "body": "b" * 5001},
                 headers={"X-CSRF-Token": "test-csrf"},
             )
         self.assertEqual(rv.status_code, 400)
@@ -4326,6 +4355,9 @@ class _EmailTable:
         return self
 
     def order(self, *args, **kwargs):
+        return self
+
+    def limit(self, count):
         return self
 
     def range(self, start, end):
@@ -4546,12 +4578,11 @@ class TestStudentEmailMatch(unittest.TestCase):
             client, sa, {"name": "Smith, Cali", "email": "shared@example.edu"},
         )
         self.assertEqual(rv.status_code, 200)
-        self.assertEqual(profiles.updates, [{
-            "full_name": "Smith, Cali",
-            "email": "shared@example.edu",
-        }])
+        self.assertEqual(profiles.updates[0]["full_name"], "Smith, Cali")
+        self.assertEqual(profiles.updates[0]["email"], "shared@example.edu")
+        self.assertIn("email_set_at", profiles.updates[0])
         self.assertEqual(classes.eq_calls, [("instructor_id", "inst1")])
-        self.assertFalse(profiles.selected)
+        self.assertTrue(profiles.selected)
 
     def test_csv_wizard_pushes_the_stored_name(self):
         path = os.path.join(
@@ -11219,7 +11250,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertNotIn("E2", body)
         self.assertNotIn("Later", body)
         self.assertEqual([row["student_id"] for row in part["already_reminded"]], ["stu-4"])
-        self.assertEqual([row["student_id"] for row in part["no_email"]], ["stu-3"])
+        self.assertEqual([row["student_id"] for row in part["invalid"]], ["stu-3"])
         self.assertEqual(part["due"], "2026-10-24")
 
     def test_signoff_greeting_and_from_header(self):
@@ -11317,6 +11348,8 @@ class TestRevisionReminders(unittest.TestCase):
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=self._partition()), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
                 unittest.mock.patch.object(r, "_insert_reminder_rows", side_effect=lambda *args: inserted.append(args[1]["student_id"])), \
+                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch.object(r, "_record_email_send"), \
                 unittest.mock.patch.object(r.time, "sleep") as sleeper, \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")) as sender, \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}):
@@ -11368,6 +11401,8 @@ class TestRevisionReminders(unittest.TestCase):
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=self._partition()), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
                 unittest.mock.patch.object(r, "_insert_reminder_rows", side_effect=lambda *args: inserted.append(args[1]["student_id"])), \
+                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch.object(r, "_record_email_send"), \
                 unittest.mock.patch.object(r.time, "sleep"), \
                 unittest.mock.patch.object(r, "_send_via_resend", side_effect=send), \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}):
@@ -11406,6 +11441,8 @@ class TestRevisionReminders(unittest.TestCase):
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=partition), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
                 unittest.mock.patch.object(r, "_insert_reminder_rows"), \
+                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch.object(r, "_record_email_send"), \
                 unittest.mock.patch.object(r.time, "monotonic", side_effect=monotonic), \
                 unittest.mock.patch.object(r.time, "sleep", side_effect=sleep), \
                 unittest.mock.patch.object(r, "_send_via_resend", side_effect=send), \
@@ -11431,6 +11468,8 @@ class TestRevisionReminders(unittest.TestCase):
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=self._partition()), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
                 unittest.mock.patch.object(r, "_insert_reminder_rows", side_effect=RuntimeError("db")), \
+                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch.object(r, "_record_email_send"), \
                 unittest.mock.patch.object(r.time, "sleep"), \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")), \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}):

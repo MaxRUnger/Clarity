@@ -917,7 +917,11 @@ function revisionEmailLine(label, people) {
   block.appendChild(title);
   (people || []).forEach(function (person) {
     var line = document.createElement('p');
-    line.textContent = person.email ? (person.name + ' <' + person.email + '>') : person.name;
+    if (person.message) {
+      line.textContent = person.name + ': ' + person.message;
+    } else {
+      line.textContent = person.email ? (person.name + ' <' + person.email + '>') : person.name;
+    }
     block.appendChild(line);
   });
   return block;
@@ -962,6 +966,14 @@ function openRevisionEmailModal() {
     var missingEmail = result.data.no_email || [];
     if (missingEmail.length) {
       body.appendChild(revisionEmailLine('No email on file', missingEmail));
+    }
+    var invalidEmail = result.data.invalid || [];
+    if (invalidEmail.length) {
+      body.appendChild(revisionEmailLine('Invalid email', invalidEmail));
+    }
+    var heldEmail = result.data.held || [];
+    if (heldEmail.length) {
+      body.appendChild(revisionEmailLine('Address added or changed less than 24 hours ago', heldEmail));
     }
     var reminded = result.data.already_reminded || [];
     if (reminded.length) {
@@ -1012,6 +1024,15 @@ function sendRevisionEmails() {
       (counts.skipped || 0) + ' skipped',
       (counts.not_attempted || 0) + ' not attempted'
     ];
+    if (counts.held) {
+      lines.push(counts.held + ' held because the address was added or changed less than 24 hours ago');
+    }
+    if (counts.invalid) {
+      lines.push(counts.invalid + ' not sent because the saved address is not valid');
+    }
+    if (counts.capped) {
+      lines.push(counts.capped + ' not sent because a daily limit was reached');
+    }
     if (counts.sent_not_recorded) {
       lines.push(counts.sent_not_recorded + ' sent but not recorded');
     }

@@ -116,7 +116,7 @@ class Course:
         """Enrollment rows for the class, with profiles and no grades."""
         return fetch_all_rows(
             supabase_admin.table("enrollments").select(
-                "id, class_id, student_id, muted, profiles(id, full_name, role, email)"
+                "id, class_id, student_id, muted, profiles(id, full_name, role, email, email_set_at)"
             ).eq("class_id", class_id).order("id")
         )
 

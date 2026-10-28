@@ -157,7 +157,6 @@ function emailStudentHistoryReport(btnEl) {
     }
     lines.push('');
   });
-  lines.push(window.ClarityUI.reportEmailFooter(p.instructor_title, p.class_name || ''));
   var body = lines.join('\n');
   if (body.length > 2000) {
     body = body.slice(0, 1970) + '\n\n[Message trimmed. Use Print full report for the complete view.]';

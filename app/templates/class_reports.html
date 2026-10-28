@@ -1183,8 +1183,6 @@ function buildEmailPayloadForStudent(student, assignmentIdOverride) {
     const t = String(r.title || '').replace(/\s+/g, ' ').trim();
     lines.push(t + '  |  ' + String(r.grade || 'Not graded'));
   });
-  lines.push('');
-  lines.push(window.ClarityUI.reportEmailFooter(instructorTitle, parts.className || ''));
   let body = lines.join('\n');
   if (body.length > 2000) {
     body = body.slice(0, 1970) + '\n\n[Message trimmed. Ask your instructor for the full printed report if needed.]';
@@ -1229,7 +1227,6 @@ function buildAllAssignmentsEmailPayloadForStudent(student) {
     lines.push('');
   });
 
-  lines.push(window.ClarityUI.reportEmailFooter(instructorTitle, className || ''));
   let body = lines.join('\n');
   if (body.length > 2000) {
     body = body.slice(0, 1970) + '\n\n[Message trimmed. Ask your instructor for the full printed report if needed.]';

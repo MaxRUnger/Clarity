@@ -400,6 +400,8 @@ class TestSensitiveLogs(unittest.TestCase):
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
                     unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                     unittest.mock.patch.object(r, "_report_sender_name", return_value="Ada"), \
+                    unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
+                    unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
                     unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")):
                 response = client.post(
                     "/api/class/c1/student/stu-1/send-report-email",
