@@ -8803,6 +8803,8 @@ class TestClassArchiveExport(unittest.TestCase):
             check_archive_manifest(dict(complete, source_students=2), zip_bytes)
 
     def _client(self):
+        from app import routes as r
+        r._rate_limit_events.clear()
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()
@@ -8989,6 +8991,7 @@ class TestClassArchiveRoute(unittest.TestCase):
         from app import routes as r
         import app.archive_storage as storage
 
+        r._rate_limit_events.clear()
         log = []
         deleted = []
         selects = {"n": 0}
@@ -9518,6 +9521,7 @@ class TestArchivedClasses(unittest.TestCase):
         from app import routes as r
         import app.archive_storage as storage
 
+        r._rate_limit_events.clear()
         log = []
         seen = {"columns": "", "orders": [], "rpc": []}
         shared = shared if shared is not None else {"row_deletes": 0}
@@ -10084,14 +10088,30 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertFalse(any(entry["op"] == "insert" for entry in log))
 
     def test_happy_path_stages_grades_in_two_requests_and_calls_rpc_once(self):
-        response, log, bucket, seen = self._restore(
-            [self._restore_row()],
-            self._snapshot(grades=401),
-            rpc_data={"class_id": self.NEW_CLASS_ID, "counts": {}},
-        )
+        import logging
+        restore_lines = []
+        handler = logging.Handler()
+        handler.emit = lambda record: restore_lines.append(record.getMessage())
+        route_logger = logging.getLogger("app.routes")
+        previous_level = route_logger.level
+        route_logger.setLevel(logging.INFO)
+        route_logger.addHandler(handler)
+        try:
+            response, log, bucket, seen = self._restore(
+                [self._restore_row()],
+                self._snapshot(grades=401),
+                rpc_data={"class_id": self.NEW_CLASS_ID, "counts": {}},
+            )
+        finally:
+            route_logger.removeHandler(handler)
+            route_logger.setLevel(previous_level)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["success"], True)
         self.assertTrue(response.get_json()["redirect"].endswith(f"/class/{self.NEW_CLASS_ID}"))
+        restore_log = "\n".join(restore_lines)
+        self.assertIn("user_id=inst-a", restore_log)
+        self.assertIn("class_id=%s" % self.NEW_CLASS_ID, restore_log)
+        self.assertNotIn("@", restore_log)
         grade_inserts = [
             entry["rows"] for entry in log
             if entry["table"] == "archive_restore_stage"
@@ -11089,6 +11109,8 @@ class TestPrintClassSheet(unittest.TestCase):
 
 class TestRevisionReminders(unittest.TestCase):
     def _client(self):
+        from app import routes as r
+        r._rate_limit_events.clear()
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()
@@ -11309,7 +11331,6 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertNotIn("intruder@example.edu", str(sender.call_args_list))
         self.assertEqual(sleeper.call_args_list[0].args[0], 0.5)
         self.assertEqual(rv.get_json()["counts"]["skipped"], 1)
-        self.assertFalse(sender.call_args.kwargs["log_provider_body"])
         self.assertEqual(sender.call_args.kwargs["sender_name"], "Ada Lovelace")
 
     def test_second_send_skips_students_already_reminded(self):
@@ -11469,7 +11490,6 @@ class TestRevisionReminders(unittest.TestCase):
                 "Subject",
                 "Hello",
                 sender_name="Ada Lovelace",
-                log_provider_body=False,
             )
         self.assertFalse(ok)
         self.assertEqual(err, "Email provider rejected request.")

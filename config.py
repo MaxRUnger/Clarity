@@ -55,6 +55,8 @@ class Config:
         # Development fallback only.
         SECRET_KEY = "dev-secret-key-local-only"
 
+    MAX_CONTENT_LENGTH = 20 * 1024 * 1024
+
     PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
     if IS_PRODUCTION and not PUBLIC_BASE_URL:
         raise RuntimeError(

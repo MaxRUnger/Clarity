@@ -1,6 +1,7 @@
 """Gzip JSON snapshot of one class. The downloadable zip is unchanged."""
 
 import gzip
+import io
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Sequence
@@ -24,6 +25,34 @@ _SCOPED_TABLES = (
 
 class SnapshotCountError(Exception):
     """A snapshot count does not match the rows that were read or the zip manifest."""
+
+
+MAX_GZIP_BYTES = 50_000_000
+
+
+class GzipTooLarge(Exception):
+    """The decompressed snapshot is larger than MAX_GZIP_BYTES."""
+
+
+def gunzip_bounded(blob: bytes) -> bytes:
+    """Inflate a snapshot and stop once the output passes MAX_GZIP_BYTES."""
+    chunks = []
+    total = 0
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(blob)) as handle:
+            while True:
+                block = handle.read(65536)
+                if not block:
+                    break
+                total += len(block)
+                if total > MAX_GZIP_BYTES:
+                    raise GzipTooLarge()
+                chunks.append(block)
+    except GzipTooLarge:
+        raise
+    except Exception as exc:
+        raise SnapshotCountError("gzip") from exc
+    return b"".join(chunks)
 
 
 def _json_default(value: Any) -> str:
@@ -232,10 +261,7 @@ def _distinct_student_ids(enrollments: Sequence[Any]) -> set:
 
 def check_snapshot_archive(snapshot_bytes: bytes, manifest: Dict[str, Any]) -> Dict[str, Any]:
     """Gunzip and require version 1, the manifest enrollment count, and distinct students."""
-    try:
-        raw = gzip.decompress(snapshot_bytes)
-    except Exception as exc:
-        raise SnapshotCountError("gzip") from exc
+    raw = gunzip_bounded(snapshot_bytes)
     try:
         document = json.loads(raw.decode("utf-8"))
     except Exception as exc:

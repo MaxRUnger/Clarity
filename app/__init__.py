@@ -10,8 +10,9 @@ import logging
 import os
 import secrets
 import hmac
-from flask import Flask, session, request, jsonify
+from flask import Flask, Response, session, request, jsonify
 from flask_cors import CORS
+from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.middleware.proxy_fix import ProxyFix
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from config import Config
@@ -166,6 +167,14 @@ def create_app(config_class=Config):
                     samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
                     httponly=False,
                 )
+            if session.get("user_id") or request.path.startswith("/api"):
+                resp.headers["Cache-Control"] = "no-store"
         return resp
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def request_too_large(_err):
+        if request.path.startswith("/api"):
+            return jsonify({"success": False, "error": "Request is too large"}), 413
+        return Response(status=413)
     
     return app

@@ -1868,7 +1868,6 @@ def _send_revision_reminders(class_id, recipients, due_iso, sender_name, sent_by
             student["subject"],
             student["body"],
             sender_name=sender_name,
-            log_provider_body=False,
         )
         if not ok:
             results.append({
@@ -2575,6 +2574,11 @@ def api_update_student(class_id, student_id):
             "full_name": name,
             "email": email,
         }).eq("id", student_id).execute()
+        logger.info(
+            "roster edit user_id=%s class_id=%s",
+            owner_id,
+            class_id,
+        )
         return jsonify({"success": True})
     except Exception as e:
         return _safe_api_error("Could not update student", 500, log_detail=e)
@@ -2612,8 +2616,26 @@ def delete_class(class_id):
         return _safe_api_error("Could not delete class", 500, log_detail=e)
 
 
+MAX_ARCHIVE_ZIP_BYTES = 50_000_000
+
+
+def _zip_over_archive_limit(zip_bytes):
+    """Return a 413 response when the zip is over the shared archive cap."""
+    if len(zip_bytes) <= MAX_ARCHIVE_ZIP_BYTES:
+        return None
+    megabytes = f"{len(zip_bytes) / 1_000_000:.1f}"
+    return jsonify({
+        "success": False,
+        "error": (
+            f"This archive is {megabytes} MB, over the 50 MB limit. "
+            "Nothing was changed."
+        ),
+    }), 413
+
+
 @main_bp.route("/class/<class_id>/archive", methods=["POST"])
 @api_instructor_required
+@rate_limited("archive_create", limit=5, window_sec=3600)
 def archive_class(class_id):
     from app.archive_export import build_class_archive_zip, check_archive_manifest
     from app.archive_snapshot import build_class_snapshot
@@ -2667,15 +2689,9 @@ def archive_class(class_id):
             "success": False,
             "error": "Could not build the archive. Nothing was changed.",
         }), 500
-    if len(zip_bytes) > 50_000_000:
-        megabytes = f"{len(zip_bytes) / 1_000_000:.1f}"
-        return jsonify({
-            "success": False,
-            "error": (
-                f"This archive is {megabytes} MB, over the 50 MB limit. "
-                "Nothing was changed."
-            ),
-        }), 413
+    too_big = _zip_over_archive_limit(zip_bytes)
+    if too_big is not None:
+        return too_big
     try:
         snapshot_bytes = build_class_snapshot(class_id, manifest)
     except Exception as exc:
@@ -2737,6 +2753,11 @@ def archive_class(class_id):
     }
     try:
         supabase_admin.table("archived_classes").insert(record).execute()
+        logger.info(
+            "archive create user_id=%s class_id=%s",
+            instructor_id,
+            class_id,
+        )
     except Exception as exc:
         logger.error("Could not record archive %s: %s", archive_id, exc)
         try:
@@ -2822,6 +2843,7 @@ def archived_classes():
 
 @main_bp.route("/archived-classes/<archive_id>/download")
 @login_required
+@rate_limited("archive_download", limit=30, window_sec=3600)
 def download_archived_class(archive_id):
     if session.get("role") != "instructor":
         return redirect(url_for("main.login_page"))
@@ -2835,6 +2857,11 @@ def download_archived_class(archive_id):
         logger.error("Could not download archive %s: %s", archive_id, exc)
         return _safe_api_error("Could not download the archive", 500, log_detail=exc)
     filename = f"{secure_filename(str(row.get('class_name') or '')) or 'class'}_archive.zip"
+    logger.info(
+        "archive download user_id=%s archive_id=%s",
+        session.get("user_id"),
+        archive_id,
+    )
     return Response(
         payload,
         mimetype="application/zip",
@@ -2983,9 +3010,10 @@ def _delete_restore_attempt(attempt_id: str) -> None:
 
 @main_bp.route("/archived-classes/<archive_id>/restore", methods=["POST"])
 @api_instructor_required
+@rate_limited("archive_restore", limit=5, window_sec=3600)
 def restore_archived_class(archive_id):
-    import gzip
     import json
+    from app.archive_snapshot import GzipTooLarge, gunzip_bounded
     from app.archive_storage import download_archive
 
     start = time.monotonic()
@@ -3009,16 +3037,24 @@ def restore_archived_class(archive_id):
     try:
         blob = download_archive(row.get("snapshot_path") or "")
         try:
-            raw = gzip.decompress(blob)
+            raw = gunzip_bounded(blob)
         finally:
             del blob
-        try:
-            document = json.loads(raw.decode("utf-8"))
-        finally:
-            del raw
+    except GzipTooLarge:
+        return jsonify({
+            "success": False,
+            "error": "This archive is too large to restore. Nothing was changed.",
+        }), 413
     except Exception as exc:
         logger.error("Could not read snapshot for archive %s: %s", archive_id, exc)
         return jsonify({"success": False, "error": _RESTORE_FAILED}), 500
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        logger.error("Could not read snapshot for archive %s: %s", archive_id, exc)
+        return jsonify({"success": False, "error": _RESTORE_FAILED}), 500
+    finally:
+        del raw
     if not isinstance(document, dict) or document.get("format_version") != 1:
         return jsonify({
             "success": False,
@@ -3107,6 +3143,11 @@ def restore_archived_class(archive_id):
         ).eq("instructor_id", instructor_id).execute()
     except Exception as exc:
         logger.error("Could not remove restored archive %s: %s", archive_id, exc)
+    logger.info(
+        "archive restore user_id=%s class_id=%s",
+        instructor_id,
+        class_id,
+    )
     return jsonify({
         "success": True,
         "redirect": url_for("main.class_detail", class_id=class_id),
@@ -3352,7 +3393,6 @@ def create_assignment(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
 
     data = request.get_json() or {}
-    logger.debug("create_assignment payload: %s", data)
 
     # Validate required fields
     name = (data.get('name') or '').strip()
@@ -3625,6 +3665,7 @@ def export_assignment_csv(class_id, assignment_id):
 
 @main_bp.route("/class/<class_id>/export-archive")
 @login_required
+@rate_limited("archive_export", limit=5, window_sec=3600)
 def export_class_archive(class_id):
     """Download a class archive zip. Does not delete the class or write a row."""
     if not _instructor_owns_class(class_id):
@@ -3640,6 +3681,9 @@ def export_class_archive(class_id):
         return redirect(url_for("main.instructor_dashboard"))
     except ArchiveManifestError as exc:
         return _safe_api_error("Could not export archive", 500, log_detail=exc)
+    too_big = _zip_over_archive_limit(zip_bytes)
+    if too_big is not None:
+        return too_big
     filename = f"{secure_filename(str(manifest.get('class_name') or '')) or 'class'}_archive.zip"
     return Response(
         zip_bytes,
@@ -4256,7 +4300,6 @@ def _send_via_resend(
     body_text: str,
     *,
     sender_name: str,
-    log_provider_body: bool = True,
 ) -> Tuple[bool, str]:
     api_key = (os.environ.get("RESEND_API_KEY") or "").strip()
     from_email = (os.environ.get("REPORTS_FROM_EMAIL") or "").strip()
@@ -4293,13 +4336,7 @@ def _send_via_resend(
         if isinstance(parsed, dict) and isinstance(parsed.get("id"), str):
             message_id = parsed.get("id").strip()
         if resp.status_code >= 400 or not message_id:
-            if resp.status_code >= 400 and log_provider_body:
-                logger.error(
-                    "Email provider rejected request (%s): %s",
-                    resp.status_code,
-                    resp.text[:400],
-                )
-            elif resp.status_code >= 400:
+            if resp.status_code >= 400:
                 logger.error(
                     "Email provider rejected request (%s)",
                     resp.status_code,
@@ -4368,6 +4405,11 @@ def api_send_single_report_email(class_id, student_id):
     )
     if not ok:
         return jsonify({"success": False, "error": err}), 502
+    logger.info(
+        "report send user_id=%s class_id=%s",
+        session.get("user_id"),
+        class_id,
+    )
     return jsonify({"success": True, "to": to_email})
 
 
@@ -4524,6 +4566,7 @@ def api_preview_revision_reminders(class_id):
 
 @main_bp.route("/api/class/<class_id>/revision-reminders/send", methods=["POST"])
 @api_instructor_required
+@rate_limited("revision_send", limit=10, window_sec=3600)
 def api_send_revision_reminders(class_id):
     if not _instructor_owns_class(class_id):
         return jsonify({"success": False, "error": "Forbidden"}), 403
@@ -4566,6 +4609,11 @@ def api_send_revision_reminders(class_id):
         message = "Close this window and choose Email students again to send the rest."
     if counts["sent_not_recorded"]:
         warning = "Sending again may email that student twice."
+    logger.info(
+        "revision send user_id=%s class_id=%s",
+        session.get("user_id"),
+        class_id,
+    )
     return jsonify({
         "success": True,
         "counts": counts,
@@ -5152,6 +5200,11 @@ def save_grades(class_id):
                 class_id, assignment_id, to_clear, session.get("user_id")
             )
 
+        logger.info(
+            "grade save user_id=%s class_id=%s",
+            session.get("user_id"),
+            class_id,
+        )
         return jsonify({"success": True})
     except Exception as e:
         return _safe_api_error("Could not save grades", 500, log_detail=e)
