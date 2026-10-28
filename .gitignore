@@ -34,3 +34,6 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+
+# Local Tailwind CLI. The built stylesheet is committed.
+tailwindcss-windows-x64.exe

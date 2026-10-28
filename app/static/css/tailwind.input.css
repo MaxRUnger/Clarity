@@ -1,0 +1,4 @@
+/* Rebuild from the repo root: .\tailwindcss-windows-x64.exe -c tailwind.config.js -i app/static/css/tailwind.input.css -o app/static/css/tailwind.css --minify */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
