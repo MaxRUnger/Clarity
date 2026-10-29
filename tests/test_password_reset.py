@@ -581,6 +581,31 @@ class TestResetPassword(unittest.TestCase):
         self.assertNotEqual(response.get_json().get("code"), "session_expired")
 
 
+def _requirements_list(path):
+    text = Path(path).read_text(encoding="utf-8")
+    marker = (
+        '<ul class="list-disc list-inside space-y-1 text-xs '
+        'text-slate-500 dark:text-slate-400 mb-1.5">'
+    )
+    start = text.index(marker)
+    depth = 0
+    index = start
+    while index < len(text):
+        open_at = text.find("<ul", index)
+        close_at = text.find("</ul>", index)
+        if close_at < 0:
+            break
+        if open_at != -1 and open_at < close_at:
+            depth += 1
+            index = open_at + 3
+            continue
+        depth -= 1
+        index = close_at + len("</ul>")
+        if depth == 0:
+            return text[start:index]
+    raise AssertionError("requirements list is unclosed in %s" % path)
+
+
 class TestResetPages(unittest.TestCase):
     def setUp(self):
         self.app = create_app()
@@ -615,8 +640,12 @@ class TestResetPages(unittest.TestCase):
         self.assertTrue(path.is_file())
         text = path.read_text(encoding="utf-8")
         self.assertLess(text.index("At least 12 characters"), text.index('id="password"'))
-        self.assertIn("at most 72 characters", text.lower())
-        self.assertIn("one symbol", text.lower())
+        self.assertIn("At least 12 characters", text)
+        self.assertIn("Must contain one of each:", text)
+        self.assertIn("Lowercase letter", text)
+        self.assertIn("Uppercase letter", text)
+        self.assertIn("Digit", text)
+        self.assertIn("One symbol, such as ! or #", text)
         self.assertIn("location.hash", text)
         self.assertIn("history.replaceState", text)
         self.assertIn('params.get("token_hash")', text)
@@ -691,11 +720,19 @@ class TestResetPages(unittest.TestCase):
         page = self.client.get("/signup")
         self.assertEqual(page.status_code, 200)
         text = page.get_data(as_text=True)
-        self.assertIn("At least 12 characters and at most 72 characters.", text)
-        self.assertIn("One lowercase letter, one uppercase letter, one digit, and one symbol.", text)
-        self.assertIn("Not your email address, and not a common word.", text)
+        self.assertIn("At least 12 characters", text)
+        self.assertIn("Must contain one of each:", text)
+        self.assertIn("Lowercase letter", text)
+        self.assertIn("Uppercase letter", text)
+        self.assertIn("Digit", text)
+        self.assertIn("One symbol, such as ! or #", text)
         self.assertIn("res.message", text)
         self.assertIn("showError(msg", text)
+
+    def test_signup_and_reset_requirements_lists_match(self):
+        signup = _requirements_list("app/templates/signup.html")
+        reset = _requirements_list("app/templates/reset_password.html")
+        self.assertEqual(signup, reset)
 
 
 class TestPasswordResetCsrf(unittest.TestCase):
