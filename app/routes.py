@@ -775,21 +775,6 @@ def organize_by_learning_objectives(students, learning_objectives):
     return list(lo_dict.values())
 
 
-def ensure_profile_exists(user_id, full_name=None, role='instructor'):
-    """
-    Upserts a row in the profiles table for the given user_id.
-    Prevents foreign key errors when inserting classes or other records
-    that reference profiles.id.
-    """
-    data = {"id": user_id, "role": role}
-    if full_name:
-        data["full_name"] = full_name
-    try:
-        supabase_admin.table("profiles").upsert(data, on_conflict="id").execute()
-    except Exception:
-        logger.debug("Profile upsert skipped for %s — may already exist", user_id)
-
-
 def normalize_profile(enrollment):
     prof = enrollment.get('profiles', {})
     if isinstance(prof, list):
@@ -1292,9 +1277,18 @@ def signup_page():
     from config import Config
     return render_template("signup.html", invite_code_required=bool(Config.SIGNUP_INVITE_CODE))
 
-@main_bp.route("/logout")
+@main_bp.route("/logout", methods=["POST"])
 def logout():
-    reason = request.args.get("reason")
+    from app.app_sessions import revoke_live_session
+    reason = request.form.get("reason")
+    try:
+        revoke_live_session(session.get("session_token"), session.get("user_id"))
+    except Exception as exc:
+        logger.error(
+            "app_sessions revoke failed user_id=%s: %s",
+            session.get("user_id"),
+            exc,
+        )
     session.clear()
     if reason == "inactivity":
         return redirect(url_for("main.login_page", reason="inactivity"))
@@ -1385,11 +1379,35 @@ def login():
             if role != "instructor":
                 return jsonify({"success": False, "message": "Invalid credentials"}), 401
 
+            from app.app_sessions import (
+                absolute_expiry,
+                delete_stale_sessions,
+                new_session_token,
+                remember_app_session,
+            )
+            token = new_session_token()
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            expires_at = absolute_expiry()
+            supabase_admin.table("app_sessions").insert({
+                "token_hash": token_hash,
+                "user_id": user_id,
+                "expires_at": expires_at.isoformat(),
+            }).execute()
+            remember_app_session(token_hash, user_id, expires_at, time.monotonic())
             session.clear()
             session['user_id'] = user_id
             session['role'] = role
             session['full_name'] = result.user.user_metadata.get('full_name', '')
             session['csrf_token'] = secrets.token_urlsafe(32)
+            session['session_token'] = token
+            try:
+                delete_stale_sessions()
+            except Exception as exc:
+                logger.error(
+                    "app_sessions cleanup failed user_id=%s: %s",
+                    user_id,
+                    exc,
+                )
             return jsonify({"success": True, "redirect": _INSTRUCTOR_HOME})
         return jsonify({"success": False, "message": "Invalid credentials"})
     except Exception as e:
@@ -5422,13 +5440,6 @@ def add_class():
     user_id = session['user_id']
 
     try:
-        # Always upsert the profile first to satisfy the foreign key constraint.
-        ensure_profile_exists(
-            user_id,
-            full_name=session.get('full_name'),
-            role=session.get('role', 'instructor')
-        )
-
         new_class_data = {
             "name": cleaned["name"],
             "semester": cleaned["semester"],

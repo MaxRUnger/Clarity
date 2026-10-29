@@ -68,9 +68,17 @@ class Config:
     SIGNUP_INVITE_CODE = os.environ.get("SIGNUP_INVITE_CODE")
 
     # Session cookie hardening.
-    SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", IS_PRODUCTION)
+    SESSION_COOKIE_SECURE = _env_bool(
+        "SESSION_COOKIE_SECURE",
+        IS_PRODUCTION or _running_on_railway(),
+    )
     SESSION_COOKIE_HTTPONLY = _env_bool("SESSION_COOKIE_HTTPONLY", True)
-    SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+    _samesite = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+    if _samesite not in ("Lax", "Strict", "None"):
+        raise RuntimeError("SESSION_COOKIE_SAMESITE must be Lax, Strict, or None.")
+    if _samesite == "None" and not SESSION_COOKIE_SECURE:
+        raise RuntimeError("SESSION_COOKIE_SAMESITE=None requires SESSION_COOKIE_SECURE.")
+    SESSION_COOKIE_SAMESITE = _samesite
     SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "clarity_session")
     PERMANENT_SESSION_LIFETIME = timedelta(
         minutes=int(os.environ.get("SESSION_LIFETIME_MINUTES", "120"))

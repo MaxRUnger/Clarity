@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from flask import jsonify, session
 
 from app import create_app
+from tests.session_plant import plant_session, serving_admin
 
 
 def _app():
@@ -28,13 +29,21 @@ class TestIdleSession(unittest.TestCase):
         self.app = _app()
         self.assertEqual(self.app.permanent_session_lifetime, timedelta(minutes=120))
         self.client = self.app.test_client()
+        self.session_admin = patch("app.routes.supabase_admin", serving_admin())
+        self.session_admin.start()
+
+    def tearDown(self):
+        self.session_admin.stop()
 
     def _sign_in_at(self, timestamp):
-        with patch("itsdangerous.timed.time.time", return_value=timestamp):
-            with self.client.session_transaction() as sess:
-                sess["user_id"] = "prof-1"
-                sess["role"] = "instructor"
-                sess["csrf_token"] = "tok"
+        plant_session(
+            self.client,
+            user_id="prof-1",
+            role="instructor",
+            csrf_token="tok",
+            session_token="idle-token",
+            when=timestamp,
+        )
 
     def test_idle_session_expires_after_121_minutes(self):
         t0 = 1_700_000_000
@@ -88,7 +97,7 @@ class TestIdleSession(unittest.TestCase):
 
     def test_logout_deletes_the_cookie_and_the_next_request_has_no_user(self):
         self._sign_in_at(1_700_000_000)
-        rv = self.client.get("/logout")
+        rv = self.client.post("/logout", data={"csrf_token": "tok"})
         self.assertEqual(rv.status_code, 302)
         deleted = [
             cookie for cookie in rv.headers.getlist("Set-Cookie")
@@ -110,13 +119,21 @@ class TestSessionTimeout(unittest.TestCase):
     def setUp(self):
         self.app = _app()
         self.client = self.app.test_client()
+        self.session_admin = patch("app.routes.supabase_admin", serving_admin())
+        self.session_admin.start()
+
+    def tearDown(self):
+        self.session_admin.stop()
 
     def _sign_in_at(self, timestamp):
-        with patch("itsdangerous.timed.time.time", return_value=timestamp):
-            with self.client.session_transaction() as sess:
-                sess["user_id"] = "prof-1"
-                sess["role"] = "instructor"
-                sess["csrf_token"] = "tok"
+        plant_session(
+            self.client,
+            user_id="prof-1",
+            role="instructor",
+            csrf_token="tok",
+            session_token="idle-token",
+            when=timestamp,
+        )
 
     def test_status_reports_time_left_and_does_not_slide(self):
         t0 = 1_700_000_000
@@ -223,7 +240,10 @@ class TestSessionTimeout(unittest.TestCase):
             "window.runAutosave",
             "Promise.race",
             "5000",
-            "/logout?reason=inactivity",
+            'form.action = "/logout"',
+            'reason.value = "inactivity"',
+            'meta[name="csrf-token"]',
+            'csrf.name = "csrf_token"',
             "sessionTimeoutConfig",
             "/api/session-status",
             "/api/session-keepalive",

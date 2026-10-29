@@ -872,7 +872,7 @@ class TestPublicRoutes(unittest.TestCase):
 
     def test_logout_redirects(self):
         response = self.client.get('/logout')
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 405)
 
 
 class TestRequireJsonObject(unittest.TestCase):
@@ -5900,8 +5900,7 @@ class TestClassSectionNumber(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             session["create_class_token"] = token
-            with patch("app.routes.ensure_profile_exists"), \
-                 patch("app.routes.supabase_admin") as sb:
+            with patch("app.routes.supabase_admin") as sb:
                 sb.table.return_value.insert.side_effect = insert
                 result = add_class()
         return result, saved.get("payload")
@@ -6061,8 +6060,7 @@ class TestClassSectionNumber(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             session["create_class_token"] = "schema-create"
-            with patch("app.routes.ensure_profile_exists"), \
-                 patch("app.routes.supabase_admin") as sb:
+            with patch("app.routes.supabase_admin") as sb:
                 sb.table.return_value.insert.side_effect = insert
                 result = add_class()
         self.assertEqual(result[1], 500)

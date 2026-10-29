@@ -77,7 +77,9 @@ def create_app(config_class=Config):
     # Late import: `app.routes` pulls in models / Supabase clients, so we want
     # config to be applied before that import chain runs.
     from app.routes import main_bp, class_display_title
+    from app.app_sessions import validate_app_session
     app.register_blueprint(main_bp)
+    app.before_request(validate_app_session)
 
     # Loud warning at boot: several in-memory stores in `app.routes`
     # (`_rate_limit_events`, `_used_form_tokens`)

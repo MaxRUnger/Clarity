@@ -7,7 +7,9 @@ import unittest.mock
 from datetime import datetime, timedelta, timezone
 
 from app import create_app
+from app.app_sessions import clear_app_session_cache
 from app.student_names import normalize_email
+from tests.session_plant import plant_session, serving_admin, session_row
 
 HOLD = "This address was added or changed less than 24 hours ago."
 INVALID = "The saved email address is not valid."
@@ -137,11 +139,22 @@ class TestEmailRelay(unittest.TestCase):
         self.app = create_app()
         self.app.config["TESTING"] = True
         self.client = self.app.test_client()
-        with self.client.session_transaction() as sess:
-            sess["user_id"] = "inst1"
-            sess["role"] = "instructor"
-            sess["full_name"] = "Estes, Brody"
-            sess["csrf_token"] = "test-csrf"
+        clear_app_session_cache()
+        plant_session(
+            self.client,
+            user_id="inst1",
+            role="instructor",
+            csrf_token="test-csrf",
+            session_token="relay-token",
+            full_name="Estes, Brody",
+        )
+        self.session_admin = unittest.mock.patch(
+            "app.routes.supabase_admin", serving_admin()
+        )
+        self.session_admin.start()
+
+    def tearDown(self):
+        self.session_admin.stop()
 
     def _db(self, email="ada@school.edu", email_set_at=None, students=None):
         if students is None:
@@ -168,6 +181,7 @@ class TestEmailRelay(unittest.TestCase):
                     "id": "inst1",
                     "full_name": "Estes, Brody",
                 }],
+                "app_sessions": [session_row("relay-token", "inst1")],
             },
             "inserts": [],
             "instructor_count": 0,
@@ -508,7 +522,7 @@ class TestEmailRelay(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["sent"], 40)
-        self.assertEqual(calls["total"], 45)
+        self.assertEqual(calls["total"], 46)
         self.assertEqual(db["email_sends_reads"], 2)
 
     def test_one_hundred_twenty_hashes_use_three_recipient_reads(self):

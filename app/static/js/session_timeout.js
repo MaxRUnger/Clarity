@@ -126,9 +126,28 @@
     } catch (err) {
       channel = null;
     }
+    function csrfToken() {
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      return meta ? String(meta.getAttribute("content") || "") : "";
+    }
+
     function finish() {
       logoutAutosaveRunning = false;
-      window.location.assign("/logout?reason=inactivity");
+      var form = document.createElement("form");
+      form.method = "POST";
+      form.action = "/logout";
+      var reason = document.createElement("input");
+      reason.type = "hidden";
+      reason.name = "reason";
+      reason.value = "inactivity";
+      form.appendChild(reason);
+      var csrf = document.createElement("input");
+      csrf.type = "hidden";
+      csrf.name = "csrf_token";
+      csrf.value = csrfToken();
+      form.appendChild(csrf);
+      document.body.appendChild(form);
+      form.submit();
     }
     if (serverExpired || typeof window.runAutosave !== "function") {
       finish();
