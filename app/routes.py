@@ -53,6 +53,7 @@ from app.passwords import password_error
 from app.lo_order import lo_sort_key
 from app.local_time import local_today
 from app.archive_snapshot import _IN_CHUNK_SIZE
+from app.csv_safety import csv_safe_row
 from app.paging import fetch_all_rows
 from app.models import (
     Course,
@@ -211,21 +212,6 @@ def _csv_row_norm_keys(row: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
-def _csv_formula_safe(value: Any) -> str:
-    """Neutralize CSV/spreadsheet formula injection (OWASP CSV injection).
-
-    A name/title/description stored verbatim here could later be opened in
-    Excel/Sheets (e.g. via a future export) and execute as a formula if it
-    starts with =, +, -, or @. Prefixing with a single quote forces every
-    major spreadsheet app to treat it as literal text; it's invisible in
-    plain HTML/JSON contexts where the value is just displayed as-is.
-    """
-    s = str(value or "")
-    if s and s[0] in ("=", "+", "-", "@"):
-        return "'" + s
-    return s
-
-
 def parse_learning_objectives_csv_text(text: str) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Parse CSV for Canvas-style outcomes: required title; optional description and calculation_int.
 
@@ -265,9 +251,9 @@ def parse_learning_objectives_csv_text(text: str) -> Tuple[List[Dict[str, Any]],
                 required_ms = DEFAULT_REQUIRED_MS
         rows_out.append(
             {
-                "vendor_code": _csv_formula_safe(title),
+                "vendor_code": title,
                 "required_ms": required_ms,
-                "description": _csv_formula_safe(desc) or None,
+                "description": desc or None,
             }
         )
     if not rows_out:
@@ -382,7 +368,7 @@ def parse_students_csv_text(text: str) -> Tuple[List[Dict[str, str]], List[str]]
         if not full_name or not email:
             continue
         rows.append({
-            "full_name": _csv_formula_safe(full_name),
+            "full_name": full_name,
             "email": email,
             "line": str(line_no),
         })
@@ -841,14 +827,14 @@ def _gradesheet_csv_data_rows(
     prev_scores = prev_map or {}
     for student in students:
         sid = str(student.get("id") or "").strip()
-        name = _csv_formula_safe(student.get("full_name") or "")
-        hw_cell = _csv_formula_safe(_csv_format_hw_score(hw_map.get(sid)))
+        name = student.get("full_name") or ""
+        hw_cell = _csv_format_hw_score(hw_map.get(sid))
         lo_cells = [
-            _csv_formula_safe(letter_map.get((sid, str(lo.get("id") or "").strip()), ""))
+            letter_map.get((sid, str(lo.get("id") or "").strip()), "")
             for lo in learning_objectives
         ]
         if include_hw_prev:
-            prev_cell = _csv_formula_safe(_csv_format_hw_score(prev_scores.get(sid)))
+            prev_cell = _csv_format_hw_score(prev_scores.get(sid))
             rows.append([name, prev_cell, hw_cell] + lo_cells)
         else:
             rows.append([name, hw_cell] + lo_cells)
@@ -871,19 +857,19 @@ def _build_gradesheet_csv_text(
 ) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Assignment", _csv_formula_safe(assignment_name)])
-    writer.writerow(["Date", date_value])
+    writer.writerow(csv_safe_row(["Assignment", assignment_name]))
+    writer.writerow(csv_safe_row(["Date", date_value]))
     if include_clear_warning:
-        writer.writerow(["NOTE", _BLANK_GRADESHEET_NOTE])
-    writer.writerow([])
+        writer.writerow(csv_safe_row(["NOTE", _BLANK_GRADESHEET_NOTE]))
+    writer.writerow(csv_safe_row([]))
     header = ["Student Name"]
     if include_hw_prev:
         header.append(Homework.HW_PREV_HEADER)
     header.append("HW")
     header.extend(vendor_codes)
-    writer.writerow(header)
+    writer.writerow(csv_safe_row(header))
     for data_row in data_rows:
-        writer.writerow(data_row)
+        writer.writerow(csv_safe_row(data_row))
     return "\ufeff" + output.getvalue()
 
 
@@ -3949,7 +3935,7 @@ def export_blank_assignment_csv(class_id, assignment_id):
 
     assignment_name = assignment.get('name') or 'Assignment'
     date_value = assignment.get('date_returned') or date.today().isoformat()
-    vendor_codes = [_csv_formula_safe(lo.get('vendor_code') or '') for lo in learning_objectives]
+    vendor_codes = [lo.get('vendor_code') or '' for lo in learning_objectives]
     data_rows = _gradesheet_csv_data_rows(
         students, learning_objectives, hw_map, {}
     )
@@ -3980,7 +3966,7 @@ def export_assignment_csv(class_id, assignment_id):
 
     assignment_name = assignment.get('name') or 'Assignment'
     date_value = assignment.get('date_returned') or date.today().isoformat()
-    vendor_codes = [_csv_formula_safe(lo.get('vendor_code') or '') for lo in learning_objectives]
+    vendor_codes = [lo.get('vendor_code') or '' for lo in learning_objectives]
     letter_map = _gradesheet_letter_map_for_assignment(
         assignment_id, students, learning_objectives
     )

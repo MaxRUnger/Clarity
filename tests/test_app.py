@@ -2459,7 +2459,7 @@ class TestGradesheetExportPrefill(unittest.TestCase):
             students, los, hw_map, {}, True, prev_map
         )
         self.assertEqual(rows[0], ["Doe, Jane", "", "85", ""])
-        self.assertEqual(rows[1], ["Smith, Alex", "'-1", "0", ""])
+        self.assertEqual(rows[1], ["Smith, Alex", "-1", "0", ""])
         filled = _build_gradesheet_csv_text(
             "Quiz 1", "2026-08-20", ["D1"], rows, False, True
         )

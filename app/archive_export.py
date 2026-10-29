@@ -11,10 +11,10 @@ import fitz
 
 from app.authentication import supabase_admin
 from app.models import Course, Homework
+from app.csv_safety import csv_safe_row
 from app.paging import fetch_all_rows
 from app.routes import (
     _build_gradesheet_csv_text,
-    _csv_formula_safe,
     _gradesheet_csv_data_rows,
     _gradesheet_letter_map_for_assignment,
     _process_enrollments,
@@ -246,14 +246,14 @@ def _objectives_csv(columns: List[Dict[str, Any]], grid_rows: List[Dict[str, Any
     output = io.StringIO()
     writer = csv.writer(output)
     header = ["Student"]
-    header.extend(_csv_formula_safe(column.get("vendor_code") or "") for column in columns)
+    header.extend(column.get("vendor_code") or "" for column in columns)
     header.append("Progress")
-    writer.writerow(header)
+    writer.writerow(csv_safe_row(header))
     for row in grid_rows:
-        cells = [_csv_formula_safe(row.get("name") or "")]
+        cells = [row.get("name") or ""]
         cells.extend(cell.get("display") or "" for cell in row.get("cells") or [])
         cells.append(row.get("progress_text") or "")
-        writer.writerow(cells)
+        writer.writerow(csv_safe_row(cells))
     return "\ufeff" + output.getvalue()
 
 
@@ -276,7 +276,7 @@ def _assignment_csv(class_id: str, assignment: Dict[str, Any], pool, students) -
     letter_map = _gradesheet_letter_map_for_assignment(
         assignment.get("id"), students, learning_objectives
     )
-    vendor_codes = [_csv_formula_safe(lo.get("vendor_code") or "") for lo in learning_objectives]
+    vendor_codes = [lo.get("vendor_code") or "" for lo in learning_objectives]
     data_rows = _gradesheet_csv_data_rows(
         students, learning_objectives, hw_map, letter_map, True, prev_map
     )
