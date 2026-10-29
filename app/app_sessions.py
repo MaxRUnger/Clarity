@@ -131,6 +131,10 @@ _EXEMPT = {
     "main.login",
     "main.signup",
     "main.logout",
+    "main.forgot_password_page",
+    "main.forgot_password",
+    "main.reset_password_page",
+    "main.reset_password",
 }
 
 
@@ -169,6 +173,19 @@ def revoke_live_session(token, user_id):
     }).eq("token_hash", token_hash).execute()
     with _lock:
         _cache.pop(token_hash, None)
+
+
+def revoke_user_sessions(user_id):
+    if not user_id:
+        return
+    user_id = str(user_id)
+    _admin().table("app_sessions").update({
+        "revoked_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("user_id", user_id).is_("revoked_at", "null").execute()
+    with _lock:
+        for key, (_cached_at, cached_user, _expires_at) in list(_cache.items()):
+            if cached_user == user_id:
+                del _cache[key]
 
 
 def delete_stale_sessions():

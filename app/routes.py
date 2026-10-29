@@ -33,6 +33,7 @@ from itsdangerous import BadSignature
 from collections import defaultdict, deque
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import quote
 from flask import (  # type: ignore
     Blueprint,
     render_template,
@@ -46,7 +47,9 @@ from flask import (  # type: ignore
     g,
 )
 from werkzeug.utils import secure_filename
+from config import Config
 from app.authentication import supabase, supabase_admin
+from app.passwords import password_error
 from app.lo_order import lo_sort_key
 from app.local_time import local_today
 from app.archive_snapshot import _IN_CHUNK_SIZE
@@ -96,7 +99,6 @@ _INSTRUCTOR_HOME = "/instructor/dashboard"
 
 def _public_base_url():
     """Return the configured public base URL, or an empty string."""
-    from config import Config
     return (Config.PUBLIC_BASE_URL or "").strip().rstrip("/")
 
 
@@ -664,17 +666,40 @@ def _client_ip() -> str:
     return (request.remote_addr or "unknown").strip()
 
 
-def _rate_limit(key_prefix: str, limit: int, window_sec: int) -> bool:
+_RATE_LIMIT_MAX_IDLE = 3600
+
+
+def _drop_idle_rate_limit_buckets(now: float) -> None:
+    abandoned = [
+        key
+        for key, events in _rate_limit_events.items()
+        if (not events) or (now - events[-1]) > _RATE_LIMIT_MAX_IDLE
+    ]
+    for key in abandoned:
+        del _rate_limit_events[key]
+
+
+def _rate_limit_bucket(bucket_key: str, limit: int, window_sec: int) -> bool:
+    """Record one hit on an arbitrary bucket key. Return False when over the limit."""
+    # Idle pruning drops a bucket after _RATE_LIMIT_MAX_IDLE seconds, so every window must be at most that long.
+    if window_sec > _RATE_LIMIT_MAX_IDLE:
+        raise ValueError("rate limit window exceeds the idle pruning limit")
     now = time.time()
-    key = f"{key_prefix}:{_client_ip()}:{session.get('user_id', 'anon')}"
     with _rate_limit_lock:
-        dq = _rate_limit_events[key]
+        dq = _rate_limit_events[bucket_key]
         while dq and (now - dq[0]) > window_sec:
             dq.popleft()
         if len(dq) >= limit:
+            _drop_idle_rate_limit_buckets(now)
             return False
         dq.append(now)
+        _drop_idle_rate_limit_buckets(now)
         return True
+
+
+def _rate_limit(key_prefix: str, limit: int, window_sec: int) -> bool:
+    key = f"{key_prefix}:{_client_ip()}:{session.get('user_id', 'anon')}"
+    return _rate_limit_bucket(key, limit, window_sec)
 
 
 def rate_limited(key_prefix: str, limit: int, window_sec: int):
@@ -1274,8 +1299,18 @@ def login_page():
 
 @main_bp.route("/signup")
 def signup_page():
-    from config import Config
     return render_template("signup.html", invite_code_required=bool(Config.SIGNUP_INVITE_CODE))
+
+
+@main_bp.route("/forgot-password")
+def forgot_password_page():
+    return render_template("forgot_password.html")
+
+
+@main_bp.route("/reset-password")
+def reset_password_page():
+    return render_template("reset_password.html")
+
 
 @main_bp.route("/logout", methods=["POST"])
 def logout():
@@ -1419,7 +1454,6 @@ def login():
 def signup():
     data = request.get_json()
     try:
-        from config import Config
         invite_code_env = (Config.SIGNUP_INVITE_CODE or "").strip()
         if Config.IS_PRODUCTION and not invite_code_env:
             return jsonify({"success": False, "message": "Signup is not available."}), 403
@@ -1435,6 +1469,9 @@ def signup():
         login_redirect_url = _public_base_url()
         if not login_redirect_url:
             return jsonify({"success": False, "message": "Signup is not available."}), 403
+        problem = password_error(data.get("password"), data.get("email"))
+        if problem:
+            return jsonify({"success": False, "message": problem}), 400
         login_redirect_url = f"{login_redirect_url}/login"
         result = supabase.auth.sign_up({
             "email": data.get("email"),
@@ -1461,6 +1498,170 @@ def signup():
 
     except Exception as e:
         return _safe_api_error("Signup failed. Please try again.", 400, log_detail=e)
+
+
+def _forgot_ok():
+    return jsonify({
+        "success": True,
+        "message": "If an instructor account exists for that address, a reset message is on its way.",
+    })
+
+
+def _profile_role(user_id):
+    try:
+        response = (
+            supabase_admin.table("profiles")
+            .select("role")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Password reset profile lookup failed: %s", type(exc).__name__)
+        return ""
+    rows = response.data or []
+    if not rows:
+        return ""
+    return str((rows[0] or {}).get("role") or "").strip().lower()
+
+
+def _send_account_email(to_email: str, subject: str, body_text: str) -> bool:
+    api_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    from_email = (os.environ.get("REPORTS_FROM_EMAIL") or "").strip()
+    if not api_key or not from_email:
+        logger.error("Account email blocked: mail is not configured")
+        return False
+    payload = {
+        "from": f'"Clarity Grader" <{from_email}>',
+        "to": [to_email],
+        "subject": subject,
+        "text": body_text,
+    }
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=20,
+        )
+    except Exception as exc:
+        logger.error("Account email failed: %s", type(exc).__name__)
+        return False
+    if resp.status_code >= 400:
+        logger.error("Account email rejected status %s", resp.status_code)
+        return False
+    return True
+
+
+def verify_recovery_token(token_hash):
+    from app.authentication import new_anon_client
+    client = new_anon_client()
+    return client.auth.verify_otp({"token_hash": token_hash, "type": "recovery"})
+
+
+@main_bp.route("/api/forgot-password", methods=["POST"])
+def forgot_password():
+    data, error = _require_json_object()
+    if error:
+        return error
+    if not _rate_limit("forgot_password_ip", 10, 900):
+        return jsonify({"success": False, "error": "Rate limit exceeded. Please retry shortly."}), 429
+    email = normalize_email((data or {}).get("email"))
+    if not email:
+        return jsonify({"success": False, "message": "Enter a valid email address."}), 400
+    if not _rate_limit_bucket(f"forgot_password_email:{email}", 5, 3600):
+        return jsonify({"success": False, "error": "Rate limit exceeded. Please retry shortly."}), 429
+    base = _public_base_url()
+    if not base:
+        return jsonify({"success": False, "message": "Password reset is not available."}), 403
+    try:
+        link = supabase_admin.auth.admin.generate_link({
+            "type": "recovery",
+            "email": email,
+            "options": {"redirect_to": f"{base}/reset-password"},
+        })
+    except Exception as exc:
+        logger.error("Password reset link failed: %s", type(exc).__name__)
+        return _forgot_ok()
+    user = getattr(link, "user", None)
+    user_id = getattr(user, "id", None) if user is not None else None
+    properties = getattr(link, "properties", None)
+    hashed = getattr(properties, "hashed_token", None) if properties is not None else None
+    if not user_id or not hashed:
+        return _forgot_ok()
+    if _profile_role(user_id) != "instructor":
+        return _forgot_ok()
+    if not _rate_limit_bucket(f"forgot_password_account:{user_id}", 3, 3600):
+        return _forgot_ok()
+    token = quote(str(hashed), safe="")
+    mailed = quote(email, safe="")
+    url = f"{base}/reset-password#token_hash={token}&type=recovery&email={mailed}"
+    _send_account_email(
+        email,
+        "Reset your Clarity Grader password",
+        "Use this link to choose a new Clarity Grader password. It expires in one hour.\n\n"
+        f"{url}\n\n"
+        "If you did not ask for this, you can ignore this message.\n",
+    )
+    return _forgot_ok()
+
+
+@main_bp.route("/api/reset-password", methods=["POST"])
+def reset_password():
+    data, error = _require_json_object()
+    if error:
+        return error
+    email = normalize_email((data or {}).get("email"))
+    token_hash = str((data or {}).get("token_hash") or "").strip()
+    password = (data or {}).get("password")
+    if not email or not token_hash or not isinstance(password, str):
+        return jsonify({"success": False, "message": "This reset link is invalid or expired."}), 400
+    problem = password_error(password, email)
+    if problem:
+        return jsonify({"success": False, "message": problem}), 400
+    if not _rate_limit("reset_password_ip", 10, 900):
+        return jsonify({"success": False, "error": "Rate limit exceeded. Please retry shortly."}), 429
+    try:
+        verified = verify_recovery_token(token_hash)
+    except Exception as exc:
+        logger.error("Password reset verify failed: %s", type(exc).__name__)
+        return jsonify({"success": False, "message": "This reset link is invalid or expired."}), 400
+    user = getattr(verified, "user", None)
+    user_id = getattr(user, "id", None) if user is not None else None
+    verified_email = normalize_email(
+        getattr(user, "email", None) if user is not None else None
+    )
+    if not user_id or verified_email != email or _profile_role(user_id) != "instructor":
+        return jsonify({"success": False, "message": "This reset link is invalid or expired."}), 400
+    try:
+        from app.app_sessions import revoke_user_sessions
+        revoke_user_sessions(user_id)
+    except Exception as exc:
+        logger.error("Password reset session revoke failed: %s", type(exc).__name__)
+        return jsonify({
+            "success": False,
+            "message": "We couldn't save the new password. Request a new reset link.",
+        }), 500
+    try:
+        supabase_admin.auth.admin.update_user_by_id(user_id, {"password": password})
+    except Exception as exc:
+        logger.error("Password reset update failed: %s", type(exc).__name__)
+        return jsonify({
+            "success": False,
+            "message": "We couldn't save the new password. Request a new reset link.",
+        }), 400
+    sent = _send_account_email(
+        email,
+        "Your Clarity Grader password was changed",
+        "Your Clarity Grader password was changed.\n\n"
+        "If you did not make this change, contact the site owner.\n",
+    )
+    if not sent:
+        logger.error("Password changed notice failed")
+    return jsonify({"success": True, "redirect": "/login?reset=1"})
 
 
 # ============================================================================

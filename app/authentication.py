@@ -28,5 +28,10 @@ service_key = os.environ["SUPABASE_SERVICE_KEY"]
 # Anon client for auth (login/signup)
 supabase: Client = create_client(url, key)
 
+
+def new_anon_client() -> Client:
+    """Return a new anon client so auth calls do not share the module session."""
+    return create_client(url, key)
+
 # Service role client for database operations (bypasses RLS)
 supabase_admin: Client = create_client(url, service_key)

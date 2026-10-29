@@ -131,7 +131,7 @@ def create_app(config_class=Config):
         endpoint = (request.endpoint or "").strip()
         if endpoint in {"main.login", "main.signup"}:
             return None
-        if "user_id" not in session:
+        if endpoint not in {"main.forgot_password", "main.reset_password"} and "user_id" not in session:
             return None
         expected = session.get("csrf_token") or ""
         provided = (

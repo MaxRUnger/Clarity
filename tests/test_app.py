@@ -10998,7 +10998,7 @@ class TestSignupEmailRedirect(unittest.TestCase):
         self.payload = {
             "name": "Ada Lovelace",
             "email": "ada@example.com",
-            "password": "correct-horse",
+            "password": "Correct-horse1!",
             "invite_code": "",
         }
 
