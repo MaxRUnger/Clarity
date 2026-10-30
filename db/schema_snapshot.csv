@@ -1,0 +1,1933 @@
+dump
+"{
+    ""tables"": [
+        {
+            ""rls"": true,
+            ""table"": ""app_sessions""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""archive_restore_stage""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""archived_classes""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""assignment_objectives""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""assignments""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""classes""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""email_sends""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""enrollment_attach_log""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""enrollments""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""free_passes""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""grade_change_log""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""grades""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""homework_scores""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""learning_objectives""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""profiles""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""revision_reminders_sent""
+        },
+        {
+            ""rls"": true,
+            ""table"": ""signup_invites""
+        }
+    ],
+    ""columns"": [
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""app_sessions"",
+            ""column"": ""token_hash"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""app_sessions"",
+            ""column"": ""user_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""app_sessions"",
+            ""column"": ""created_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""app_sessions"",
+            ""column"": ""expires_at"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""app_sessions"",
+            ""column"": ""revoked_at"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""archive_restore_stage"",
+            ""column"": ""attempt_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""archive_restore_stage"",
+            ""column"": ""table_name"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""archive_restore_stage"",
+            ""column"": ""seq"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""jsonb"",
+            ""type"": ""jsonb"",
+            ""table"": ""archive_restore_stage"",
+            ""column"": ""row_data"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""archive_restore_stage"",
+            ""column"": ""created_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""NO"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""archived_classes"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""archived_classes"",
+            ""column"": ""instructor_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""archived_classes"",
+            ""column"": ""class_name"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""archived_classes"",
+            ""column"": ""semester"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""archived_classes"",
+            ""column"": ""days"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""archived_classes"",
+            ""column"": ""section_number"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""archived_classes"",
+            ""column"": ""student_count"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""archived_classes"",
+            ""column"": ""assignment_count"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 8
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""archived_classes"",
+            ""column"": ""archived_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""NO"",
+            ""position"": 9
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""archived_classes"",
+            ""column"": ""storage_path"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 10
+        },
+        {
+            ""udt"": ""int8"",
+            ""type"": ""bigint"",
+            ""table"": ""archived_classes"",
+            ""column"": ""size_bytes"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 11
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""archived_classes"",
+            ""column"": ""snapshot_path"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 12
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""archived_classes"",
+            ""column"": ""restored_at"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 13
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""archived_classes"",
+            ""column"": ""restored_class_id"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 14
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""assignment_objectives"",
+            ""column"": ""assignment_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""assignment_objectives"",
+            ""column"": ""learning_objective_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""assignments"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""assignments"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""assignments"",
+            ""column"": ""name"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""assignments"",
+            ""column"": ""homework_group"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""assignments"",
+            ""column"": ""required_ms"",
+            ""default"": ""2"",
+            ""nullable"": ""YES"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""date"",
+            ""type"": ""date"",
+            ""table"": ""assignments"",
+            ""column"": ""date_returned"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""date"",
+            ""type"": ""date"",
+            ""table"": ""assignments"",
+            ""column"": ""revision_due"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""assignments"",
+            ""column"": ""created_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""YES"",
+            ""position"": 8
+        },
+        {
+            ""udt"": ""jsonb"",
+            ""type"": ""jsonb"",
+            ""table"": ""assignments"",
+            ""column"": ""enabled_exam_score_columns"",
+            ""default"": ""'[]'::jsonb"",
+            ""nullable"": ""NO"",
+            ""position"": 9
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""assignments"",
+            ""column"": ""assignment_type"",
+            ""default"": ""'mastery_opp'::text"",
+            ""nullable"": ""NO"",
+            ""position"": 10
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""classes"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""classes"",
+            ""column"": ""instructor_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""classes"",
+            ""column"": ""name"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""classes"",
+            ""column"": ""semester"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""classes"",
+            ""column"": ""days"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 9
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""classes"",
+            ""column"": ""created_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""YES"",
+            ""position"": 10
+        },
+        {
+            ""udt"": ""bool"",
+            ""type"": ""boolean"",
+            ""table"": ""classes"",
+            ""column"": ""auto_convert_m"",
+            ""default"": ""false"",
+            ""nullable"": ""YES"",
+            ""position"": 11
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""classes"",
+            ""column"": ""min_masteries"",
+            ""default"": ""2"",
+            ""nullable"": ""YES"",
+            ""position"": 13
+        },
+        {
+            ""udt"": ""bool"",
+            ""type"": ""boolean"",
+            ""table"": ""classes"",
+            ""column"": ""is_online"",
+            ""default"": ""false"",
+            ""nullable"": ""NO"",
+            ""position"": 15
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""classes"",
+            ""column"": ""section_number"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 16
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""email_sends"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""email_sends"",
+            ""column"": ""instructor_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""email_sends"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""email_sends"",
+            ""column"": ""student_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""email_sends"",
+            ""column"": ""recipient_hash"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""email_sends"",
+            ""column"": ""kind"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""email_sends"",
+            ""column"": ""created_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""NO"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""enrollment_attach_log"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""enrollment_attach_log"",
+            ""column"": ""instructor_id"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""enrollment_attach_log"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""enrollment_attach_log"",
+            ""column"": ""profile_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""enrollment_attach_log"",
+            ""column"": ""sheet_name"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""enrollment_attach_log"",
+            ""column"": ""created_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""NO"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""enrollments"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""enrollments"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""enrollments"",
+            ""column"": ""student_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""bool"",
+            ""type"": ""boolean"",
+            ""table"": ""enrollments"",
+            ""column"": ""muted"",
+            ""default"": ""false"",
+            ""nullable"": ""YES"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""free_passes"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""free_passes"",
+            ""column"": ""student_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""free_passes"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""free_passes"",
+            ""column"": ""passes_used"",
+            ""default"": ""0"",
+            ""nullable"": ""YES"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""student_id"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""learning_objective_id"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""assignment_id"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""operation"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""jsonb"",
+            ""type"": ""jsonb"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""old_value"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""jsonb"",
+            ""type"": ""jsonb"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""new_value"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 8
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""changed_by"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 9
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""grade_change_log"",
+            ""column"": ""changed_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""NO"",
+            ""position"": 10
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grades"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grades"",
+            ""column"": ""student_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grades"",
+            ""column"": ""learning_objective_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""grades"",
+            ""column"": ""top_score"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""grades"",
+            ""column"": ""second_score"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""date"",
+            ""type"": ""date"",
+            ""table"": ""grades"",
+            ""column"": ""r_deadline"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""grades"",
+            ""column"": ""graded_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""YES"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""grades"",
+            ""column"": ""updated_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""YES"",
+            ""position"": 8
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grades"",
+            ""column"": ""assignment_id"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 9
+        },
+        {
+            ""udt"": ""bool"",
+            ""type"": ""boolean"",
+            ""table"": ""grades"",
+            ""column"": ""counts_for_mastery"",
+            ""default"": ""true"",
+            ""nullable"": ""NO"",
+            ""position"": 10
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""grades"",
+            ""column"": ""last_modified_by"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 11
+        },
+        {
+            ""udt"": ""numeric"",
+            ""type"": ""numeric"",
+            ""table"": ""grades"",
+            ""column"": ""hw_score_at_entry"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 12
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""homework_scores"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""homework_scores"",
+            ""column"": ""student_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""homework_scores"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""homework_scores"",
+            ""column"": ""homework_group"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""numeric"",
+            ""type"": ""numeric"",
+            ""table"": ""homework_scores"",
+            ""column"": ""score_pct"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""homework_scores"",
+            ""column"": ""updated_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""YES"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""numeric"",
+            ""type"": ""numeric"",
+            ""table"": ""homework_scores"",
+            ""column"": ""prev_score_pct"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""vendor_code"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""name"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""description"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""homework_group"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""display_order"",
+            ""default"": ""0"",
+            ""nullable"": ""YES"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""created_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""YES"",
+            ""position"": 8
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""learning_objectives"",
+            ""column"": ""required_ms"",
+            ""default"": ""2"",
+            ""nullable"": ""YES"",
+            ""position"": 9
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""profiles"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""profiles"",
+            ""column"": ""full_name"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""profiles"",
+            ""column"": ""role"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""bool"",
+            ""type"": ""boolean"",
+            ""table"": ""profiles"",
+            ""column"": ""is_test_student"",
+            ""default"": ""false"",
+            ""nullable"": ""YES"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""profiles"",
+            ""column"": ""email"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""profiles"",
+            ""column"": ""sort_name"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""profiles"",
+            ""column"": ""email_set_at"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""revision_reminders_sent"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""revision_reminders_sent"",
+            ""column"": ""class_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""revision_reminders_sent"",
+            ""column"": ""student_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""revision_reminders_sent"",
+            ""column"": ""assignment_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""revision_reminders_sent"",
+            ""column"": ""learning_objective_id"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""date"",
+            ""type"": ""date"",
+            ""table"": ""revision_reminders_sent"",
+            ""column"": ""revision_due"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""revision_reminders_sent"",
+            ""column"": ""sent_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""NO"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""revision_reminders_sent"",
+            ""column"": ""sent_by"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 8
+        },
+        {
+            ""udt"": ""uuid"",
+            ""type"": ""uuid"",
+            ""table"": ""signup_invites"",
+            ""column"": ""id"",
+            ""default"": ""gen_random_uuid()"",
+            ""nullable"": ""NO"",
+            ""position"": 1
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""signup_invites"",
+            ""column"": ""code_hash"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 2
+        },
+        {
+            ""udt"": ""text"",
+            ""type"": ""text"",
+            ""table"": ""signup_invites"",
+            ""column"": ""label"",
+            ""default"": null,
+            ""nullable"": ""NO"",
+            ""position"": 3
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""signup_invites"",
+            ""column"": ""max_uses"",
+            ""default"": ""1"",
+            ""nullable"": ""NO"",
+            ""position"": 4
+        },
+        {
+            ""udt"": ""int4"",
+            ""type"": ""integer"",
+            ""table"": ""signup_invites"",
+            ""column"": ""used_count"",
+            ""default"": ""0"",
+            ""nullable"": ""NO"",
+            ""position"": 5
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""signup_invites"",
+            ""column"": ""expires_at"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 6
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""signup_invites"",
+            ""column"": ""revoked_at"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 7
+        },
+        {
+            ""udt"": ""timestamptz"",
+            ""type"": ""timestamp with time zone"",
+            ""table"": ""signup_invites"",
+            ""column"": ""created_at"",
+            ""default"": ""now()"",
+            ""nullable"": ""NO"",
+            ""position"": 8
+        }
+    ],
+    ""indexes"": [
+        {
+            ""name"": ""app_sessions_pkey"",
+            ""table"": ""app_sessions"",
+            ""definition"": ""CREATE UNIQUE INDEX app_sessions_pkey ON public.app_sessions USING btree (token_hash)""
+        },
+        {
+            ""name"": ""app_sessions_user_id_idx"",
+            ""table"": ""app_sessions"",
+            ""definition"": ""CREATE INDEX app_sessions_user_id_idx ON public.app_sessions USING btree (user_id)""
+        },
+        {
+            ""name"": ""archive_restore_stage_created_at_idx"",
+            ""table"": ""archive_restore_stage"",
+            ""definition"": ""CREATE INDEX archive_restore_stage_created_at_idx ON public.archive_restore_stage USING btree (created_at)""
+        },
+        {
+            ""name"": ""archive_restore_stage_pkey"",
+            ""table"": ""archive_restore_stage"",
+            ""definition"": ""CREATE UNIQUE INDEX archive_restore_stage_pkey ON public.archive_restore_stage USING btree (attempt_id, table_name, seq)""
+        },
+        {
+            ""name"": ""archived_classes_instructor_id_idx"",
+            ""table"": ""archived_classes"",
+            ""definition"": ""CREATE INDEX archived_classes_instructor_id_idx ON public.archived_classes USING btree (instructor_id)""
+        },
+        {
+            ""name"": ""archived_classes_pkey"",
+            ""table"": ""archived_classes"",
+            ""definition"": ""CREATE UNIQUE INDEX archived_classes_pkey ON public.archived_classes USING btree (id)""
+        },
+        {
+            ""name"": ""archived_classes_storage_path_key"",
+            ""table"": ""archived_classes"",
+            ""definition"": ""CREATE UNIQUE INDEX archived_classes_storage_path_key ON public.archived_classes USING btree (storage_path)""
+        },
+        {
+            ""name"": ""assignment_objectives_pkey"",
+            ""table"": ""assignment_objectives"",
+            ""definition"": ""CREATE UNIQUE INDEX assignment_objectives_pkey ON public.assignment_objectives USING btree (assignment_id, learning_objective_id)""
+        },
+        {
+            ""name"": ""idx_assignment_objectives_lo"",
+            ""table"": ""assignment_objectives"",
+            ""definition"": ""CREATE INDEX idx_assignment_objectives_lo ON public.assignment_objectives USING btree (learning_objective_id)""
+        },
+        {
+            ""name"": ""assignments_pkey"",
+            ""table"": ""assignments"",
+            ""definition"": ""CREATE UNIQUE INDEX assignments_pkey ON public.assignments USING btree (id)""
+        },
+        {
+            ""name"": ""idx_assignments_class_created"",
+            ""table"": ""assignments"",
+            ""definition"": ""CREATE INDEX idx_assignments_class_created ON public.assignments USING btree (class_id, created_at)""
+        },
+        {
+            ""name"": ""classes_pkey"",
+            ""table"": ""classes"",
+            ""definition"": ""CREATE UNIQUE INDEX classes_pkey ON public.classes USING btree (id)""
+        },
+        {
+            ""name"": ""idx_classes_instructor"",
+            ""table"": ""classes"",
+            ""definition"": ""CREATE INDEX idx_classes_instructor ON public.classes USING btree (instructor_id)""
+        },
+        {
+            ""name"": ""email_sends_instructor_created"",
+            ""table"": ""email_sends"",
+            ""definition"": ""CREATE INDEX email_sends_instructor_created ON public.email_sends USING btree (instructor_id, created_at)""
+        },
+        {
+            ""name"": ""email_sends_pkey"",
+            ""table"": ""email_sends"",
+            ""definition"": ""CREATE UNIQUE INDEX email_sends_pkey ON public.email_sends USING btree (id)""
+        },
+        {
+            ""name"": ""email_sends_recipient_created"",
+            ""table"": ""email_sends"",
+            ""definition"": ""CREATE INDEX email_sends_recipient_created ON public.email_sends USING btree (recipient_hash, created_at)""
+        },
+        {
+            ""name"": ""enrollment_attach_log_class_created_idx"",
+            ""table"": ""enrollment_attach_log"",
+            ""definition"": ""CREATE INDEX enrollment_attach_log_class_created_idx ON public.enrollment_attach_log USING btree (class_id, created_at DESC)""
+        },
+        {
+            ""name"": ""enrollment_attach_log_pkey"",
+            ""table"": ""enrollment_attach_log"",
+            ""definition"": ""CREATE UNIQUE INDEX enrollment_attach_log_pkey ON public.enrollment_attach_log USING btree (id)""
+        },
+        {
+            ""name"": ""enrollments_class_id_student_id_key"",
+            ""table"": ""enrollments"",
+            ""definition"": ""CREATE UNIQUE INDEX enrollments_class_id_student_id_key ON public.enrollments USING btree (class_id, student_id)""
+        },
+        {
+            ""name"": ""enrollments_pkey"",
+            ""table"": ""enrollments"",
+            ""definition"": ""CREATE UNIQUE INDEX enrollments_pkey ON public.enrollments USING btree (id)""
+        },
+        {
+            ""name"": ""idx_enrollments_class"",
+            ""table"": ""enrollments"",
+            ""definition"": ""CREATE INDEX idx_enrollments_class ON public.enrollments USING btree (class_id)""
+        },
+        {
+            ""name"": ""idx_enrollments_student"",
+            ""table"": ""enrollments"",
+            ""definition"": ""CREATE INDEX idx_enrollments_student ON public.enrollments USING btree (student_id)""
+        },
+        {
+            ""name"": ""free_passes_pkey"",
+            ""table"": ""free_passes"",
+            ""definition"": ""CREATE UNIQUE INDEX free_passes_pkey ON public.free_passes USING btree (id)""
+        },
+        {
+            ""name"": ""free_passes_student_id_class_id_key"",
+            ""table"": ""free_passes"",
+            ""definition"": ""CREATE UNIQUE INDEX free_passes_student_id_class_id_key ON public.free_passes USING btree (student_id, class_id)""
+        },
+        {
+            ""name"": ""idx_free_passes_class"",
+            ""table"": ""free_passes"",
+            ""definition"": ""CREATE INDEX idx_free_passes_class ON public.free_passes USING btree (class_id)""
+        },
+        {
+            ""name"": ""grade_change_log_pkey"",
+            ""table"": ""grade_change_log"",
+            ""definition"": ""CREATE UNIQUE INDEX grade_change_log_pkey ON public.grade_change_log USING btree (id)""
+        },
+        {
+            ""name"": ""idx_grade_change_log_changed_at"",
+            ""table"": ""grade_change_log"",
+            ""definition"": ""CREATE INDEX idx_grade_change_log_changed_at ON public.grade_change_log USING btree (changed_at)""
+        },
+        {
+            ""name"": ""idx_grade_change_log_class_id"",
+            ""table"": ""grade_change_log"",
+            ""definition"": ""CREATE INDEX idx_grade_change_log_class_id ON public.grade_change_log USING btree (class_id)""
+        },
+        {
+            ""name"": ""idx_grade_change_log_lo_id"",
+            ""table"": ""grade_change_log"",
+            ""definition"": ""CREATE INDEX idx_grade_change_log_lo_id ON public.grade_change_log USING btree (learning_objective_id)""
+        },
+        {
+            ""name"": ""idx_grade_change_log_student_id"",
+            ""table"": ""grade_change_log"",
+            ""definition"": ""CREATE INDEX idx_grade_change_log_student_id ON public.grade_change_log USING btree (student_id)""
+        },
+        {
+            ""name"": ""grades_pkey"",
+            ""table"": ""grades"",
+            ""definition"": ""CREATE UNIQUE INDEX grades_pkey ON public.grades USING btree (id)""
+        },
+        {
+            ""name"": ""grades_student_lo_assignment_key"",
+            ""table"": ""grades"",
+            ""definition"": ""CREATE UNIQUE INDEX grades_student_lo_assignment_key ON public.grades USING btree (student_id, learning_objective_id, assignment_id)""
+        },
+        {
+            ""name"": ""idx_grades_assignment"",
+            ""table"": ""grades"",
+            ""definition"": ""CREATE INDEX idx_grades_assignment ON public.grades USING btree (assignment_id)""
+        },
+        {
+            ""name"": ""idx_grades_lo"",
+            ""table"": ""grades"",
+            ""definition"": ""CREATE INDEX idx_grades_lo ON public.grades USING btree (learning_objective_id)""
+        },
+        {
+            ""name"": ""idx_grades_r_deadline"",
+            ""table"": ""grades"",
+            ""definition"": ""CREATE INDEX idx_grades_r_deadline ON public.grades USING btree (r_deadline) WHERE (top_score = 'R'::text)""
+        },
+        {
+            ""name"": ""idx_grades_student"",
+            ""table"": ""grades"",
+            ""definition"": ""CREATE INDEX idx_grades_student ON public.grades USING btree (student_id)""
+        },
+        {
+            ""name"": ""homework_scores_pkey"",
+            ""table"": ""homework_scores"",
+            ""definition"": ""CREATE UNIQUE INDEX homework_scores_pkey ON public.homework_scores USING btree (id)""
+        },
+        {
+            ""name"": ""homework_scores_student_id_class_id_homework_group_key"",
+            ""table"": ""homework_scores"",
+            ""definition"": ""CREATE UNIQUE INDEX homework_scores_student_id_class_id_homework_group_key ON public.homework_scores USING btree (student_id, class_id, homework_group)""
+        },
+        {
+            ""name"": ""idx_hw_class"",
+            ""table"": ""homework_scores"",
+            ""definition"": ""CREATE INDEX idx_hw_class ON public.homework_scores USING btree (class_id)""
+        },
+        {
+            ""name"": ""idx_hw_student_class"",
+            ""table"": ""homework_scores"",
+            ""definition"": ""CREATE INDEX idx_hw_student_class ON public.homework_scores USING btree (student_id, class_id)""
+        },
+        {
+            ""name"": ""idx_lo_class"",
+            ""table"": ""learning_objectives"",
+            ""definition"": ""CREATE INDEX idx_lo_class ON public.learning_objectives USING btree (class_id, display_order)""
+        },
+        {
+            ""name"": ""learning_objectives_class_id_vendor_code_key"",
+            ""table"": ""learning_objectives"",
+            ""definition"": ""CREATE UNIQUE INDEX learning_objectives_class_id_vendor_code_key ON public.learning_objectives USING btree (class_id, vendor_code)""
+        },
+        {
+            ""name"": ""learning_objectives_pkey"",
+            ""table"": ""learning_objectives"",
+            ""definition"": ""CREATE UNIQUE INDEX learning_objectives_pkey ON public.learning_objectives USING btree (id)""
+        },
+        {
+            ""name"": ""profiles_pkey"",
+            ""table"": ""profiles"",
+            ""definition"": ""CREATE UNIQUE INDEX profiles_pkey ON public.profiles USING btree (id)""
+        },
+        {
+            ""name"": ""revision_reminders_sent_class_due"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""CREATE INDEX revision_reminders_sent_class_due ON public.revision_reminders_sent USING btree (class_id, revision_due)""
+        },
+        {
+            ""name"": ""revision_reminders_sent_item_key"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""CREATE UNIQUE INDEX revision_reminders_sent_item_key ON public.revision_reminders_sent USING btree (student_id, assignment_id, learning_objective_id, revision_due)""
+        },
+        {
+            ""name"": ""revision_reminders_sent_pkey"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""CREATE UNIQUE INDEX revision_reminders_sent_pkey ON public.revision_reminders_sent USING btree (id)""
+        },
+        {
+            ""name"": ""signup_invites_code_hash_key"",
+            ""table"": ""signup_invites"",
+            ""definition"": ""CREATE UNIQUE INDEX signup_invites_code_hash_key ON public.signup_invites USING btree (code_hash)""
+        },
+        {
+            ""name"": ""signup_invites_pkey"",
+            ""table"": ""signup_invites"",
+            ""definition"": ""CREATE UNIQUE INDEX signup_invites_pkey ON public.signup_invites USING btree (id)""
+        }
+    ],
+    ""policies"": null,
+    ""functions"": [
+        {
+            ""function"": ""check_invite_code"",
+            ""definition"": ""CREATE OR REPLACE FUNCTION public.check_invite_code()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'pg_temp'\nAS $function$\r\nDECLARE\r\n  v_code text := btrim(coalesce(new.raw_user_meta_data ->> 'invite_code', ''));\r\nBEGIN\r\n  IF v_code = '' THEN\r\n    RAISE EXCEPTION 'Invalid or missing invite code';\r\n  END IF;\r\n  UPDATE public.signup_invites\r\n     SET used_count = used_count + 1\r\n   WHERE code_hash = encode(sha256(convert_to(v_code, 'utf8')), 'hex')\r\n     AND revoked_at IS NULL\r\n     AND (expires_at IS NULL OR expires_at > now())\r\n     AND used_count < max_uses;\r\n  IF NOT FOUND THEN\r\n    RAISE EXCEPTION 'Invalid or missing invite code';\r\n  END IF;\r\n  RETURN new;\r\nEND;\r\n$function$\n"",
+            ""security_definer"": true
+        },
+        {
+            ""function"": ""handle_new_user"",
+            ""definition"": ""CREATE OR REPLACE FUNCTION public.handle_new_user()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'pg_temp'\nAS $function$\r\nBEGIN\r\n  INSERT INTO public.profiles (id, full_name, role)\r\n  VALUES (\r\n    new.id,\r\n    coalesce(nullif(btrim(new.raw_user_meta_data ->> 'full_name'), ''), new.email, 'Unknown'),\r\n    'instructor'\r\n  )\r\n  ON CONFLICT (id) DO NOTHING;\r\n  RETURN new;\r\nEND;\r\n$function$\n"",
+            ""security_definer"": true
+        },
+        {
+            ""function"": ""log_grade_change"",
+            ""definition"": ""CREATE OR REPLACE FUNCTION public.log_grade_change()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\r\nDECLARE\r\n  v_class_id uuid; v_old_cfm jsonb; v_new_cfm jsonb;\r\nBEGIN\r\n  IF coalesce(current_setting('clarity.restoring', true), '') = 'on' THEN\r\n    RETURN NEW;\r\n  END IF;\r\n  SELECT class_id INTO v_class_id FROM learning_objectives WHERE id = NEW.learning_objective_id;\r\n  v_new_cfm := to_jsonb(NEW) -> 'counts_for_mastery';\r\n  IF TG_OP = 'INSERT' THEN\r\n    INSERT INTO grade_change_log (student_id, class_id, learning_objective_id, assignment_id, operation, old_value, new_value, changed_by)\r\n    VALUES (NEW.student_id, v_class_id, NEW.learning_objective_id, NEW.assignment_id, 'INSERT', NULL,\r\n      jsonb_build_object('top_score', NEW.top_score, 'second_score', NEW.second_score, 'counts_for_mastery', v_new_cfm), NEW.last_modified_by);\r\n  ELSIF TG_OP = 'UPDATE' THEN\r\n    v_old_cfm := to_jsonb(OLD) -> 'counts_for_mastery';\r\n    IF NEW.top_score IS DISTINCT FROM OLD.top_score OR NEW.second_score IS DISTINCT FROM OLD.second_score OR v_new_cfm IS DISTINCT FROM v_old_cfm THEN\r\n      INSERT INTO grade_change_log (student_id, class_id, learning_objective_id, assignment_id, operation, old_value, new_value, changed_by)\r\n      VALUES (NEW.student_id, v_class_id, NEW.learning_objective_id, NEW.assignment_id, 'UPDATE',\r\n        jsonb_build_object('top_score', OLD.top_score, 'second_score', OLD.second_score, 'counts_for_mastery', v_old_cfm),\r\n        jsonb_build_object('top_score', NEW.top_score, 'second_score', NEW.second_score, 'counts_for_mastery', v_new_cfm), NEW.last_modified_by);\r\n    END IF;\r\n  END IF;\r\n  RETURN NEW;\r\nEND;\r\n$function$\n"",
+            ""security_definer"": true
+        },
+        {
+            ""function"": ""restore_archived_class"",
+            ""definition"": ""CREATE OR REPLACE FUNCTION public.restore_archived_class(p_archive_id uuid, p_instructor_id uuid, p_attempt_id uuid, p_expected jsonb)\n RETURNS jsonb\n LANGUAGE plpgsql\n SET search_path TO 'public'\nAS $function$\r\ndeclare\r\n  v_archive public.archived_classes%rowtype;\r\n  v_class public.classes%rowtype;\r\n  v_class_id uuid;\r\n  v_norm_name text; v_norm_days text; v_norm_section text;\r\n  v_missing text;\r\n  v_table text;\r\n  v_staged_n bigint;\r\n  v_counts jsonb;\r\nbegin\r\n  delete from public.archive_restore_stage\r\n  where created_at < now() - interval '1 hour' and attempt_id <> p_attempt_id;\r\n\r\n  select * into v_archive from public.archived_classes\r\n  where id = p_archive_id and instructor_id = p_instructor_id for update;\r\n  if not found then raise exception 'This archive was not found.'; end if;\r\n  if v_archive.snapshot_path is null then raise exception 'This archive is not restorable.'; end if;\r\n  if v_archive.restored_at is not null then raise exception 'This archive has already been restored.'; end if;\r\n\r\n  foreach v_table in array array['classes','learning_objectives','assignments','assignment_objectives',\r\n      'enrollments','grades','homework_scores','free_passes','students'] loop\r\n    select count(*) into v_staged_n from public.archive_restore_stage\r\n    where attempt_id = p_attempt_id and table_name = v_table;\r\n    if v_staged_n <> coalesce((p_expected ->> v_table)::bigint, 0) then\r\n      raise exception 'The saved archive could not be read completely.';\r\n    end if;\r\n  end loop;\r\n  if coalesce((p_expected ->> 'classes')::bigint, 0) <> 1 then\r\n    raise exception 'This archive is not restorable.';\r\n  end if;\r\n\r\n  select (jsonb_populate_record(null::public.classes, row_data)).* into v_class\r\n  from public.archive_restore_stage where attempt_id = p_attempt_id and table_name = 'classes';\r\n\r\n  v_norm_name := lower(regexp_replace(trim(coalesce(v_class.name, '')), '\\s+', ' ', 'g'));\r\n  v_norm_days := lower(regexp_replace(trim(coalesce(v_class.days, '')), '\\s+', ' ', 'g'));\r\n  v_norm_section := lower(regexp_replace(trim(coalesce(v_class.section_number, '')), '\\s+', ' ', 'g'));\r\n  perform pg_advisory_xact_lock(hashtext('clarity-restore'),\r\n    hashtext(p_instructor_id::text || '|' || v_norm_name || '|' || v_norm_days || '|' || v_norm_section));\r\n\r\n  if exists (\r\n    select 1 from public.classes live\r\n    where live.instructor_id = p_instructor_id\r\n      and lower(regexp_replace(trim(coalesce(live.name, '')), '\\s+', ' ', 'g')) = v_norm_name\r\n      and lower(regexp_replace(trim(coalesce(live.days, '')), '\\s+', ' ', 'g')) = v_norm_days\r\n      and lower(regexp_replace(trim(coalesce(live.section_number, '')), '\\s+', ' ', 'g')) = v_norm_section\r\n  ) then\r\n    raise exception 'A class with this name, days, and section already exists. Archive or rename it first.';\r\n  end if;\r\n\r\n  select string_agg(coalesce(stu.row_data ->> 'full_name', m.sid), ', ' order by m.sid) into v_missing\r\n  from (\r\n    select distinct row_data ->> 'student_id' as sid\r\n    from public.archive_restore_stage\r\n    where attempt_id = p_attempt_id\r\n      and table_name in ('enrollments','grades','homework_scores','free_passes')\r\n      and nullif(btrim(row_data ->> 'student_id'), '') is not null\r\n  ) m\r\n  left join public.archive_restore_stage stu\r\n    on stu.attempt_id = p_attempt_id and stu.table_name = 'students' and stu.row_data ->> 'id' = m.sid\r\n  where not exists (select 1 from public.profiles p where p.id = m.sid::uuid);\r\n  if v_missing is not null then\r\n    raise exception 'A student in this archive no longer has a profile: %', v_missing;\r\n  end if;\r\n\r\n  create temp table map_lo (old_id uuid primary key, new_id uuid not null) on commit drop;\r\n  create temp table map_assignment (old_id uuid primary key, new_id uuid not null) on commit drop;\r\n  insert into map_lo select (row_data ->> 'id')::uuid, gen_random_uuid()\r\n  from public.archive_restore_stage where attempt_id = p_attempt_id and table_name = 'learning_objectives';\r\n  insert into map_assignment select (row_data ->> 'id')::uuid, gen_random_uuid()\r\n  from public.archive_restore_stage where attempt_id = p_attempt_id and table_name = 'assignments';\r\n\r\n  if exists (\r\n    select 1 from public.archive_restore_stage s\r\n    where s.attempt_id = p_attempt_id and s.table_name = 'assignment_objectives'\r\n      and (not exists (select 1 from map_assignment where old_id = (s.row_data ->> 'assignment_id')::uuid)\r\n        or not exists (select 1 from map_lo where old_id = (s.row_data ->> 'learning_objective_id')::uuid))\r\n  ) or exists (\r\n    select 1 from public.archive_restore_stage s\r\n    where s.attempt_id = p_attempt_id and s.table_name = 'grades'\r\n      and (not exists (select 1 from map_lo where old_id = (s.row_data ->> 'learning_objective_id')::uuid)\r\n        or (nullif(btrim(s.row_data ->> 'assignment_id'), '') is not null\r\n            and not exists (select 1 from map_assignment\r\n                            where old_id = nullif(btrim(s.row_data ->> 'assignment_id'), '')::uuid)))\r\n  ) then\r\n    raise exception 'This archive is not restorable.';\r\n  end if;\r\n\r\n  v_class_id := gen_random_uuid();\r\n  insert into public.classes\r\n  select r.* from public.archive_restore_stage s\r\n  cross join lateral jsonb_populate_record(null::public.classes,\r\n    s.row_data || jsonb_build_object('id', v_class_id, 'instructor_id', p_instructor_id)) r\r\n  where s.attempt_id = p_attempt_id and s.table_name = 'classes';\r\n\r\n  insert into public.learning_objectives\r\n  select r.* from public.archive_restore_stage s\r\n  join map_lo m on m.old_id = (s.row_data ->> 'id')::uuid\r\n  cross join lateral jsonb_populate_record(null::public.learning_objectives,\r\n    s.row_data || jsonb_build_object('id', m.new_id, 'class_id', v_class_id)) r\r\n  where s.attempt_id = p_attempt_id and s.table_name = 'learning_objectives';\r\n\r\n  insert into public.assignments\r\n  select r.* from public.archive_restore_stage s\r\n  join map_assignment m on m.old_id = (s.row_data ->> 'id')::uuid\r\n  cross join lateral jsonb_populate_record(null::public.assignments,\r\n    s.row_data || jsonb_build_object('id', m.new_id, 'class_id', v_class_id)) r\r\n  where s.attempt_id = p_attempt_id and s.table_name = 'assignments';\r\n\r\n  insert into public.assignment_objectives\r\n  select r.* from public.archive_restore_stage s\r\n  join map_assignment ma on ma.old_id = (s.row_data ->> 'assignment_id')::uuid\r\n  join map_lo ml on ml.old_id = (s.row_data ->> 'learning_objective_id')::uuid\r\n  cross join lateral jsonb_populate_record(null::public.assignment_objectives,\r\n    s.row_data || jsonb_build_object('assignment_id', ma.new_id, 'learning_objective_id', ml.new_id)) r\r\n  where s.attempt_id = p_attempt_id and s.table_name = 'assignment_objectives';\r\n\r\n  insert into public.enrollments\r\n  select r.* from public.archive_restore_stage s\r\n  cross join lateral jsonb_populate_record(null::public.enrollments,\r\n    s.row_data || jsonb_build_object('id', gen_random_uuid(), 'class_id', v_class_id)) r\r\n  where s.attempt_id = p_attempt_id and s.table_name = 'enrollments';\r\n\r\n  insert into public.homework_scores\r\n  select r.* from public.archive_restore_stage s\r\n  left join map_assignment ma on ma.old_id::text = s.row_data ->> 'homework_group'\r\n  cross join lateral jsonb_populate_record(null::public.homework_scores,\r\n    s.row_data || jsonb_build_object('id', gen_random_uuid(), 'class_id', v_class_id,\r\n      'homework_group', coalesce(ma.new_id::text, s.row_data ->> 'homework_group'))) r\r\n  where s.attempt_id = p_attempt_id and s.table_name = 'homework_scores';\r\n\r\n  insert into public.free_passes\r\n  select r.* from public.archive_restore_stage s\r\n  cross join lateral jsonb_populate_record(null::public.free_passes,\r\n    s.row_data || jsonb_build_object('id', gen_random_uuid(), 'class_id', v_class_id)) r\r\n  where s.attempt_id = p_attempt_id and s.table_name = 'free_passes';\r\n\r\n  perform set_config('clarity.restoring', 'on', true);\r\n\r\n  insert into public.grades\r\n  select r.* from public.archive_restore_stage s\r\n  join map_lo ml on ml.old_id = (s.row_data ->> 'learning_objective_id')::uuid\r\n  left join map_assignment ma on ma.old_id = nullif(btrim(s.row_data ->> 'assignment_id'), '')::uuid\r\n  left join public.profiles lm on lm.id = nullif(btrim(s.row_data ->> 'last_modified_by'), '')::uuid\r\n  cross join lateral jsonb_populate_record(null::public.grades,\r\n    s.row_data || jsonb_build_object('id', gen_random_uuid(),\r\n      'learning_objective_id', ml.new_id, 'assignment_id', ma.new_id, 'last_modified_by', lm.id)) r\r\n  where s.attempt_id = p_attempt_id and s.table_name = 'grades';\r\n\r\n  perform set_config('clarity.restoring', 'off', true);\r\n\r\n  v_counts := jsonb_build_object(\r\n    'classes', (select count(*) from public.classes where id = v_class_id),\r\n    'learning_objectives', (select count(*) from public.learning_objectives where class_id = v_class_id),\r\n    'assignments', (select count(*) from public.assignments where class_id = v_class_id),\r\n    'assignment_objectives', (select count(*) from public.assignment_objectives ao\r\n        join public.assignments a on a.id = ao.assignment_id where a.class_id = v_class_id),\r\n    'enrollments', (select count(*) from public.enrollments where class_id = v_class_id),\r\n    'grades', (select count(*) from public.grades g\r\n        join public.learning_objectives lo on lo.id = g.learning_objective_id where lo.class_id = v_class_id),\r\n    'homework_scores', (select count(*) from public.homework_scores where class_id = v_class_id),\r\n    'free_passes', (select count(*) from public.free_passes where class_id = v_class_id));\r\n  foreach v_table in array array['classes','learning_objectives','assignments','assignment_objectives',\r\n      'enrollments','grades','homework_scores','free_passes'] loop\r\n    if (v_counts ->> v_table)::bigint <> coalesce((p_expected ->> v_table)::bigint, 0) then\r\n      raise exception 'The restored class did not match the archive. Nothing was restored.';\r\n    end if;\r\n  end loop;\r\n\r\n  update public.archived_classes set restored_at = now(), restored_class_id = v_class_id\r\n  where id = p_archive_id;\r\n  delete from public.archive_restore_stage where attempt_id = p_attempt_id;\r\n  return jsonb_build_object('class_id', v_class_id, 'counts', v_counts);\r\nend;\r\n$function$\n"",
+            ""security_definer"": false
+        },
+        {
+            ""function"": ""set_r_deadline"",
+            ""definition"": ""CREATE OR REPLACE FUNCTION public.set_r_deadline()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\r\nBEGIN\r\n  IF coalesce(current_setting('clarity.restoring', true), '') = 'on' THEN\r\n    RETURN NEW;\r\n  END IF;\r\n  IF NEW.top_score = 'R' THEN\r\n    NEW.r_deadline := (NOW() + INTERVAL '7 days')::DATE;\r\n  ELSE\r\n    NEW.r_deadline := NULL;\r\n  END IF;\r\n  NEW.updated_at := NOW();\r\n  RETURN NEW;\r\nEND;\r\n$function$\n"",
+            ""security_definer"": false
+        }
+    ],
+    ""extensions"": [
+        ""pg_stat_statements"",
+        ""pgcrypto"",
+        ""plpgsql"",
+        ""supabase_vault"",
+        ""uuid-ossp""
+    ],
+    ""constraints"": [
+        {
+            ""name"": ""app_sessions_pkey"",
+            ""type"": ""p"",
+            ""table"": ""app_sessions"",
+            ""definition"": ""PRIMARY KEY (token_hash)""
+        },
+        {
+            ""name"": ""app_sessions_token_hash_check"",
+            ""type"": ""c"",
+            ""table"": ""app_sessions"",
+            ""definition"": ""CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))""
+        },
+        {
+            ""name"": ""app_sessions_user_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""app_sessions"",
+            ""definition"": ""FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""archive_restore_stage_pkey"",
+            ""type"": ""p"",
+            ""table"": ""archive_restore_stage"",
+            ""definition"": ""PRIMARY KEY (attempt_id, table_name, seq)""
+        },
+        {
+            ""name"": ""archived_classes_pkey"",
+            ""type"": ""p"",
+            ""table"": ""archived_classes"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""archived_classes_restored_class_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""archived_classes"",
+            ""definition"": ""FOREIGN KEY (restored_class_id) REFERENCES classes(id) ON DELETE SET NULL""
+        },
+        {
+            ""name"": ""archived_classes_storage_path_key"",
+            ""type"": ""u"",
+            ""table"": ""archived_classes"",
+            ""definition"": ""UNIQUE (storage_path)""
+        },
+        {
+            ""name"": ""assignment_objectives_assignment_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""assignment_objectives"",
+            ""definition"": ""FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""assignment_objectives_learning_objective_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""assignment_objectives"",
+            ""definition"": ""FOREIGN KEY (learning_objective_id) REFERENCES learning_objectives(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""assignment_objectives_pkey"",
+            ""type"": ""p"",
+            ""table"": ""assignment_objectives"",
+            ""definition"": ""PRIMARY KEY (assignment_id, learning_objective_id)""
+        },
+        {
+            ""name"": ""assignments_assignment_type_check"",
+            ""type"": ""c"",
+            ""table"": ""assignments"",
+            ""definition"": ""CHECK ((assignment_type = ANY (ARRAY['mastery_opp'::text, 'exam'::text, 'project'::text])))""
+        },
+        {
+            ""name"": ""assignments_class_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""assignments"",
+            ""definition"": ""FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""assignments_pkey"",
+            ""type"": ""p"",
+            ""table"": ""assignments"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""classes_instructor_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""classes"",
+            ""definition"": ""FOREIGN KEY (instructor_id) REFERENCES profiles(id) ON DELETE RESTRICT""
+        },
+        {
+            ""name"": ""classes_pkey"",
+            ""type"": ""p"",
+            ""table"": ""classes"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""email_sends_kind_check"",
+            ""type"": ""c"",
+            ""table"": ""email_sends"",
+            ""definition"": ""CHECK ((kind = ANY (ARRAY['report'::text, 'revision'::text])))""
+        },
+        {
+            ""name"": ""email_sends_pkey"",
+            ""type"": ""p"",
+            ""table"": ""email_sends"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""enrollment_attach_log_pkey"",
+            ""type"": ""p"",
+            ""table"": ""enrollment_attach_log"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""enrollments_class_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""enrollments"",
+            ""definition"": ""FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""enrollments_class_id_student_id_key"",
+            ""type"": ""u"",
+            ""table"": ""enrollments"",
+            ""definition"": ""UNIQUE (class_id, student_id)""
+        },
+        {
+            ""name"": ""enrollments_pkey"",
+            ""type"": ""p"",
+            ""table"": ""enrollments"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""enrollments_student_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""enrollments"",
+            ""definition"": ""FOREIGN KEY (student_id) REFERENCES profiles(id) ON DELETE RESTRICT""
+        },
+        {
+            ""name"": ""free_passes_class_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""free_passes"",
+            ""definition"": ""FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""free_passes_passes_used_check"",
+            ""type"": ""c"",
+            ""table"": ""free_passes"",
+            ""definition"": ""CHECK (((passes_used >= 0) AND (passes_used <= 2)))""
+        },
+        {
+            ""name"": ""free_passes_pkey"",
+            ""type"": ""p"",
+            ""table"": ""free_passes"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""free_passes_student_id_class_id_key"",
+            ""type"": ""u"",
+            ""table"": ""free_passes"",
+            ""definition"": ""UNIQUE (student_id, class_id)""
+        },
+        {
+            ""name"": ""free_passes_student_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""free_passes"",
+            ""definition"": ""FOREIGN KEY (student_id) REFERENCES profiles(id) ON DELETE RESTRICT""
+        },
+        {
+            ""name"": ""grade_change_log_operation_check"",
+            ""type"": ""c"",
+            ""table"": ""grade_change_log"",
+            ""definition"": ""CHECK ((operation = ANY (ARRAY['INSERT'::text, 'UPDATE'::text, 'DELETE'::text])))""
+        },
+        {
+            ""name"": ""grade_change_log_pkey"",
+            ""type"": ""p"",
+            ""table"": ""grade_change_log"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""grades_assignment_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""grades"",
+            ""definition"": ""FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""grades_last_modified_by_fkey"",
+            ""type"": ""f"",
+            ""table"": ""grades"",
+            ""definition"": ""FOREIGN KEY (last_modified_by) REFERENCES profiles(id) ON DELETE SET NULL""
+        },
+        {
+            ""name"": ""grades_learning_objective_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""grades"",
+            ""definition"": ""FOREIGN KEY (learning_objective_id) REFERENCES learning_objectives(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""grades_pkey"",
+            ""type"": ""p"",
+            ""table"": ""grades"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""grades_second_score_check"",
+            ""type"": ""c"",
+            ""table"": ""grades"",
+            ""definition"": ""CHECK (((second_score IS NULL) OR (second_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text]))))""
+        },
+        {
+            ""name"": ""grades_student_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""grades"",
+            ""definition"": ""FOREIGN KEY (student_id) REFERENCES profiles(id) ON DELETE RESTRICT""
+        },
+        {
+            ""name"": ""grades_student_lo_assignment_key"",
+            ""type"": ""u"",
+            ""table"": ""grades"",
+            ""definition"": ""UNIQUE (student_id, learning_objective_id, assignment_id)""
+        },
+        {
+            ""name"": ""grades_top_score_check"",
+            ""type"": ""c"",
+            ""table"": ""grades"",
+            ""definition"": ""CHECK ((top_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text])))""
+        },
+        {
+            ""name"": ""homework_scores_class_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""homework_scores"",
+            ""definition"": ""FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""homework_scores_pkey"",
+            ""type"": ""p"",
+            ""table"": ""homework_scores"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""homework_scores_student_id_class_id_homework_group_key"",
+            ""type"": ""u"",
+            ""table"": ""homework_scores"",
+            ""definition"": ""UNIQUE (student_id, class_id, homework_group)""
+        },
+        {
+            ""name"": ""homework_scores_student_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""homework_scores"",
+            ""definition"": ""FOREIGN KEY (student_id) REFERENCES profiles(id) ON DELETE RESTRICT""
+        },
+        {
+            ""name"": ""learning_objectives_class_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""learning_objectives"",
+            ""definition"": ""FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""learning_objectives_class_id_vendor_code_key"",
+            ""type"": ""u"",
+            ""table"": ""learning_objectives"",
+            ""definition"": ""UNIQUE (class_id, vendor_code)""
+        },
+        {
+            ""name"": ""learning_objectives_pkey"",
+            ""type"": ""p"",
+            ""table"": ""learning_objectives"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""profiles_pkey"",
+            ""type"": ""p"",
+            ""table"": ""profiles"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""profiles_role_check"",
+            ""type"": ""c"",
+            ""table"": ""profiles"",
+            ""definition"": ""CHECK ((role = ANY (ARRAY['instructor'::text, 'student'::text])))""
+        },
+        {
+            ""name"": ""revision_reminders_sent_assignment_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""revision_reminders_sent_class_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""revision_reminders_sent_item_key"",
+            ""type"": ""u"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""UNIQUE (student_id, assignment_id, learning_objective_id, revision_due)""
+        },
+        {
+            ""name"": ""revision_reminders_sent_learning_objective_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""FOREIGN KEY (learning_objective_id) REFERENCES learning_objectives(id) ON DELETE CASCADE""
+        },
+        {
+            ""name"": ""revision_reminders_sent_pkey"",
+            ""type"": ""p"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""revision_reminders_sent_sent_by_fkey"",
+            ""type"": ""f"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""FOREIGN KEY (sent_by) REFERENCES profiles(id) ON DELETE RESTRICT""
+        },
+        {
+            ""name"": ""revision_reminders_sent_student_id_fkey"",
+            ""type"": ""f"",
+            ""table"": ""revision_reminders_sent"",
+            ""definition"": ""FOREIGN KEY (student_id) REFERENCES profiles(id) ON DELETE RESTRICT""
+        },
+        {
+            ""name"": ""signup_invites_check"",
+            ""type"": ""c"",
+            ""table"": ""signup_invites"",
+            ""definition"": ""CHECK ((used_count <= max_uses))""
+        },
+        {
+            ""name"": ""signup_invites_code_hash_check"",
+            ""type"": ""c"",
+            ""table"": ""signup_invites"",
+            ""definition"": ""CHECK ((code_hash ~ '^[0-9a-f]{64}$'::text))""
+        },
+        {
+            ""name"": ""signup_invites_code_hash_key"",
+            ""type"": ""u"",
+            ""table"": ""signup_invites"",
+            ""definition"": ""UNIQUE (code_hash)""
+        },
+        {
+            ""name"": ""signup_invites_max_uses_check"",
+            ""type"": ""c"",
+            ""table"": ""signup_invites"",
+            ""definition"": ""CHECK ((max_uses > 0))""
+        },
+        {
+            ""name"": ""signup_invites_pkey"",
+            ""type"": ""p"",
+            ""table"": ""signup_invites"",
+            ""definition"": ""PRIMARY KEY (id)""
+        },
+        {
+            ""name"": ""signup_invites_used_count_check"",
+            ""type"": ""c"",
+            ""table"": ""signup_invites"",
+            ""definition"": ""CHECK ((used_count >= 0))""
+        }
+    ],
+    ""table_grants"": null,
+    ""table_triggers"": [
+        {
+            ""name"": ""trg_log_grade_change"",
+            ""table"": ""grades"",
+            ""definition"": ""CREATE TRIGGER trg_log_grade_change AFTER INSERT OR UPDATE ON public.grades FOR EACH ROW EXECUTE FUNCTION log_grade_change()""
+        },
+        {
+            ""name"": ""trg_set_r_deadline"",
+            ""table"": ""grades"",
+            ""definition"": ""CREATE TRIGGER trg_set_r_deadline BEFORE INSERT OR UPDATE ON public.grades FOR EACH ROW EXECUTE FUNCTION set_r_deadline()""
+        }
+    ],
+    ""function_grants"": null,
+    ""storage_buckets"": [
+        {
+            ""id"": ""class-archives"",
+            ""public"": false,
+            ""file_size_limit"": 52428800,
+            ""allowed_mime_types"": [
+                ""application/zip"",
+                ""application/gzip""
+            ]
+        }
+    ],
+    ""storage_policies"": null,
+    ""auth_user_triggers"": [
+        {
+            ""name"": ""enforce_invite_code"",
+            ""definition"": ""CREATE TRIGGER enforce_invite_code BEFORE INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION check_invite_code()""
+        },
+        {
+            ""name"": ""on_auth_user_created"",
+            ""definition"": ""CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION handle_new_user()""
+        }
+    ],
+    ""default_privileges"": [
+        {
+            ""acl"": ""{postgres=rwU/postgres,service_role=rwU/postgres}"",
+            ""type"": ""S"",
+            ""owner"": ""postgres""
+        },
+        {
+            ""acl"": ""{postgres=X/postgres,service_role=X/postgres}"",
+            ""type"": ""f"",
+            ""owner"": ""postgres""
+        },
+        {
+            ""acl"": ""{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres}"",
+            ""type"": ""r"",
+            ""owner"": ""postgres""
+        },
+        {
+            ""acl"": ""{postgres=rwU/supabase_admin,anon=rwU/supabase_admin,authenticated=rwU/supabase_admin,service_role=rwU/supabase_admin}"",
+            ""type"": ""S"",
+            ""owner"": ""supabase_admin""
+        },
+        {
+            ""acl"": ""{postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin}"",
+            ""type"": ""f"",
+            ""owner"": ""supabase_admin""
+        },
+        {
+            ""acl"": ""{postgres=arwdDxtm/supabase_admin,anon=arwdDxtm/supabase_admin,authenticated=arwdDxtm/supabase_admin,service_role=arwdDxtm/supabase_admin}"",
+            ""type"": ""r"",
+            ""owner"": ""supabase_admin""
+        }
+    ]
+}"
