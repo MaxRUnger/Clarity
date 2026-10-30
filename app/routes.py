@@ -18,7 +18,6 @@ variable ``MULTI_WORKER=1`` to log a one-time warning at startup (see
 
 import csv
 import hashlib
-import hmac
 import io
 import logging
 import os
@@ -55,6 +54,7 @@ from app.local_time import local_today
 from app.archive_snapshot import _IN_CHUNK_SIZE
 from app.calendar_dates import clean_assignment_dates
 from app.csv_safety import csv_safe_row
+from app.invites import invite_code_is_valid
 from app.paging import fetch_all_rows
 from app.models import (
     Course,
@@ -1286,7 +1286,7 @@ def login_page():
 
 @main_bp.route("/signup")
 def signup_page():
-    return render_template("signup.html", invite_code_required=bool(Config.SIGNUP_INVITE_CODE))
+    return render_template("signup.html")
 
 
 @main_bp.route("/forgot-password")
@@ -1441,13 +1441,9 @@ def login():
 def signup():
     data = request.get_json()
     try:
-        invite_code_env = (Config.SIGNUP_INVITE_CODE or "").strip()
-        if Config.IS_PRODUCTION and not invite_code_env:
-            return jsonify({"success": False, "message": "Signup is not available."}), 403
         submitted = (data.get("invite_code") or "").strip()
-        if invite_code_env:
-            if not submitted or not hmac.compare_digest(submitted, invite_code_env):
-                return jsonify({"success": False, "message": "Invalid invite code."}), 403
+        if not invite_code_is_valid(submitted):
+            return jsonify({"success": False, "message": "Invalid invite code."}), 403
 
         signup_name = (data.get("name") or "").strip()
         if len(signup_name) > 255:

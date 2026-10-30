@@ -63,10 +63,6 @@ class Config:
             "PUBLIC_BASE_URL is required in production."
         )
 
-    # Production refuses signup when this is unset. Outside production, an
-    # unset code skips the invite check.
-    SIGNUP_INVITE_CODE = os.environ.get("SIGNUP_INVITE_CODE")
-
     # Session cookie hardening.
     SESSION_COOKIE_SECURE = _env_bool(
         "SESSION_COOKIE_SECURE",

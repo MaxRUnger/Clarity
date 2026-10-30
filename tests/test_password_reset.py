@@ -167,7 +167,9 @@ class TestPasswordRulesOnBothRoutes(unittest.TestCase):
         }
         with patch("app.routes.supabase", shared), patch(
             "app.routes.Config.IS_PRODUCTION", False
-        ), patch("app.routes.Config.SIGNUP_INVITE_CODE", ""), patch(
+        ), patch(
+            "app.routes.invite_code_is_valid", return_value=True
+        ), patch(
             "app.routes.Config.PUBLIC_BASE_URL",
             "https://clarity.example",
             create=True,

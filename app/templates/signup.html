@@ -57,7 +57,6 @@
           <p id="passwordError" class="hidden text-xs text-red-500 mt-1.5">Passwords do not match.</p>
         </div>
 
-        {% if invite_code_required %}
         <!-- Invite Code -->
         <div>
           <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Invite Code</label>
@@ -65,7 +64,6 @@
             placeholder="Enter your invite code"
             class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
         </div>
-        {% endif %}
 
         <!-- Error banner -->
         <div id="errorBanner" class="hidden flex items-start gap-3 px-4 py-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">

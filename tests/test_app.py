@@ -11002,14 +11002,15 @@ class TestSignupEmailRedirect(unittest.TestCase):
             "invite_code": "",
         }
 
-    def _post(self, *, base_url, public_base, headers=None, production=False, invite=None):
+    def _post(self, *, base_url, public_base, headers=None, production=False):
         from app.authentication import supabase
         supabase.auth.sign_up.return_value = unittest.mock.MagicMock(user=None)
         supabase.auth.sign_up.side_effect = None
         supabase.auth.sign_up.reset_mock()
-        invite_value = "" if invite is None else invite
         with unittest.mock.patch("config.Config.IS_PRODUCTION", production), \
-                unittest.mock.patch("config.Config.SIGNUP_INVITE_CODE", invite_value), \
+                unittest.mock.patch(
+                    "app.routes.invite_code_is_valid", return_value=True
+                ), \
                 unittest.mock.patch(
                     "config.Config.PUBLIC_BASE_URL", public_base, create=True
                 ), \
@@ -11047,16 +11048,6 @@ class TestSignupEmailRedirect(unittest.TestCase):
         response, sign_up = self._post(
             base_url="http://localhost:5000",
             public_base="",
-        )
-        self.assertEqual(response.status_code, 403)
-        sign_up.assert_not_called()
-
-    def test_production_without_invite_code_does_not_call_supabase(self):
-        response, sign_up = self._post(
-            base_url="http://localhost:5000",
-            public_base="https://clarity.example",
-            production=True,
-            invite="",
         )
         self.assertEqual(response.status_code, 403)
         sign_up.assert_not_called()
