@@ -53,6 +53,7 @@ from app.passwords import password_error
 from app.lo_order import lo_sort_key
 from app.local_time import local_today
 from app.archive_snapshot import _IN_CHUNK_SIZE
+from app.calendar_dates import clean_assignment_dates
 from app.csv_safety import csv_safe_row
 from app.paging import fetch_all_rows
 from app.models import (
@@ -3730,6 +3731,10 @@ def create_assignment(class_id):
     if len(homework_group) > 100:
         return jsonify({"success": False, "error": "Homework group must be 100 characters or fewer."}), 400
 
+    date_returned, revision_due, error = clean_assignment_dates(data)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+
     assignment_type = _assignment_type_fields_from_payload(data)
 
     try:
@@ -3738,8 +3743,8 @@ def create_assignment(class_id):
             "class_id": class_id,
             "name": name,
             "homework_group": homework_group,
-            "date_returned": data.get('date_returned'),
-            "revision_due": data.get('revision_due'),
+            "date_returned": date_returned,
+            "revision_due": revision_due,
             "assignment_type": assignment_type,
         }).execute()
         
@@ -3783,13 +3788,17 @@ def update_assignment(class_id, assignment_id):
     if len(homework_group) > 100:
         return jsonify({"success": False, "error": "Homework group must be 100 characters or fewer."}), 400
 
+    date_returned, revision_due, error = clean_assignment_dates(data)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+
     assignment_type = _assignment_type_fields_from_payload(data)
 
     update_fields = {
         "name": name,
         "homework_group": homework_group,
-        "date_returned": data.get('date_returned'),
-        "revision_due": data.get('revision_due'),
+        "date_returned": date_returned,
+        "revision_due": revision_due,
         "assignment_type": assignment_type,
     }
 
