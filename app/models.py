@@ -415,26 +415,6 @@ class Grade:
             logger.error("Error fetching revision candidates: %s", e)
             return []
 
-class Student:
-    @staticmethod
-    def get_dashboard_data(student_id):
-        """Fetches a student's profile and grades for the dashboard.
-
-        Selects only the fields the dashboard template/route actually reads to keep
-        payload small (was ``*`` which pulled all profile/grade/class columns).
-        """
-        grade_cols = (
-            "student_id, learning_objective_id, top_score, second_score, "
-            "counts_for_mastery, assignment_id, "
-            "learning_objectives(id, name, vendor_code, required_ms)"
-        )
-        response = supabase_admin.table("profiles").select(
-            "id, full_name, role, "
-            f"grades({grade_cols}), "
-            "enrollments(classes(id, name))"
-        ).eq("id", student_id).single().execute()
-        return response.data
-
 class Homework:
     # The two HW thresholds are *intentionally* different. The lower threshold
     # gates ordinary in-class marks (R/RQ/P/X/A) and may be unlocked by a "free

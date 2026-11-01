@@ -976,6 +976,23 @@ class TestProtectedRoutes(unittest.TestCase):
         self.assertIn(response.status_code, (302, 404))
 
 
+class TestStudentDashboardRemoved(unittest.TestCase):
+    """The student dashboard route is gone. Instructors get 404."""
+
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+
+    def test_authenticated_instructor_gets_404(self):
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "instructor"
+            sess["csrf_token"] = "test-csrf"
+        response = self.client.get("/student/dashboard")
+        self.assertEqual(response.status_code, 404)
+
+
 class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
     """save_grades: stamps counts_for_mastery at entry time on first-entry M/MR.
 

@@ -825,11 +825,9 @@ class TestPasswordResetCsrf(unittest.TestCase):
 
 
 class TestVerifyRecoveryToken(unittest.TestCase):
-    def test_builds_a_fresh_client_from_authentication_url_and_key(self):
+    def test_new_anon_client_uses_the_configured_url_and_key(self):
         import importlib
         import sys
-
-        from app.routes import verify_recovery_token
 
         installed = sys.modules.get("app.authentication")
         fn = getattr(installed, "new_anon_client", None)
@@ -841,39 +839,53 @@ class TestVerifyRecoveryToken(unittest.TestCase):
                 del app_pkg.__dict__["authentication"]
             importlib.import_module("app.authentication")
         try:
+            import app.authentication as auth
             first = MagicMock()
             second = MagicMock()
-            first.auth.verify_otp.return_value = MagicMock()
-            second.auth.verify_otp.return_value = MagicMock()
-            shared = MagicMock()
             with patch(
                 "app.authentication.create_client",
                 side_effect=[first, second],
-            ) as built, patch(
-                "app.authentication.supabase", shared
-            ), patch("app.routes.supabase", shared):
-                one = verify_recovery_token("hashedtoken")
-                two = verify_recovery_token("other-token")
-            import app.authentication as auth
-
+            ) as built:
+                one = auth.new_anon_client()
+                two = auth.new_anon_client()
             self.assertEqual(built.call_count, 2)
             self.assertEqual(built.call_args_list[0].args, (auth.url, auth.key))
             self.assertEqual(built.call_args_list[1].args, (auth.url, auth.key))
-            self.assertIs(one, first.auth.verify_otp.return_value)
-            self.assertIs(two, second.auth.verify_otp.return_value)
-            first.auth.verify_otp.assert_called_once_with(
-                {"token_hash": "hashedtoken", "type": "recovery"}
-            )
-            second.auth.verify_otp.assert_called_once_with(
-                {"token_hash": "other-token", "type": "recovery"}
-            )
-            shared.auth.verify_otp.assert_not_called()
+            self.assertIs(one, first)
+            self.assertIs(two, second)
+            self.assertIsNot(one, two)
         finally:
             if swapped and installed is not None:
                 sys.modules["app.authentication"] = installed
                 app_pkg = sys.modules.get("app")
                 if app_pkg is not None:
                     app_pkg.authentication = installed
+
+    def test_verify_recovery_token_uses_the_routes_client(self):
+        from app.routes import verify_recovery_token
+
+        client_one = MagicMock()
+        client_two = MagicMock()
+        verified_one = MagicMock()
+        verified_two = MagicMock()
+        client_one.auth.verify_otp.return_value = verified_one
+        client_two.auth.verify_otp.return_value = verified_two
+        shared = MagicMock()
+        with patch(
+            "app.routes.new_anon_client",
+            side_effect=[client_one, client_two],
+        ), patch("app.routes.supabase", shared):
+            one = verify_recovery_token("hash123")
+            two = verify_recovery_token("other-token")
+        client_one.auth.verify_otp.assert_called_once_with(
+            {"token_hash": "hash123", "type": "recovery"}
+        )
+        client_two.auth.verify_otp.assert_called_once_with(
+            {"token_hash": "other-token", "type": "recovery"}
+        )
+        self.assertIs(one, verified_one)
+        self.assertIs(two, verified_two)
+        shared.auth.verify_otp.assert_not_called()
 
 
 class TestResetRevokeOrder(unittest.TestCase):

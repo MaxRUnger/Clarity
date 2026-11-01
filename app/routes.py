@@ -47,7 +47,7 @@ from flask import (  # type: ignore
 )
 from werkzeug.utils import secure_filename
 from config import Config
-from app.authentication import supabase, supabase_admin
+from app.authentication import new_anon_client, supabase, supabase_admin
 from app.passwords import password_error
 from app.lo_order import lo_sort_key
 from app.local_time import local_today
@@ -59,7 +59,6 @@ from app.paging import fetch_all_rows
 from app.models import (
     Course,
     Grade,
-    Student,
     Homework,
     ASSIGNMENT_TYPES,
 )
@@ -668,7 +667,8 @@ def _drop_idle_rate_limit_buckets(now: float) -> None:
 
 def _rate_limit_bucket(bucket_key: str, limit: int, window_sec: int) -> bool:
     """Record one hit on an arbitrary bucket key. Return False when over the limit."""
-    # Idle pruning drops a bucket after _RATE_LIMIT_MAX_IDLE seconds, so every window must be at most that long.
+    # Idle pruning drops a bucket after _RATE_LIMIT_MAX_IDLE seconds, so every
+    # window must be at most that long.
     if window_sec > _RATE_LIMIT_MAX_IDLE:
         raise ValueError("rate limit window exceeds the idle pruning limit")
     now = time.time()
@@ -1540,7 +1540,6 @@ def _send_account_email(to_email: str, subject: str, body_text: str) -> bool:
 
 
 def verify_recovery_token(token_hash):
-    from app.authentication import new_anon_client
     client = new_anon_client()
     return client.auth.verify_otp({"token_hash": token_hash, "type": "recovery"})
 
@@ -1650,42 +1649,6 @@ def reset_password():
 # ============================================================================
 # DASHBOARD ROUTES
 # ============================================================================
-
-@main_bp.route("/student/dashboard")
-@login_required
-def student_dashboard():
-    data = Student.get_dashboard_data(session['user_id'])
-    
-    class_name = None
-    if data:
-        enrollments = data.get('enrollments', [])
-        class_id = None
-        if enrollments:
-            cls = enrollments[0].get('classes', {}) or {}
-            if cls:
-                class_name = cls.get('name')
-                class_id = cls.get('id')
-
-        raw_grades = data.get('grades', []) or []
-        if class_id:
-            try:
-                pool = Course.get_learning_objectives(class_id) or []
-            except Exception as e:
-                logger.error(
-                    "student_dashboard: failed to load LOs for class %s: %s",
-                    class_id, e,
-                )
-                pool = []
-            else:
-                pool = objectives_attached_to_assignments(class_id, pool)
-            lo_lookup = class_lo_lookup(pool)
-            data["learning_objectives"], data["objective_total"] = class_progress(
-                raw_grades, lo_lookup
-            )
-        else:
-            data["learning_objectives"] = []
-
-    return render_template("student_view.html", student=data, class_name=class_name)
 
 @main_bp.route("/instructor/dashboard")
 @login_required
