@@ -516,7 +516,6 @@ td[data-lo-id] .mastery-badge {
 <script id="assignmentsJson" type="application/json">{{ assignments | tojson }}</script>
 <script id="losJson" type="application/json">{{ learning_objectives | tojson }}</script>
 <script id="classIdJson" type="application/json">{{ class_id | tojson }}</script>
-<script id="instructorTitleJson" type="application/json">{{ instructor_title | tojson }}</script>
 <script src="{{ url_for('static', filename='js/vendor/jspdf.umd.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/vendor/jspdf.plugin.autotable.min.js') }}"></script>
 
@@ -528,7 +527,6 @@ const classId = JSON.parse(document.getElementById('classIdJson').textContent);
 const learningObjectiveCodeById = Object.fromEntries(
   learningObjectivesData.map((lo) => [String(lo.id), String(lo.vendor_code || '')])
 );
-const instructorTitle = JSON.parse(document.getElementById('instructorTitleJson').textContent) || '';
 const chevronSvg = '<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>';
 const assignmentReportEl = document.getElementById('assignmentReport');
 const studentHistoryPanelEl = document.getElementById('studentHistoryPanel');

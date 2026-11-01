@@ -4484,7 +4484,6 @@ def class_reports(class_id):
         students=students,
         learning_objectives=learning_objectives,
         assignments=assignments,
-        instructor_title=instructor_title(_report_sender_name()),
     )
 
 

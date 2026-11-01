@@ -24,7 +24,7 @@ let classRoster = [];
   try {
     var parsed = JSON.parse(el.textContent || '[]');
     if (Array.isArray(parsed)) classRoster = parsed;
-  } catch (err) {
+  } catch {
     classRoster = [];
   }
 })();

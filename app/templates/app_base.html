@@ -161,7 +161,7 @@
                 try {
                     selectFn(el);
                     ok = document.execCommand('copy');
-                } catch (err) {}
+                } catch {}
                 if (el.parentNode) el.parentNode.removeChild(el);
                 return ok;
             }

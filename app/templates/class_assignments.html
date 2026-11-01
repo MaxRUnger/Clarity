@@ -568,7 +568,7 @@ function saveAssignment() {
     let json;
     try {
       json = JSON.parse(body);
-    } catch (err) {
+    } catch {
       throw new Error(`Unexpected response: ${body}`);
     }
     return json;

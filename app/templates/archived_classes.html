@@ -191,7 +191,7 @@ deleteArchiveSubmit?.addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ confirm_name: deleteArchiveInput.value }),
     });
-  } catch (networkError) {
+  } catch {
     showDeleteArchiveError(deleteArchiveSlowReply);
     releaseDeleteArchiveSubmit();
     return;
@@ -199,7 +199,7 @@ deleteArchiveSubmit?.addEventListener('click', async () => {
   let payload = null;
   try {
     payload = await response.json();
-  } catch (parseError) {
+  } catch {
     showDeleteArchiveError(deleteArchiveSlowReply);
     releaseDeleteArchiveSubmit();
     return;
@@ -305,7 +305,7 @@ restoreArchiveSubmit?.addEventListener("click", async () => {
     response = await fetch("/archived-classes/" + encodeURIComponent(restoreArchiveId) + "/restore", {
       method: "POST",
     });
-  } catch (networkError) {
+  } catch {
     restoreReloadOnClose = true;
     showRestoreArchiveError(restoreNetworkError);
     releaseRestoreArchiveSubmit();
@@ -314,7 +314,7 @@ restoreArchiveSubmit?.addEventListener("click", async () => {
   let payload = null;
   try {
     payload = await response.json();
-  } catch (parseError) {
+  } catch {
     restoreReloadOnClose = true;
     showRestoreArchiveError(restoreNetworkError);
     releaseRestoreArchiveSubmit();

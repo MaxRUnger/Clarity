@@ -6624,6 +6624,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             )
         self.assertIn("Print all history", html)
         self.assertIn("/class/c1/student-history/print?print=1", html)
+        self.assertNotIn("instructorTitleJson", html)
 
     def test_batch_page_lists_active_students_and_keeps_empty_history(self):
         enrollments = [
@@ -9979,8 +9980,8 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertNotIn("The archive stays in Archived Classes.", page)
         self.assertNotIn("restoreArchiveClose", page)
         script = page.split("const restoreNetworkError", 1)[1]
-        network_branch = script.split("catch (networkError)", 1)[1].split("catch (parseError)", 1)[0]
-        parse_branch = script.split("catch (parseError)", 1)[1].split("payload.success", 1)[0]
+        network_branch = script.split("catch {", 1)[1].split("catch {", 1)[0]
+        parse_branch = script.split("catch {", 1)[1].split("catch {", 1)[1].split("payload.success", 1)[0]
         self.assertIn("restoreReloadOnClose = true;", network_branch)
         self.assertIn("showRestoreArchiveError(restoreNetworkError);", network_branch)
         self.assertIn("restoreReloadOnClose = true;", parse_branch)

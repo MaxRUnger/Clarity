@@ -3,7 +3,7 @@
   var config = {};
   try {
     config = JSON.parse(configNode && configNode.textContent ? configNode.textContent : "{}");
-  } catch (err) {
+  } catch {
     config = {};
   }
 
@@ -39,7 +39,7 @@
         redirectToLogout(true);
       }
     };
-  } catch (err) {
+  } catch {
     channel = null;
   }
 
@@ -52,7 +52,7 @@
           return value;
         }
         return 0;
-      } catch (err) {
+      } catch {
         storageOk = false;
       }
     }
@@ -67,7 +67,7 @@
     }
     try {
       localStorage.setItem(key, String(value));
-    } catch (err) {
+    } catch {
       storageOk = false;
     }
   }
@@ -123,7 +123,7 @@
       if (channel) {
         channel.postMessage({ type: "logout" });
       }
-    } catch (err) {
+    } catch {
       channel = null;
     }
     function csrfToken() {
@@ -159,7 +159,7 @@
     });
     try {
       Promise.race([Promise.resolve(window.runAutosave()), cutoff]).then(finish, finish);
-    } catch (err) {
+    } catch {
       finish();
     }
   }
@@ -362,7 +362,7 @@
           if (path === "/login") {
             expired = true;
           }
-        } catch (err) {
+        } catch {
           expired = false;
         }
       }

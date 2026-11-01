@@ -402,7 +402,7 @@ archiveSubmitBtn?.addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ confirm_name: archiveNameInput.value }),
     });
-  } catch (networkError) {
+  } catch {
     showArchiveError(archiveSlowReply);
     releaseArchiveSubmit();
     return;
@@ -410,7 +410,7 @@ archiveSubmitBtn?.addEventListener('click', async () => {
   let payload = null;
   try {
     payload = await response.json();
-  } catch (parseError) {
+  } catch {
     showArchiveError(archiveSlowReply);
     releaseArchiveSubmit();
     return;
