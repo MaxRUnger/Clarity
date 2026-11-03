@@ -70,7 +70,22 @@ from app.helpers.student_names import (
     normalize_email,
     require_canvas_name,
     row_sort_key,
-    collator_key,
+)
+from app.helpers.class_form import (
+    CLASS_DAYS,
+    _clean_class_days,
+    _clean_class_form,
+    _clean_section_number,
+    class_display_title,
+)
+from app.helpers.lo_progress import (
+    build_learning_objectives_grid,
+    learning_objective_column_name,
+    lo_cell_status,
+)
+from app.helpers.revision_report import (
+    _revision_view,
+    build_revision_report,
 )
 from uuid import uuid4
 
@@ -122,67 +137,6 @@ def _consume_one_time_form_token(namespace: str, token: str) -> bool:
         return True
 
 DEFAULT_REQUIRED_MS = 2
-
-CLASS_DAYS = ("MW", "TTH", "MWF", "WF", "Asynchronous")
-SECTION_NUMBER_MAX = 32
-
-
-def _clean_class_days(raw):
-    """Accept only a listed meeting pattern. Blank is not a listed value."""
-    days = (raw or "").strip()
-    if days not in CLASS_DAYS:
-        return None, "Class days must be one of the listed options."
-    return days, None
-
-
-def class_display_title(name, days, section):
-    """Join the non-empty class name, days, and section with a separator."""
-    parts = []
-    for value in (name, days, section):
-        text = "" if value is None else str(value).strip()
-        if text:
-            parts.append(text)
-    return " | ".join(parts)
-
-
-def _clean_section_number(raw):
-    """Trim a section number. Blank becomes null. Case is kept."""
-    section = (raw or "").strip()
-    if not section:
-        return None, None
-    if len(section) > SECTION_NUMBER_MAX:
-        return None, "Section number must be 32 characters or fewer."
-    return section, None
-
-
-def _clean_class_form(form):
-    """Validate the shared class form. Returns (values, error_message)."""
-    raw_name = form.get("name")
-    name = "" if raw_name is None else str(raw_name).strip()
-    if not name:
-        return None, "Class name is required."
-    if len(name) > 255:
-        return None, "Class name must be 255 characters or fewer."
-    section_number, section_error = _clean_section_number(form.get("section_number"))
-    if section_error:
-        return None, section_error
-    days, days_error = _clean_class_days(form.get("days"))
-    if days_error:
-        return None, days_error
-    semester = form.get("semester", "") or ""
-    year = form.get("year", "") or ""
-    semester_full = f"{semester} {year}".strip() if year else semester
-    if len(semester_full) > 100:
-        return None, "Semester must be 100 characters or fewer."
-    return {
-        "name": name,
-        "semester": semester_full,
-        "days": days,
-        "section_number": section_number,
-        "is_online": form.get("is_online") == "1",
-        "auto_convert_m": form.get("auto_convert_m") == "1",
-    }, None
-
 
 # Shared caps for all bulk-import entry points (CSV and JSON body alike).
 # Bytes cap matches the pre-existing LO CSV limit; row cap keeps a single
@@ -1128,73 +1082,6 @@ def _class_data_for_progress(class_data: Optional[Dict[str, Any]]) -> Optional[D
     return progress_data
 
 
-def lo_cell_status(m_count, required):
-    """passed when m >= r, close when one mastery short, otherwise behind."""
-    m = 0 if m_count is None else m_count
-    r = 0 if required is None else required
-    if m >= r:
-        return "passed"
-    if m >= 1 and (r - m) == 1:
-        return "close"
-    return "behind"
-
-
-def learning_objective_column_name(lo: Dict[str, Any]) -> str:
-    """Header the Learning Objectives table shows for one objective."""
-    return lo.get("vendor_code") or lo.get("name") or "Objective"
-
-
-def learning_objective_cell_text(m_count, required) -> str:
-    """Visible cell: a check mark when passed, otherwise m/required."""
-    if lo_cell_status(m_count, required) == "passed":
-        return "✓"
-    return f"{m_count}/{required}"
-
-
-def learning_objective_progress_text(passed, total) -> str:
-    """Progress column: passed objectives over the attached total."""
-    return f"{passed}/{total}"
-
-
-def build_learning_objectives_grid(students, learning_objectives):
-    """Rows for the Learning Objectives table. Cell text comes from the helpers above."""
-    grid_rows = []
-    for student in students:
-        by_lo = {
-            str(slo.get("learning_objective_id") or ""): slo
-            for slo in (student.get("learning_objectives") or [])
-        }
-        cells = []
-        for row in learning_objectives:
-            matched = by_lo.get(row["id"])
-            if matched is None:
-                m_count = 0
-                required = row["required_ms"]
-            else:
-                m_count = int(matched.get("m_count") or 0)
-                required = matched.get("required_ms")
-                if required is None:
-                    required = row["required_ms"]
-            cells.append({
-                "text": f"{m_count}/{required}",
-                "status": lo_cell_status(m_count, required),
-                "display": learning_objective_cell_text(m_count, required),
-            })
-        student_los = student.get("learning_objectives") or []
-        passed = sum(1 for slo in student_los if slo.get("is_passed"))
-        objective_total = student.get("objective_total")
-        if objective_total is None:
-            objective_total = 0
-        grid_rows.append({
-            "name": display_name(student.get("full_name") or ""),
-            "cells": cells,
-            "learning_objectives": student_los,
-            "objective_total": objective_total,
-            "progress_text": learning_objective_progress_text(passed, objective_total),
-        })
-    return grid_rows
-
-
 def class_progress(raw_grades, lo_lookup):
     """Return (aggregated rows, class objective total) for one class's objective lookup."""
     if not lo_lookup:
@@ -1671,139 +1558,6 @@ def instructor_dashboard():
 # ============================================================================
 # CLASS MANAGEMENT ROUTES
 # ============================================================================
-
-def _sort_overdue_revisions(revisions):
-    """Order overdue rows by the stored student name. Equal names keep their order."""
-    revisions.sort(key=lambda rev: collator_key(rev.get("student_name") or ""))
-    return revisions
-
-
-def _revision_count_line(student_count, revision_count):
-    students = "student" if student_count == 1 else "students"
-    revisions = "revision" if revision_count == 1 else "revisions"
-    return f"{student_count} {students}, {revision_count} {revisions}"
-
-
-def _objective_shows_name(code, name):
-    text = (name or "").strip()
-    if not text:
-        return False
-    return text.casefold() != (code or "").strip().casefold()
-
-
-def _revision_view(key, label, print_title, empty_message, rows):
-    grouped = {}
-    order = []
-    for row in rows:
-        sid = row.get("student_id")
-        if sid not in grouped:
-            grouped[sid] = {
-                "student_id": sid,
-                "student_name": row.get("student_name") or "",
-                "assignments": {},
-                "assignment_order": [],
-            }
-            order.append(sid)
-        student = grouped[sid]
-        aid = row.get("assignment_id") or row.get("assignment_name") or ""
-        if aid not in student["assignments"]:
-            student["assignments"][aid] = {
-                "assignment_id": aid,
-                "assignment_name": row.get("assignment_name") or "",
-                "revision_due": row.get("revision_due") or "",
-                "objectives": [],
-            }
-            student["assignment_order"].append(aid)
-        code = row.get("lo_code") or ""
-        name = row.get("lo_objective_name") or ""
-        student["assignments"][aid]["objectives"].append({
-            "lo_code": code,
-            "lo_name": name,
-            "show_name": _objective_shows_name(code, name),
-            "top_score": row.get("top_score") or "",
-            "learning_objective_id": row.get("learning_objective_id") or "",
-        })
-    students = []
-    revision_count = 0
-    for sid in order:
-        student = grouped[sid]
-        assignments = [student["assignments"][aid] for aid in student["assignment_order"]]
-        assignments.sort(key=lambda item: (
-            item.get("revision_due") or "",
-            collator_key(item.get("assignment_name") or ""),
-            item.get("assignment_id") or "",
-        ))
-        for assignment in assignments:
-            assignment["objectives"].sort(key=lambda obj: lo_sort_key({
-                "vendor_code": obj.get("lo_code") or "",
-                "name": obj.get("lo_name") or "",
-                "id": obj.get("learning_objective_id") or "",
-            }))
-            revision_count += len(assignment["objectives"])
-        students.append({
-            "student_id": student["student_id"],
-            "student_name": student["student_name"],
-            "assignments": assignments,
-        })
-    _sort_overdue_revisions(students)
-    return {
-        "key": key,
-        "label": label,
-        "print_title": print_title,
-        "empty_message": empty_message,
-        "students": students,
-        "student_count": len(students),
-        "revision_count": revision_count,
-        "count_line": _revision_count_line(len(students), revision_count),
-    }
-
-
-def build_revision_report(rows, today):
-    """Group named revision rows into Overdue, Due today, and exact due-in-1..7 views."""
-    today_iso = today.isoformat()
-    buckets = {"overdue": [], "today": []}
-    for n in range(1, 8):
-        buckets[str(n)] = []
-    day_dates = {n: (today + timedelta(days=n)).isoformat() for n in range(1, 8)}
-    for row in rows:
-        due = row.get("revision_due") or ""
-        if due and due < today_iso:
-            buckets["overdue"].append(row)
-        elif due == today_iso:
-            buckets["today"].append(row)
-        else:
-            for n, iso in day_dates.items():
-                if due == iso:
-                    buckets[str(n)].append(row)
-                    break
-    views = [
-        _revision_view(
-            "overdue",
-            "Overdue",
-            "Overdue revisions",
-            "No overdue revisions.",
-            buckets["overdue"],
-        ),
-        _revision_view(
-            "today",
-            "Due today",
-            "Revisions due today",
-            "No revisions due today",
-            buckets["today"],
-        ),
-    ]
-    for n in range(1, 8):
-        noun = "day" if n == 1 else "days"
-        star = " ★" if n == 3 else ""
-        views.append(_revision_view(
-            str(n),
-            f"Due in {n} {noun}{star}",
-            f"Revisions due in {n} {noun}",
-            f"No revisions due in {n} {noun}",
-            buckets[str(n)],
-        ))
-    return {"views": views, "overdue_revision_count": views[0]["revision_count"]}
-
 
 _REVISION_EMAIL_BUDGET_SECONDS = 60
 _REVISION_EMAIL_PAUSE_SECONDS = 0.5

@@ -424,7 +424,7 @@ class TestStoredCanvasNames(unittest.TestCase):
         self.assertEqual([row["full_name"] for row in rows], list(CANVAS_ORDER))
 
     def test_overdue_revisions_sort_by_stored_name(self):
-        from app.routes import _sort_overdue_revisions
+        from app.helpers.revision_report import _sort_overdue_revisions
         rows = [
             {"student_name": "Zenith, Bob"},
             {"student_name": "Adams, Zoe"},
@@ -520,7 +520,7 @@ class TestRevisionReport(unittest.TestCase):
 
     def test_report_groups_exact_days_and_one_card_per_student(self):
         from datetime import date
-        from app.routes import build_revision_report
+        from app.helpers.revision_report import build_revision_report
         today = date(2026, 10, 20)
         rows = [
             _revision_row("s1", "Zenith, Bob", "2026-10-19", "Quiz B", "T2", "Derivatives"),
@@ -572,7 +572,7 @@ class TestRevisionReport(unittest.TestCase):
     def test_due_on_the_pacific_date_is_not_overdue_at_02_utc(self):
         from datetime import datetime, timezone
         from app.helpers.local_time import local_today
-        from app.routes import build_revision_report
+        from app.helpers.revision_report import build_revision_report
         app = create_app()
         instant = datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc)
         with app.app_context():
@@ -588,7 +588,7 @@ class TestRevisionReport(unittest.TestCase):
 
     def test_empty_day_message_for_four_days(self):
         from datetime import date
-        from app.routes import build_revision_report
+        from app.helpers.revision_report import build_revision_report
         report = build_revision_report([], date(2026, 10, 20))
         views = {view["key"]: view for view in report["views"]}
         self.assertEqual(views["4"]["empty_message"], "No revisions due in 4 days")
@@ -597,7 +597,7 @@ class TestRevisionReport(unittest.TestCase):
 
     def test_assignments_group_by_id_and_objectives_sort_by_code(self):
         from datetime import date
-        from app.routes import build_revision_report
+        from app.helpers.revision_report import build_revision_report
         today = date(2026, 10, 20)
         rows = [
             _revision_row("s1", "Lee, Ana", "2026-10-19", "Quiz", "E10", "Series", assignment_id="a-late", learning_objective_id="lo-10"),
@@ -646,7 +646,7 @@ class TestRevisionModalTemplate(unittest.TestCase):
 
     def test_dropdown_counts_star_and_empty_day(self):
         from datetime import date
-        from app.routes import build_revision_report
+        from app.helpers.revision_report import build_revision_report
         today = date(2026, 10, 20)
         populated = build_revision_report([
             _revision_row("s1", "Adams, Zoe", "2026-10-19", "Quiz A", "T1", "Limits"),
@@ -5788,7 +5788,7 @@ class TestLearningObjectivesProgressColumn(unittest.TestCase):
 
 class TestLoCellStatus(unittest.TestCase):
     def test_status_bands(self):
-        from app.routes import lo_cell_status
+        from app.helpers.lo_progress import lo_cell_status
         self.assertEqual(lo_cell_status(3, 3), "passed")
         self.assertEqual(lo_cell_status(4, 3), "passed")
         self.assertEqual(lo_cell_status(2, 3), "close")
@@ -5841,8 +5841,8 @@ class TestLoCellStatus(unittest.TestCase):
     def test_helper_text_matches_the_page(self):
         from flask import session
         from unittest.mock import patch
-        from app.routes import (
-            class_learning_objectives_summary,
+        from app.routes import class_learning_objectives_summary
+        from app.helpers.lo_progress import (
             learning_objective_cell_text,
             learning_objective_progress_text,
         )
@@ -5991,7 +5991,7 @@ class TestClassSectionNumber(unittest.TestCase):
         self.assertIsNone(payload)
 
     def test_form_prefills_from_values_and_days_list(self):
-        from app.routes import CLASS_DAYS
+        from app.helpers.class_form import CLASS_DAYS
         app = create_app()
         values = {
             "name": "Test Upload",
@@ -6911,7 +6911,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
 class TestClassDisplayTitle(unittest.TestCase):
     def test_name_days_and_section(self):
         from flask import render_template, session
-        from app.routes import CLASS_DAYS, class_display_title
+        from app.helpers.class_form import CLASS_DAYS, class_display_title
         title = class_display_title("Test Upload", "MW", "F26")
         self.assertEqual(title, "Test Upload | MW | F26")
         app = create_app()
@@ -6936,17 +6936,17 @@ class TestClassDisplayTitle(unittest.TestCase):
         self.assertIn("In Person", html)
 
     def test_blank_section_has_no_trailing_separator(self):
-        from app.routes import class_display_title
+        from app.helpers.class_form import class_display_title
         self.assertEqual(class_display_title("Test Upload", "MW", "  "), "Test Upload | MW")
         self.assertEqual(class_display_title("Test Upload", "MW", None), "Test Upload | MW")
 
     def test_blank_days_and_section_is_name_only(self):
-        from app.routes import class_display_title
+        from app.helpers.class_form import class_display_title
         self.assertEqual(class_display_title("  Test Upload  ", "", None), "Test Upload")
 
     def test_archive_button_carries_the_escaped_raw_name(self):
         from flask import render_template, session
-        from app.routes import CLASS_DAYS
+        from app.helpers.class_form import CLASS_DAYS
         app = create_app()
         with app.test_request_context("/instructor/dashboard"):
             session["role"] = "instructor"
@@ -7097,7 +7097,7 @@ class TestClassUpdate(unittest.TestCase):
 
     def test_card_title_reflects_the_edit(self):
         from flask import render_template, session
-        from app.routes import CLASS_DAYS, class_display_title
+        from app.helpers.class_form import CLASS_DAYS, class_display_title
         title = class_display_title("Renamed", "TTH", None)
         self.assertEqual(title, "Renamed | TTH")
         app = create_app()
@@ -7125,7 +7125,7 @@ class TestClassUpdate(unittest.TestCase):
         import json
         import re
         from flask import render_template, session
-        from app.routes import CLASS_DAYS
+        from app.helpers.class_form import CLASS_DAYS
         name = 'Algebra "A" </script>'
         classes = [
             {
@@ -7195,7 +7195,7 @@ class TestClassHeaderTitle(unittest.TestCase):
             self.assertNotIn("Test Upload | MW |", html)
 
     def _card(self, section):
-        from app.routes import CLASS_DAYS
+        from app.helpers.class_form import CLASS_DAYS
         return self._render(
             "classes/instructor_select_class.html",
             classes=[{
@@ -7213,7 +7213,7 @@ class TestClassHeaderTitle(unittest.TestCase):
 
     def _dashboard(self, section):
         from datetime import date
-        from app.routes import build_revision_report
+        from app.helpers.revision_report import build_revision_report
         return self._render(
             "classes/class_detail.html",
             class_id="c1",
@@ -7738,7 +7738,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
     def test_manage_students_card_shows_the_active_count(self):
         from datetime import date
         from flask import render_template, session
-        from app.routes import build_revision_report
+        from app.helpers.revision_report import build_revision_report
         app = create_app()
         student = {
             "id": "stu-1",
@@ -8848,6 +8848,8 @@ class TestClassArchiveExport(unittest.TestCase):
         from app.routes import (
             _build_gradesheet_csv_text,
             _gradesheet_csv_data_rows,
+        )
+        from app.helpers.lo_progress import (
             learning_objective_cell_text,
             learning_objective_progress_text,
         )
@@ -10269,7 +10271,7 @@ class TestArchivedClasses(unittest.TestCase):
 
     def test_the_selection_page_has_the_blue_button(self):
         from flask import render_template, session
-        from app.routes import CLASS_DAYS
+        from app.helpers.class_form import CLASS_DAYS
         app = create_app()
         with app.test_request_context("/instructor/dashboard"):
             session["role"] = "instructor"

@@ -7,7 +7,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from app import create_app
-from app.routes import build_revision_report
+from app.helpers.revision_report import build_revision_report
 
 ROOT = Path(__file__).resolve().parents[1]
 CSS_PATH = ROOT / "app" / "static" / "css" / "tailwind.css"

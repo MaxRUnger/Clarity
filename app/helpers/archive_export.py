@@ -13,13 +13,15 @@ from app.helpers.authentication import supabase_admin
 from app.models import Course, Homework
 from app.helpers.csv_safety import csv_safe_row
 from app.helpers.paging import fetch_all_rows
+from app.helpers.lo_progress import (
+    build_learning_objectives_grid,
+    learning_objective_column_name,
+)
 from app.routes import (
     _build_gradesheet_csv_text,
     _gradesheet_csv_data_rows,
     _gradesheet_letter_map_for_assignment,
     _process_enrollments,
-    build_learning_objectives_grid,
-    learning_objective_column_name,
     objectives_attached_to_assignments,
 )
 
