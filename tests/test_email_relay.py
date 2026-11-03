@@ -148,13 +148,19 @@ class TestEmailRelay(unittest.TestCase):
             session_token="relay-token",
             full_name="Estes, Brody",
         )
-        self.session_admin = unittest.mock.patch(
-            "app.routes.supabase_admin", serving_admin()
+        admin = serving_admin()
+        self.route_admin = unittest.mock.patch(
+            "app.routes.supabase_admin", admin
         )
+        self.session_admin = unittest.mock.patch(
+            "app.helpers.authentication.supabase_admin", admin
+        )
+        self.route_admin.start()
         self.session_admin.start()
 
     def tearDown(self):
         self.session_admin.stop()
+        self.route_admin.stop()
 
     def _db(self, email="ada@school.edu", email_set_at=None, students=None):
         if students is None:
@@ -193,7 +199,11 @@ class TestEmailRelay(unittest.TestCase):
         payload = {"subject": subject, "body": body}
         if extra:
             payload.update(extra)
-        with unittest.mock.patch.object(r, "supabase_admin", _admin(db)), \
+        admin = _admin(db)
+        with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch(
+                    "app.helpers.authentication.supabase_admin", admin
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")) as sender:
             response = self.client.post(
@@ -281,7 +291,11 @@ class TestEmailRelay(unittest.TestCase):
                 },
             })
         db = self._db(students=students)
-        with unittest.mock.patch.object(r, "supabase_admin", _admin(db)), \
+        admin = _admin(db)
+        with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch(
+                    "app.helpers.authentication.supabase_admin", admin
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")) as sender:
             response = self.client.post(
@@ -513,6 +527,9 @@ class TestEmailRelay(unittest.TestCase):
         db = self._db(students=students)
         admin, calls = self._count_tables(db)
         with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch(
+                    "app.helpers.authentication.supabase_admin", admin
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")):
             response = self.client.post(

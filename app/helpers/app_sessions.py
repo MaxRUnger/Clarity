@@ -20,7 +20,8 @@ _lock = threading.Lock()
 
 
 def _admin():
-    from app.routes import supabase_admin
+    # Import inside the function so importing this module does not create the Supabase client.
+    from app.helpers.authentication import supabase_admin
     return supabase_admin
 
 

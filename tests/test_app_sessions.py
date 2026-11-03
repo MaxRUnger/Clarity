@@ -130,7 +130,7 @@ class TestAppSessionOrder(unittest.TestCase):
             sess["session_token"] = "absent-token"
         empty = MagicMock()
         empty.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
-        with patch("app.routes.supabase_admin", empty):
+        with patch("app.helpers.authentication.supabase_admin", empty):
             denied = client.post("/api/session-keepalive")
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(denied.get_json()["code"], "session_expired")
@@ -231,8 +231,7 @@ class TestLogoutPost(unittest.TestCase):
 
     def _post(self, reason="inactivity"):
         admin = _admin(self.db)
-        with patch("app.routes.supabase_admin", admin), \
-             patch("app.helpers.authentication.supabase_admin", admin):
+        with patch("app.helpers.authentication.supabase_admin", admin):
             return self.client.post(
                 "/logout",
                 data={"csrf_token": "tok", "reason": reason},
@@ -270,8 +269,7 @@ class TestLogoutPost(unittest.TestCase):
             sess["csrf_token"] = "tok"
             sess["session_token"] = "sess-token"
         admin = _admin(self.db)
-        with patch("app.routes.supabase_admin", admin), \
-             patch("app.helpers.authentication.supabase_admin", admin):
+        with patch("app.helpers.authentication.supabase_admin", admin):
             replay = self.client.get("/_probe")
         self.assertEqual(replay.status_code, 302)
         self.assertTrue(replay.headers["Location"].endswith("/login"))
@@ -296,8 +294,7 @@ class TestLogoutPost(unittest.TestCase):
         self._plant()
         self.db["sessions"] = [self._row()]
         admin = _admin(self.db)
-        with patch("app.routes.supabase_admin", admin), \
-             patch("app.helpers.authentication.supabase_admin", admin):
+        with patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.post("/logout", data={"reason": "inactivity"})
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.get_json()["error"], "Invalid CSRF token")
@@ -336,8 +333,7 @@ class TestSessionLookup(unittest.TestCase):
         self._plant()
         db = {"ops": [], "ors": [], "sessions": []}
         admin = _admin(db)
-        with patch("app.routes.supabase_admin", admin), \
-             patch("app.helpers.authentication.supabase_admin", admin):
+        with patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.get("/_probe")
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.headers["Location"].endswith("/login"))
@@ -353,8 +349,7 @@ class TestSessionLookup(unittest.TestCase):
             "revoked_at": None,
         }]}
         admin = _admin(db)
-        with patch("app.routes.supabase_admin", admin), \
-             patch("app.helpers.authentication.supabase_admin", admin):
+        with patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.get("/_probe")
         self.assertEqual(response.status_code, 302)
         with self.client.session_transaction() as sess:
@@ -377,8 +372,7 @@ class TestSessionLookup(unittest.TestCase):
         logger = logging.getLogger("app.helpers.app_sessions")
         logger.addHandler(handler)
         try:
-            with patch("app.routes.supabase_admin", admin), \
-                 patch("app.helpers.authentication.supabase_admin", admin):
+            with patch("app.helpers.authentication.supabase_admin", admin):
                 page = self.client.get("/_probe")
                 with self.client.session_transaction() as sess:
                     sess["user_id"] = "user-1"
@@ -412,7 +406,6 @@ class TestSessionLookup(unittest.TestCase):
 
         admin = _admin(db)
         with patch("app.helpers.app_sessions._clock", side_effect=monotonic), \
-             patch("app.routes.supabase_admin", admin), \
              patch("app.helpers.authentication.supabase_admin", admin):
             first = self.client.get("/_probe")
             self.assertEqual(first.status_code, 200)

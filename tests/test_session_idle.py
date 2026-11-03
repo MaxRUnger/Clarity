@@ -29,7 +29,7 @@ class TestIdleSession(unittest.TestCase):
         self.app = _app()
         self.assertEqual(self.app.permanent_session_lifetime, timedelta(minutes=120))
         self.client = self.app.test_client()
-        self.session_admin = patch("app.routes.supabase_admin", serving_admin())
+        self.session_admin = patch("app.helpers.authentication.supabase_admin", serving_admin())
         self.session_admin.start()
 
     def tearDown(self):
@@ -119,7 +119,7 @@ class TestSessionTimeout(unittest.TestCase):
     def setUp(self):
         self.app = _app()
         self.client = self.app.test_client()
-        self.session_admin = patch("app.routes.supabase_admin", serving_admin())
+        self.session_admin = patch("app.helpers.authentication.supabase_admin", serving_admin())
         self.session_admin.start()
 
     def tearDown(self):

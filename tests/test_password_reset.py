@@ -194,6 +194,8 @@ class TestPasswordRulesOnBothRoutes(unittest.TestCase):
             "app.routes.verify_recovery_token", verify
         ), patch("app.routes.supabase", shared), patch(
             "app.routes.supabase_admin", admin
+        ), patch(
+            "app.helpers.authentication.supabase_admin", admin
         ), patch("app.routes.requests.post", return_value=_resend_ok()):
             response = self.client.post(
                 "/api/reset-password",
@@ -480,6 +482,8 @@ class TestResetPassword(unittest.TestCase):
         with patch(
             "app.routes.verify_recovery_token", verify
         ), patch("app.routes.supabase_admin", admin), patch(
+            "app.helpers.authentication.supabase_admin", admin
+        ), patch(
             "app.routes.requests.post", sender
         ), patch.dict(
             os.environ,
@@ -802,6 +806,8 @@ class TestPasswordResetCsrf(unittest.TestCase):
             "app.routes.verify_recovery_token",
             MagicMock(return_value=verified),
         ), patch("app.routes.supabase_admin", reset_admin), patch(
+            "app.helpers.authentication.supabase_admin", reset_admin
+        ), patch(
             "app.routes.requests.post", return_value=_resend_ok()
         ), patch.dict(
             os.environ,
