@@ -7,7 +7,7 @@ import unittest.mock
 from datetime import datetime, timedelta, timezone
 
 from app import create_app
-from app.app_sessions import clear_app_session_cache
+from app.helpers.app_sessions import clear_app_session_cache
 from app.helpers.student_names import normalize_email
 from tests.session_plant import plant_session, serving_admin, session_row
 

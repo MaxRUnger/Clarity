@@ -1,7 +1,7 @@
 """Give client tests a live app_sessions row when they sign a cookie in."""
 import pytest
 
-from app.app_sessions import clear_app_session_cache
+from app.helpers.app_sessions import clear_app_session_cache
 from tests.session_plant import PLANTED, session_row
 
 _AUTO = set()
@@ -13,7 +13,7 @@ def planted_app_sessions(monkeypatch):
     PLANTED.clear()
     _AUTO.clear()
 
-    import app.app_sessions as sessions
+    import app.helpers.app_sessions as sessions
 
     real_live = sessions._token_is_live
     real_fetch = sessions._fetch_row

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import quote
 
 from app import create_app
-from app.app_sessions import (
+from app.helpers.app_sessions import (
     cached_app_session,
     clear_app_session_cache,
     remember_app_session,
@@ -917,7 +917,7 @@ class TestResetRevokeOrder(unittest.TestCase):
             "app.routes.verify_recovery_token",
             MagicMock(return_value=verified),
         ), patch("app.routes.supabase_admin", admin), patch(
-            "app.app_sessions.revoke_user_sessions", revoke
+            "app.helpers.app_sessions.revoke_user_sessions", revoke
         ), patch(
             "app.routes.requests.post", return_value=_resend_ok()
         ), patch.dict(
@@ -981,12 +981,12 @@ class TestResetRevokeOrder(unittest.TestCase):
 
 class TestRevokeUserSessionsFilter(unittest.TestCase):
     def test_already_revoked_rows_are_not_updated(self):
-        from app.app_sessions import revoke_user_sessions
+        from app.helpers.app_sessions import revoke_user_sessions
 
         admin = MagicMock()
         query = admin.table.return_value.update.return_value.eq.return_value
-        with patch("app.app_sessions._admin", return_value=admin), patch(
-            "app.app_sessions._cache", {"live": (0.0, "instructor-1", None)}
+        with patch("app.helpers.app_sessions._admin", return_value=admin), patch(
+            "app.helpers.app_sessions._cache", {"live": (0.0, "instructor-1", None)}
         ):
             revoke_user_sessions("instructor-1")
         admin.table.assert_called_with("app_sessions")
@@ -1019,7 +1019,7 @@ class TestResetPasswordGate(unittest.TestCase):
         with patch("app.routes.verify_recovery_token", verify), patch(
             "app.routes.supabase_admin", admin
         ), patch(
-            "app.app_sessions.revoke_user_sessions", MagicMock()
+            "app.helpers.app_sessions.revoke_user_sessions", MagicMock()
         ), patch(
             "app.routes.requests.post", return_value=_resend_ok()
         ), patch.dict(
@@ -1077,7 +1077,7 @@ class TestResetPasswordGate(unittest.TestCase):
         admin = MagicMock()
         revoke = MagicMock()
         verify = MagicMock(side_effect=RuntimeError("expired"))
-        with patch("app.app_sessions.revoke_user_sessions", revoke):
+        with patch("app.helpers.app_sessions.revoke_user_sessions", revoke):
             with self.assertLogs("app.routes", level="ERROR"):
                 response = self._post(
                     password="Aa1!bbbbbbbb",
@@ -1101,7 +1101,7 @@ class TestResetPasswordGate(unittest.TestCase):
         verified.user.id = "instructor-1"
         verified.user.email = "other@school.edu"
         revoke = MagicMock()
-        with patch("app.app_sessions.revoke_user_sessions", revoke):
+        with patch("app.helpers.app_sessions.revoke_user_sessions", revoke):
             response = self._post(
                 password="Aa1!bbbbbbbb",
                 verify=MagicMock(return_value=verified),
@@ -1120,7 +1120,7 @@ class TestResetPasswordGate(unittest.TestCase):
         verified.user.id = "student-1"
         verified.user.email = "ada.lovelace@school.edu"
         revoke = MagicMock()
-        with patch("app.app_sessions.revoke_user_sessions", revoke):
+        with patch("app.helpers.app_sessions.revoke_user_sessions", revoke):
             response = self._post(
                 password="Aa1!bbbbbbbb",
                 verify=MagicMock(return_value=verified),

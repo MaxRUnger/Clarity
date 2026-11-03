@@ -141,7 +141,7 @@ class TestAppSessionOrder(unittest.TestCase):
 
 class TestAppSessionCache(unittest.TestCase):
     def test_cache_limit_is_500_and_add_drops_expired_entries(self):
-        from app.app_sessions import (
+        from app.helpers.app_sessions import (
             CACHE_LIMIT,
             CACHE_SECONDS,
             app_session_cache_size,
@@ -161,7 +161,7 @@ class TestAppSessionCache(unittest.TestCase):
         self.assertEqual(cached_app_session("new", now=31)[0], "user-1")
 
     def test_cache_holds_at_most_500_entries(self):
-        from app.app_sessions import (
+        from app.helpers.app_sessions import (
             app_session_cache_size,
             cached_app_session,
             clear_app_session_cache,
@@ -179,7 +179,7 @@ class TestAppSessionCache(unittest.TestCase):
         self.assertEqual(cached_app_session("extra", now=1005)[0], "user-1")
 
     def test_cached_expires_at_is_enforced_on_every_hit(self):
-        from app.app_sessions import (
+        from app.helpers.app_sessions import (
             cached_app_session,
             clear_app_session_cache,
             remember_app_session,
@@ -195,7 +195,7 @@ class TestAppSessionCache(unittest.TestCase):
             def now(cls, _tz=None):
                 return expires + timedelta(seconds=1)
 
-        with patch("app.app_sessions.datetime", Frozen):
+        with patch("app.helpers.app_sessions.datetime", Frozen):
             self.assertIsNone(cached_app_session("h", now=52))
 
 
@@ -374,7 +374,7 @@ class TestSessionLookup(unittest.TestCase):
         records = []
         handler = logging.Handler()
         handler.emit = lambda record: records.append(record.getMessage())
-        logger = logging.getLogger("app.app_sessions")
+        logger = logging.getLogger("app.helpers.app_sessions")
         logger.addHandler(handler)
         try:
             with patch("app.routes.supabase_admin", admin), \
@@ -395,7 +395,7 @@ class TestSessionLookup(unittest.TestCase):
         self.assertTrue(any("user-1" in message and "session lookup exploded" in message for message in records))
 
     def test_revoked_row_is_refused_after_the_cache_window(self):
-        from app.app_sessions import clear_app_session_cache
+        from app.helpers.app_sessions import clear_app_session_cache
 
         clear_app_session_cache()
         self._plant()
@@ -411,7 +411,7 @@ class TestSessionLookup(unittest.TestCase):
             return clock["now"]
 
         admin = _admin(db)
-        with patch("app.app_sessions._clock", side_effect=monotonic), \
+        with patch("app.helpers.app_sessions._clock", side_effect=monotonic), \
              patch("app.routes.supabase_admin", admin), \
              patch("app.helpers.authentication.supabase_admin", admin):
             first = self.client.get("/_probe")
@@ -505,7 +505,7 @@ class TestLoginSessionRow(unittest.TestCase):
         ))
 
     def test_login_primes_the_cache_so_the_next_request_does_not_read_app_sessions(self):
-        from app.app_sessions import clear_app_session_cache
+        from app.helpers.app_sessions import clear_app_session_cache
         clear_app_session_cache()
         db = {"ops": [], "ors": [], "sessions": [], "selects": [], "lts": []}
         user = MagicMock()

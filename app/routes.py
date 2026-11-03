@@ -1301,7 +1301,7 @@ def reset_password_page():
 
 @main_bp.route("/logout", methods=["POST"])
 def logout():
-    from app.app_sessions import revoke_live_session
+    from app.helpers.app_sessions import revoke_live_session
     reason = request.form.get("reason")
     try:
         revoke_live_session(session.get("session_token"), session.get("user_id"))
@@ -1401,7 +1401,7 @@ def login():
             if role != "instructor":
                 return jsonify({"success": False, "message": "Invalid credentials"}), 401
 
-            from app.app_sessions import (
+            from app.helpers.app_sessions import (
                 absolute_expiry,
                 delete_stale_sessions,
                 new_session_token,
@@ -1619,7 +1619,7 @@ def reset_password():
     if not user_id or verified_email != email or _profile_role(user_id) != "instructor":
         return jsonify({"success": False, "message": "This reset link is invalid or expired."}), 400
     try:
-        from app.app_sessions import revoke_user_sessions
+        from app.helpers.app_sessions import revoke_user_sessions
         revoke_user_sessions(user_id)
     except Exception as exc:
         logger.error("Password reset session revoke failed: %s", type(exc).__name__)
