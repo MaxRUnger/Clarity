@@ -17,9 +17,11 @@ from app.helpers.lo_progress import (
     build_learning_objectives_grid,
     learning_objective_column_name,
 )
-from app.routes import (
+from app.helpers.gradesheet_csv import (
     _build_gradesheet_csv_text,
     _gradesheet_csv_data_rows,
+)
+from app.routes import (
     _gradesheet_letter_map_for_assignment,
     _process_enrollments,
     objectives_attached_to_assignments,

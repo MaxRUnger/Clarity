@@ -28,23 +28,27 @@ from app.models import (
     Grade,
     Homework,
     MASTERY_GRADES,
+    DEFAULT_REQUIRED_MS,
+)
+from app.helpers.csv_text import (
+    MAX_IMPORT_ROWS,
+    _GRADESHEET_HEADER_ERROR,
+    parse_blank_gradesheet_csv_text,
+    parse_students_csv_text,
+)
+from app.helpers.gradesheet_csv import (
+    _BLANK_GRADESHEET_NOTE,
+    _build_gradesheet_csv_text,
+    _csv_format_hw_score,
+    _enrolled_import_name_index,
+    _gradesheet_csv_data_rows,
+    _gradesheet_letter_map_from_rows,
+    _lookup_enrolled_import_student_id,
 )
 from app.routes import (
     organize_by_learning_objectives,
     normalize_profile,
-    DEFAULT_REQUIRED_MS,
     _aggregate_lo_grades,
-    parse_blank_gradesheet_csv_text,
-    parse_students_csv_text,
-    _csv_format_hw_score,
-    _gradesheet_csv_data_rows,
-    _gradesheet_letter_map_from_rows,
-    _build_gradesheet_csv_text,
-    _BLANK_GRADESHEET_NOTE,
-    _GRADESHEET_HEADER_ERROR,
-    _enrolled_import_name_index,
-    _lookup_enrolled_import_student_id,
-    MAX_IMPORT_ROWS,
 )
 from app import create_app
 from app.helpers.student_names import COMMA_REQUIRED, display_name, row_sort_key
@@ -8845,7 +8849,7 @@ class TestClassArchiveExport(unittest.TestCase):
         import csv
         import zipfile
         import fitz
-        from app.routes import (
+        from app.helpers.gradesheet_csv import (
             _build_gradesheet_csv_text,
             _gradesheet_csv_data_rows,
         )

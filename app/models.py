@@ -34,6 +34,8 @@ MASTERY_GRADES = ('M', 'MR', 'R', 'RQ', 'P', 'X', 'A', 'I')
 # All three types share the same LO selection and grading path.
 ASSIGNMENT_TYPES = ('mastery_opp', 'exam', 'project')
 
+DEFAULT_REQUIRED_MS = 2
+
 
 class Course:
     @staticmethod

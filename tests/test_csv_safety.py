@@ -6,14 +6,16 @@ import unittest
 from unittest.mock import MagicMock
 
 from app import create_app
-from app.routes import (
+from app.helpers.csv_text import (
+    parse_blank_gradesheet_csv_text,
+    parse_learning_objectives_csv_text,
+    parse_students_csv_text,
+)
+from app.helpers.gradesheet_csv import (
     _build_gradesheet_csv_text,
     _enrolled_import_name_index,
     _gradesheet_csv_data_rows,
     _lookup_enrolled_import_student_id,
-    parse_blank_gradesheet_csv_text,
-    parse_learning_objectives_csv_text,
-    parse_students_csv_text,
 )
 
 _PLAIN_NEGATIVE = re.compile(r"-\d+(\.\d+)?")
