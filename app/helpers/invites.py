@@ -4,7 +4,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 
-from app.authentication import supabase_admin
+from app.helpers.authentication import supabase_admin
 
 logger = logging.getLogger(__name__)
 

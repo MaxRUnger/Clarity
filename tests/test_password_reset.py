@@ -829,21 +829,24 @@ class TestVerifyRecoveryToken(unittest.TestCase):
         import importlib
         import sys
 
-        installed = sys.modules.get("app.authentication")
+        installed = sys.modules.get("app.helpers.authentication")
         fn = getattr(installed, "new_anon_client", None)
-        swapped = getattr(fn, "__module__", None) != "app.authentication"
+        swapped = getattr(fn, "__module__", None) != "app.helpers.authentication"
         if swapped:
-            sys.modules.pop("app.authentication", None)
-            app_pkg = sys.modules.get("app")
-            if app_pkg is not None and "authentication" in app_pkg.__dict__:
-                del app_pkg.__dict__["authentication"]
-            importlib.import_module("app.authentication")
+            sys.modules.pop("app.helpers.authentication", None)
+            helpers_pkg = sys.modules.get("app.helpers")
+            if helpers_pkg is not None and "authentication" in helpers_pkg.__dict__:
+                del helpers_pkg.__dict__["authentication"]
+            importlib.import_module("app.helpers.authentication")
         try:
-            import app.authentication as auth
+            import app.helpers.authentication as auth
+            self.assertEqual(auth.__name__, "app.helpers.authentication")
+            self.assertIs(sys.modules["app.helpers.authentication"], auth)
+            self.assertNotIn("app.authentication", sys.modules)
             first = MagicMock()
             second = MagicMock()
             with patch(
-                "app.authentication.create_client",
+                "app.helpers.authentication.create_client",
                 side_effect=[first, second],
             ) as built:
                 one = auth.new_anon_client()
@@ -856,10 +859,10 @@ class TestVerifyRecoveryToken(unittest.TestCase):
             self.assertIsNot(one, two)
         finally:
             if swapped and installed is not None:
-                sys.modules["app.authentication"] = installed
-                app_pkg = sys.modules.get("app")
-                if app_pkg is not None:
-                    app_pkg.authentication = installed
+                sys.modules["app.helpers.authentication"] = installed
+                helpers_pkg = sys.modules.get("app.helpers")
+                if helpers_pkg is not None:
+                    helpers_pkg.authentication = installed
 
     def test_verify_recovery_token_uses_the_routes_client(self):
         from app.routes import verify_recovery_token

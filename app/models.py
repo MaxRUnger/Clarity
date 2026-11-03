@@ -17,7 +17,7 @@ import re
 from datetime import timedelta
 from typing import List, Optional, Dict, Any
 
-from app.authentication import supabase_admin
+from app.helpers.authentication import supabase_admin
 from app.helpers.lo_order import lo_sort_key
 from app.helpers.paging import fetch_all_rows
 

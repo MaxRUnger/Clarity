@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Sequence
 
-from app.authentication import supabase_admin
+from app.helpers.authentication import supabase_admin
 from app.helpers.paging import fetch_all_rows
 
 FORMAT_VERSION = 1

@@ -1,4 +1,4 @@
-from app.authentication import supabase_admin
+from app.helpers.authentication import supabase_admin
 
 _BUCKET = "class-archives"
 

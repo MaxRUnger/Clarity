@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 _mock_supabase = MagicMock()
 _mock_supabase_admin = MagicMock()
 
-sys.modules.setdefault('app.authentication', MagicMock(
+sys.modules.setdefault('app.helpers.authentication', MagicMock(
     supabase=_mock_supabase,
     supabase_admin=_mock_supabase_admin,
 ))
@@ -9250,7 +9250,7 @@ class TestClassArchiveRoute(unittest.TestCase):
     ):
         from uuid import UUID
         from app import routes as r
-        import app.archive_storage as storage
+        import app.helpers.archive_storage as storage
 
         r._rate_limit_events.clear()
         log = []
@@ -9321,7 +9321,7 @@ class TestClassArchiveRoute(unittest.TestCase):
             unittest.mock.patch.object(r, "supabase_admin", admin),
             unittest.mock.patch.object(storage, "supabase_admin", admin),
             unittest.mock.patch("app.archive_export.build_class_archive_zip", side_effect=build_zip),
-            unittest.mock.patch("app.archive_snapshot.build_class_snapshot", side_effect=build_snapshot),
+            unittest.mock.patch("app.helpers.archive_snapshot.build_class_snapshot", side_effect=build_snapshot),
             unittest.mock.patch.object(r, "uuid4", return_value=UUID(self.ARCHIVE_ID)),
             unittest.mock.patch.object(r, "delete_class_rows", side_effect=delete_rows),
         ]
@@ -9632,7 +9632,7 @@ class TestClassArchiveRoute(unittest.TestCase):
         self.assertFalse(any(entry["op"] == "insert" for entry in log))
 
     def test_snapshot_build_error_uploads_nothing(self):
-        from app.archive_snapshot import SnapshotCountError
+        from app.helpers.archive_snapshot import SnapshotCountError
         failed, _log, bucket, deleted = self._post(snapshot_error=RuntimeError("snapshot failed"))
         self.assertEqual(failed.status_code, 500)
         self.assertEqual(
@@ -9687,8 +9687,8 @@ class TestClassArchiveRoute(unittest.TestCase):
         self.assertEqual(deleted, [])
 
     def test_each_upload_gets_its_own_options_dict(self):
-        from app.archive_storage import upload_archive
-        import app.archive_storage as storage
+        from app.helpers.archive_storage import upload_archive
+        import app.helpers.archive_storage as storage
         bucket = _ArchiveBucket()
         admin = unittest.mock.MagicMock()
         admin.storage.from_.return_value = bucket
@@ -9780,7 +9780,7 @@ class TestArchivedClasses(unittest.TestCase):
         fail_delete=None,
     ):
         from app import routes as r
-        import app.archive_storage as storage
+        import app.helpers.archive_storage as storage
 
         r._rate_limit_events.clear()
         log = []
@@ -10819,7 +10819,7 @@ class TestArchiveSnapshot(unittest.TestCase):
         ]
 
     def _build(self, tables=None, students=None, assignments=None, short=False):
-        import app.archive_snapshot as snapshot
+        import app.helpers.archive_snapshot as snapshot
         tables = self._tables() if tables is None else tables
         if students is None:
             students = len(tables["enrollments"])
@@ -10865,12 +10865,12 @@ class TestArchiveSnapshot(unittest.TestCase):
         self.assertIn((1000, 1999), grade_ranges)
 
     def test_enrollment_count_must_match_the_manifest(self):
-        from app.archive_snapshot import SnapshotCountError
+        from app.helpers.archive_snapshot import SnapshotCountError
         with self.assertRaises(SnapshotCountError):
             self._build(self._tables(), students=9)
 
     def test_a_short_head_count_raises(self):
-        from app.archive_snapshot import SnapshotCountError
+        from app.helpers.archive_snapshot import SnapshotCountError
         with self.assertRaises(SnapshotCountError):
             self._build(self._tables(), short=True)
 
@@ -11001,7 +11001,7 @@ class TestArchiveSnapshot(unittest.TestCase):
         self.assertEqual(document["students"], [{"full_name": "Lee, Ana", "id": "s1"}])
 
     def test_a_key_whose_name_contains_email_is_rejected(self):
-        from app.archive_snapshot import SnapshotCountError
+        from app.helpers.archive_snapshot import SnapshotCountError
         tables = self._tables()
         tables["classes"][0]["student_email"] = "hidden"
         with self.assertRaises(SnapshotCountError):
@@ -11021,7 +11021,7 @@ class TestSignupEmailRedirect(unittest.TestCase):
         }
 
     def _post(self, *, base_url, public_base, headers=None, production=False):
-        from app.authentication import supabase
+        from app.helpers.authentication import supabase
         supabase.auth.sign_up.return_value = unittest.mock.MagicMock(user=None)
         supabase.auth.sign_up.side_effect = None
         supabase.auth.sign_up.reset_mock()
@@ -11090,7 +11090,7 @@ class TestLoginRole(unittest.TestCase):
         self.client = self.app.test_client()
 
     def _login(self, profile_result):
-        from app.authentication import supabase, supabase_admin
+        from app.helpers.authentication import supabase, supabase_admin
         user = unittest.mock.MagicMock()
         user.id = "user-1"
         user.user_metadata = {"role": "/evil.example", "full_name": "Ada"}

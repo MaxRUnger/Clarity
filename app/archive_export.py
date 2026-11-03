@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 import fitz
 
-from app.authentication import supabase_admin
+from app.helpers.authentication import supabase_admin
 from app.models import Course, Homework
 from app.helpers.csv_safety import csv_safe_row
 from app.helpers.paging import fetch_all_rows

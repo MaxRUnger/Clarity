@@ -7,7 +7,7 @@ import unittest
 import unittest.mock
 
 from app import create_app
-from app.archive_snapshot import check_snapshot_archive
+from app.helpers.archive_snapshot import check_snapshot_archive
 
 
 def _messages(logger_name):
@@ -66,7 +66,7 @@ class TestRequestSize(unittest.TestCase):
 class TestGzipCap(unittest.TestCase):
     def test_archive_verification_rejects_a_small_patched_cap(self):
         blob = gzip.compress(b"y" * 300)
-        with unittest.mock.patch("app.archive_snapshot.MAX_GZIP_BYTES", 40, create=True):
+        with unittest.mock.patch("app.helpers.archive_snapshot.MAX_GZIP_BYTES", 40, create=True):
             try:
                 check_snapshot_archive(blob, {})
             except Exception as exc:
@@ -92,9 +92,9 @@ class TestGzipCap(unittest.TestCase):
             sess["user_id"] = "inst1"
             sess["role"] = "instructor"
             sess["csrf_token"] = "test-csrf"
-        with unittest.mock.patch("app.archive_snapshot.MAX_GZIP_BYTES", 40, create=True), \
+        with unittest.mock.patch("app.helpers.archive_snapshot.MAX_GZIP_BYTES", 40, create=True), \
                 unittest.mock.patch.object(r, "_owned_archive_row", return_value=row), \
-                unittest.mock.patch("app.archive_storage.download_archive", return_value=blob), \
+                unittest.mock.patch("app.helpers.archive_storage.download_archive", return_value=blob), \
                 unittest.mock.patch.object(r.supabase_admin, "rpc") as rpc, \
                 unittest.mock.patch.object(r, "_remove_archive_object") as remove:
             response = client.post(
@@ -189,7 +189,7 @@ class TestCacheControl(unittest.TestCase):
         try:
             with unittest.mock.patch.object(r, "_owned_archive_row", return_value=row), \
                     unittest.mock.patch(
-                        "app.archive_storage.download_archive", return_value=b"PK"
+                        "app.helpers.archive_storage.download_archive", return_value=b"PK"
                     ):
                 download = client.get(f"/archived-classes/{archive_id}/download")
         finally:

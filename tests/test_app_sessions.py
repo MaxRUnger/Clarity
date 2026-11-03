@@ -232,7 +232,7 @@ class TestLogoutPost(unittest.TestCase):
     def _post(self, reason="inactivity"):
         admin = _admin(self.db)
         with patch("app.routes.supabase_admin", admin), \
-             patch("app.authentication.supabase_admin", admin):
+             patch("app.helpers.authentication.supabase_admin", admin):
             return self.client.post(
                 "/logout",
                 data={"csrf_token": "tok", "reason": reason},
@@ -271,7 +271,7 @@ class TestLogoutPost(unittest.TestCase):
             sess["session_token"] = "sess-token"
         admin = _admin(self.db)
         with patch("app.routes.supabase_admin", admin), \
-             patch("app.authentication.supabase_admin", admin):
+             patch("app.helpers.authentication.supabase_admin", admin):
             replay = self.client.get("/_probe")
         self.assertEqual(replay.status_code, 302)
         self.assertTrue(replay.headers["Location"].endswith("/login"))
@@ -297,7 +297,7 @@ class TestLogoutPost(unittest.TestCase):
         self.db["sessions"] = [self._row()]
         admin = _admin(self.db)
         with patch("app.routes.supabase_admin", admin), \
-             patch("app.authentication.supabase_admin", admin):
+             patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.post("/logout", data={"reason": "inactivity"})
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.get_json()["error"], "Invalid CSRF token")
@@ -337,7 +337,7 @@ class TestSessionLookup(unittest.TestCase):
         db = {"ops": [], "ors": [], "sessions": []}
         admin = _admin(db)
         with patch("app.routes.supabase_admin", admin), \
-             patch("app.authentication.supabase_admin", admin):
+             patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.get("/_probe")
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.headers["Location"].endswith("/login"))
@@ -354,7 +354,7 @@ class TestSessionLookup(unittest.TestCase):
         }]}
         admin = _admin(db)
         with patch("app.routes.supabase_admin", admin), \
-             patch("app.authentication.supabase_admin", admin):
+             patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.get("/_probe")
         self.assertEqual(response.status_code, 302)
         with self.client.session_transaction() as sess:
@@ -378,7 +378,7 @@ class TestSessionLookup(unittest.TestCase):
         logger.addHandler(handler)
         try:
             with patch("app.routes.supabase_admin", admin), \
-                 patch("app.authentication.supabase_admin", admin):
+                 patch("app.helpers.authentication.supabase_admin", admin):
                 page = self.client.get("/_probe")
                 with self.client.session_transaction() as sess:
                     sess["user_id"] = "user-1"
@@ -413,7 +413,7 @@ class TestSessionLookup(unittest.TestCase):
         admin = _admin(db)
         with patch("app.app_sessions._clock", side_effect=monotonic), \
              patch("app.routes.supabase_admin", admin), \
-             patch("app.authentication.supabase_admin", admin):
+             patch("app.helpers.authentication.supabase_admin", admin):
             first = self.client.get("/_probe")
             self.assertEqual(first.status_code, 200)
             db["sessions"][0]["revoked_at"] = _iso(datetime.now(timezone.utc))
@@ -441,7 +441,7 @@ class TestLoginSessionRow(unittest.TestCase):
         admin = _admin(db)
         with patch("app.routes.supabase", auth), \
              patch("app.routes.supabase_admin", admin), \
-             patch("app.authentication.supabase_admin", admin):
+             patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.post(
                 "/api/login",
                 json={"email": "ada@school.edu", "password": "secret"},
@@ -516,7 +516,7 @@ class TestLoginSessionRow(unittest.TestCase):
         admin = _admin(db)
         with patch("app.routes.supabase", auth), \
              patch("app.routes.supabase_admin", admin), \
-             patch("app.authentication.supabase_admin", admin):
+             patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.post(
                 "/api/login",
                 json={"email": "ada@school.edu", "password": "secret"},

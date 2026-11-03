@@ -47,14 +47,14 @@ from flask import (  # type: ignore
 )
 from werkzeug.utils import secure_filename
 from config import Config
-from app.authentication import new_anon_client, supabase, supabase_admin
+from app.helpers.authentication import new_anon_client, supabase, supabase_admin
 from app.helpers.passwords import password_error
 from app.helpers.lo_order import lo_sort_key
 from app.helpers.local_time import local_today
-from app.archive_snapshot import _IN_CHUNK_SIZE
+from app.helpers.archive_snapshot import _IN_CHUNK_SIZE
 from app.helpers.calendar_dates import clean_assignment_dates
 from app.helpers.csv_safety import csv_safe_row
-from app.invites import invite_code_is_valid
+from app.helpers.invites import invite_code_is_valid
 from app.helpers.paging import fetch_all_rows
 from app.models import (
     Course,
@@ -441,7 +441,7 @@ def _remove_archive_object(path: str) -> None:
     """Remove one stored archive object. A missing object is not an error."""
     if not str(path or "").strip():
         return
-    from app.archive_storage import remove_archive
+    from app.helpers.archive_storage import remove_archive
     try:
         remove_archive(path)
     except Exception as exc:
@@ -2921,8 +2921,8 @@ def _zip_over_archive_limit(zip_bytes):
 @rate_limited("archive_create", limit=5, window_sec=3600)
 def archive_class(class_id):
     from app.archive_export import build_class_archive_zip, check_archive_manifest
-    from app.archive_snapshot import build_class_snapshot
-    from app.archive_storage import (
+    from app.helpers.archive_snapshot import build_class_snapshot
+    from app.helpers.archive_storage import (
         download_archive,
         remove_archive,
         upload_archive,
@@ -3130,7 +3130,7 @@ def archived_classes():
 def download_archived_class(archive_id):
     if session.get("role") != "instructor":
         return redirect(url_for("main.login_page"))
-    from app.archive_storage import download_archive
+    from app.helpers.archive_storage import download_archive
     row = _owned_archive_row(archive_id, session["user_id"])
     if row is None:
         return jsonify({"success": False, "error": "This archive was not found."}), 404
@@ -3296,8 +3296,8 @@ def _delete_restore_attempt(attempt_id: str) -> None:
 @rate_limited("archive_restore", limit=5, window_sec=3600)
 def restore_archived_class(archive_id):
     import json
-    from app.archive_snapshot import GzipTooLarge, gunzip_bounded
-    from app.archive_storage import download_archive
+    from app.helpers.archive_snapshot import GzipTooLarge, gunzip_bounded
+    from app.helpers.archive_storage import download_archive
 
     start = time.monotonic()
     if _ARCHIVE_ID.fullmatch(str(archive_id or "")) is None:

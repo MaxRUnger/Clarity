@@ -51,7 +51,7 @@ class TestSignupInvites(unittest.TestCase):
             "invite_code": code,
         }
         with patch("app.routes.supabase", shared        ), patch(
-            "app.invites.supabase_admin", admin
+            "app.helpers.invites.supabase_admin", admin
         ), patch(
             "app.routes.Config.PUBLIC_BASE_URL",
             "https://clarity.example",
@@ -110,7 +110,7 @@ class TestSignupInvites(unittest.TestCase):
 
         handler = _Capture()
         handler.setLevel(logging.ERROR)
-        logger = logging.getLogger("app.invites")
+        logger = logging.getLogger("app.helpers.invites")
         logger.addHandler(handler)
         try:
             self._assert_rejected(code, boom=RuntimeError(code))
@@ -149,7 +149,7 @@ class TestSignupInvites(unittest.TestCase):
         self.assertEqual(body["options"]["data"]["invite_code"], "abc")
 
     def test_invite_code_hash_of_abc(self):
-        from app.invites import invite_code_hash
+        from app.helpers.invites import invite_code_hash
 
         self.assertEqual(invite_code_hash("abc"), _ABC_HASH)
         self.assertEqual(invite_code_hash("  abc"), _ABC_HASH)
