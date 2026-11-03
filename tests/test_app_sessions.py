@@ -564,7 +564,7 @@ class TestAddClassProfile(unittest.TestCase):
 class TestLogoutMarkup(unittest.TestCase):
     def test_logout_controls_post_a_form(self):
         root = os.path.join(os.path.dirname(__file__), "..", "app")
-        for name in ("templates/app_base.html", "templates/instructor_select_class.html"):
+        for name in ("templates/app_base.html", "templates/classes/instructor_select_class.html"):
             with open(os.path.join(root, name), encoding="utf-8") as handle:
                 html = handle.read()
             self.assertIn('method="POST"', html)
@@ -587,7 +587,7 @@ class TestLogoutMarkup(unittest.TestCase):
             session["role"] = "instructor"
             base = render_template("app_base.html")
             select = render_template(
-                "instructor_select_class.html",
+                "classes/instructor_select_class.html",
                 classes=[],
                 create_class_token="create-tok",
                 copy_class_token="copy-tok",

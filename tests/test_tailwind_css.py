@@ -118,7 +118,7 @@ class TestLocalTailwind(unittest.TestCase):
             "login": _render("auth/login.html"),
             "signup": _render("auth/signup.html"),
             "class_detail": _render(
-                "class_detail.html",
+                "classes/class_detail.html",
                 class_id="c1",
                 class_name="Test Upload",
                 class_days="MW",
@@ -131,7 +131,7 @@ class TestLocalTailwind(unittest.TestCase):
                 revision_printed_on="2026-10-20",
             ),
             "reports": _render(
-                "class_reports.html",
+                "classes/class_reports.html",
                 class_id="c1",
                 class_name="Test Upload",
                 class_days="MW",
@@ -162,7 +162,7 @@ class TestLocalTailwind(unittest.TestCase):
     def test_mastery_rules_are_in_speed_grader_and_reports(self):
         pages = {
             "speed_grader": _render(
-                "class_speed_grader.html",
+                "classes/class_speed_grader.html",
                 class_id="c1",
                 instructor_mode="mark",
                 assignments=[],
@@ -171,7 +171,7 @@ class TestLocalTailwind(unittest.TestCase):
                 auto_convert_m=False,
             ),
             "reports": _render(
-                "class_reports.html",
+                "classes/class_reports.html",
                 class_id="c1",
                 class_name="Test Upload",
                 class_days="MW",

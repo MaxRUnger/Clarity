@@ -1661,7 +1661,7 @@ def instructor_dashboard():
     copy_class_token = str(uuid4())
     session['copy_class_token'] = copy_class_token
     return render_template(
-        "instructor_select_class.html",
+        "classes/instructor_select_class.html",
         classes=db_classes,
         create_class_token=create_class_token,
         copy_class_token=copy_class_token,
@@ -2218,7 +2218,7 @@ def class_detail(class_id):
             else:
                 revision_email_note = "All students have been emailed."
 
-    return render_template('class_detail.html', 
+    return render_template('classes/class_detail.html', 
                             class_id=class_id, 
                             class_name=class_data.get('name'),
                             class_days=class_data.get("days"),
@@ -2272,7 +2272,7 @@ def class_learning_objectives_summary(class_id):
     grid_rows = build_learning_objectives_grid(students_for_template, summary_rows)
 
     return render_template(
-        "class_learning_objectives_summary.html",
+        "classes/class_learning_objectives_summary.html",
         class_id=class_id,
         class_name=class_data.get("name"),
         class_days=class_data.get("days"),
@@ -2879,7 +2879,7 @@ def class_students(class_id):
 
     students, _, _ = _process_enrollments(_class_data_for_progress(class_data))
 
-    return render_template("class_students.html",
+    return render_template("classes/class_students.html",
                             class_id=class_id,
                             class_name=class_data['name'],
                             class_days=class_data.get("days"),
@@ -3121,7 +3121,7 @@ def archived_classes():
             "restored_at": restored_at,
             "restored_class_id": restored_class_id if restored_at else "",
         })
-    return render_template("archived_classes.html", archives=archives)
+    return render_template("classes/archived_classes.html", archives=archives)
 
 
 @main_bp.route("/archived-classes/<archive_id>/download")
@@ -3603,7 +3603,7 @@ def class_student_detail(class_id, student_id):
         return redirect(url_for('main.class_students', class_id=class_id))
 
     return render_template(
-        "class_student_detail.html",
+        "classes/class_student_detail.html",
         class_id=class_id,
         class_name=class_data.get("name"),
         class_days=class_data.get("days"),
@@ -3642,7 +3642,7 @@ def class_assignments(class_id):
     )
 
     return render_template(
-        "class_assignments.html",
+        "classes/class_assignments.html",
         class_id=class_id,
         class_name=class_data["name"],
         assignments=assignments,
@@ -4476,7 +4476,7 @@ def class_reports(class_id):
     assignments = load_assignments_for_class(class_id, desc=False)
 
     return render_template(
-        "class_reports.html",
+        "classes/class_reports.html",
         class_id=class_id,
         class_name=class_data["name"],
         class_days=class_data.get("days"),
@@ -5327,7 +5327,7 @@ def student_history(class_id, student_id):
     )
 
     return render_template(
-        "student_history.html",
+        "classes/student_history.html",
         class_id=class_id,
         class_name=class_data['name'],
         class_days=class_data.get("days"),
@@ -5413,7 +5413,7 @@ def student_history_print(class_id):
         })
 
     return render_template(
-        "student_history_print.html",
+        "classes/student_history_print.html",
         class_id=class_id,
         class_name=class_data["name"],
         sheets=sheets,
@@ -5467,7 +5467,7 @@ def class_speed_grader(class_id):
     except Exception as e:
         logger.error("Error loading LOs: %s", e)
 
-    return render_template("class_speed_grader.html",
+    return render_template("classes/class_speed_grader.html",
                            class_id=class_id,
                            class_name=class_data.get('name'),
                            assignments=assignments,
@@ -5515,7 +5515,7 @@ def update_grade_handler(class_id):
     roster.sort(key=row_sort_key)
     template_kwargs["roster"] = roster
 
-    return render_template("update_grade.html", **template_kwargs)
+    return render_template("classes/update_grade.html", **template_kwargs)
 
 
 @main_bp.route("/class/<class_id>/create_learning_objective", methods=["GET", "POST"], endpoint='create_learning_objective')

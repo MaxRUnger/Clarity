@@ -631,7 +631,7 @@ class TestRevisionModalTemplate(unittest.TestCase):
         with app.test_request_context("/"):
             session["role"] = "instructor"
             return render_template(
-                "class_detail.html",
+                "classes/class_detail.html",
                 class_id="c1",
                 class_name="Test Upload",
                 class_days="MW",
@@ -667,7 +667,7 @@ class TestRevisionModalTemplate(unittest.TestCase):
 
     def test_print_frame_and_no_inner_html(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "class_detail.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_detail.html",
         )
         with open(path, encoding="utf-8") as handle:
             src = handle.read()
@@ -1439,13 +1439,13 @@ def _reports_scope_store():
 
 
 def _assignment_scoped_grade_letter(grades_map, student_id, lo_id):
-    """Same lookup as assignmentScopedGradeLetter in class_reports.html."""
+    """Same lookup as assignmentScopedGradeLetter in classes/class_reports.html."""
     key = f"{student_id}|{lo_id}"
     return str((grades_map or {}).get(key) or "").upper()
 
 
 def _report_rows_from_scoped_grades(assignment_objectives, grades_map, student_id):
-    """Same assignment-scoped branch as getIndividualReportParts in class_reports.html."""
+    """Same assignment-scoped branch as getIndividualReportParts in classes/class_reports.html."""
     rows = []
     for ao in assignment_objectives:
         lo_id = str(ao.get("learning_objective_id") or "")
@@ -1459,7 +1459,7 @@ def _report_rows_from_scoped_grades(assignment_objectives, grades_map, student_i
 
 
 def _email_body_from_report_rows(class_name, assignment_label, student_name, rows):
-    """Same body shape as buildEmailPayloadForStudent in class_reports.html."""
+    """Same body shape as buildEmailPayloadForStudent in classes/class_reports.html."""
     lines = [
         "Hello,",
         "",
@@ -1701,7 +1701,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
             "..",
             "app",
             "templates",
-            "class_reports.html",
+            "classes/class_reports.html",
         )
         with open(template_path, encoding="utf-8") as fh:
             src = fh.read()
@@ -1717,10 +1717,10 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
 
     def test_report_email_greeting_footer_and_counts(self):
         reports_path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "class_reports.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_reports.html",
         )
         history_path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "student_history.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "student_history.html",
         )
         helpers_path = os.path.join(
             os.path.dirname(__file__), "..", "app", "static", "js", "ui_helpers.js",
@@ -3157,7 +3157,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
                 unittest.mock.patch.object(r, "render_template", side_effect=fake_render):
             rv = client.get("/class/class-a/update_grade")
         self.assertEqual(rv.status_code, 200)
-        self.assertEqual(captured["template"], "update_grade.html")
+        self.assertEqual(captured["template"], "classes/update_grade.html")
         roster = captured["roster"]
         self.assertEqual(roster, [
             {"id": "stu-muted", "full_name": "Adams, Zoe"},
@@ -3186,7 +3186,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
 
     def test_update_grade_template_roster_script_and_analyzer_version(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "update_grade.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "update_grade.html",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
@@ -3198,7 +3198,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
 
     def test_speed_grader_autosave_runs_when_the_tab_hides(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "class_speed_grader.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_speed_grader.html",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
@@ -3273,7 +3273,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
 
     def test_csv_wizard_does_not_create_assignments(self):
         names = (
-            os.path.join("templates", "update_grade.html"),
+            os.path.join("templates", "classes", "update_grade.html"),
             os.path.join("static", "js", "csv_wizard.js"),
         )
         forbidden = ("mapModeCreate", "prefillCreateAssignmentFromCsv", "create_assignment")
@@ -3286,7 +3286,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
 
     def test_csv_wizard_replaces_pdf_analyzer_script(self):
         root = os.path.join(os.path.dirname(__file__), "..", "app")
-        with open(os.path.join(root, "templates", "update_grade.html"), encoding="utf-8") as fh:
+        with open(os.path.join(root, "templates", "classes", "update_grade.html"), encoding="utf-8") as fh:
             template = fh.read()
         with open(os.path.join(root, "static", "js", "csv_wizard.js"), encoding="utf-8") as fh:
             script = fh.read()
@@ -4849,7 +4849,7 @@ class TestStudentEmailMatch(unittest.TestCase):
             "student_id": "stu-1",
         }])
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "class_detail.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_detail.html",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
@@ -5608,7 +5608,7 @@ class TestClassObjectiveTotal(unittest.TestCase):
         with app.test_request_context("/class/c1/students"):
             session["role"] = "instructor"
             html = render_template(
-                "class_students.html",
+                "classes/class_students.html",
                 class_id="c1",
                 class_name="MW",
                 students=[student],
@@ -6271,10 +6271,10 @@ class TestStudentHistoryOrder(unittest.TestCase):
 
     def test_history_template_does_not_reverse_grades(self):
         page_path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "student_history.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "student_history.html",
         )
         table_path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "student_history_table.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "student_history_table.html",
         )
         with open(page_path, encoding="utf-8") as handle:
             page = handle.read()
@@ -6612,7 +6612,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         with app.test_request_context("/"):
             session["role"] = "instructor"
             html = render_template(
-                "class_reports.html",
+                "classes/class_reports.html",
                 class_id="c1",
                 class_name="Test Upload",
                 class_days="MW",
@@ -6784,19 +6784,19 @@ class TestStudentHistoryOrder(unittest.TestCase):
 
     def test_batch_template_reuses_table_and_print_rules(self):
         root = os.path.join(os.path.dirname(__file__), "..", "app", "templates")
-        with open(os.path.join(root, "student_history_print.html"), encoding="utf-8") as handle:
+        with open(os.path.join(root, "classes", "student_history_print.html"), encoding="utf-8") as handle:
             batch = handle.read()
-        with open(os.path.join(root, "student_history.html"), encoding="utf-8") as handle:
+        with open(os.path.join(root, "classes", "student_history.html"), encoding="utf-8") as handle:
             page = handle.read()
-        with open(os.path.join(root, "student_history_table.html"), encoding="utf-8") as handle:
+        with open(os.path.join(root, "classes", "student_history_table.html"), encoding="utf-8") as handle:
             table = handle.read()
         self.assertIn("@page { size: letter portrait; margin: 0; }", batch)
         self.assertIn("print-color-adjust: exact", batch)
         self.assertIn("break-after: page", batch)
         self.assertIn("break-inside: avoid", batch)
         self.assertIn("}, 250);", batch)
-        self.assertIn('{% include "student_history_table.html" %}', page)
-        self.assertIn('{% include "student_history_table.html" %}', batch)
+        self.assertIn('{% include "classes/student_history_table.html" %}', page)
+        self.assertIn('{% include "classes/student_history_table.html" %}', batch)
         self.assertLess(table.find("<thead>"), table.find("history-sheet-name"))
         self.assertLess(table.find("history-sheet-name"), table.find("</thead>"))
         self.assertIn("history-print-spacer", table)
@@ -6808,9 +6808,9 @@ class TestStudentHistoryOrder(unittest.TestCase):
         root = os.path.join(os.path.dirname(__file__), "..", "app")
         with open(os.path.join(root, "static", "css", "student_history_table.css"), encoding="utf-8") as handle:
             css = handle.read()
-        with open(os.path.join(root, "templates", "student_history.html"), encoding="utf-8") as handle:
+        with open(os.path.join(root, "templates", "classes", "student_history.html"), encoding="utf-8") as handle:
             page = handle.read()
-        with open(os.path.join(root, "templates", "student_history_print.html"), encoding="utf-8") as handle:
+        with open(os.path.join(root, "templates", "classes", "student_history_print.html"), encoding="utf-8") as handle:
             batch = handle.read()
         self.assertEqual(css.count(".history-col-assignment"), 1)
         self.assertNotIn(".history-col-assignment", page)
@@ -6918,7 +6918,7 @@ class TestClassDisplayTitle(unittest.TestCase):
         with app.test_request_context("/instructor/dashboard"):
             session["role"] = "instructor"
             html = render_template(
-                "instructor_select_class.html",
+                "classes/instructor_select_class.html",
                 classes=[{
                     "id": "c1",
                     "name": "Test Upload",
@@ -6951,7 +6951,7 @@ class TestClassDisplayTitle(unittest.TestCase):
         with app.test_request_context("/instructor/dashboard"):
             session["role"] = "instructor"
             html = render_template(
-                "instructor_select_class.html",
+                "classes/instructor_select_class.html",
                 classes=[
                     {
                         "id": "c1",
@@ -7104,7 +7104,7 @@ class TestClassUpdate(unittest.TestCase):
         with app.test_request_context("/instructor/dashboard"):
             session["role"] = "instructor"
             html = render_template(
-                "instructor_select_class.html",
+                "classes/instructor_select_class.html",
                 classes=[{
                     "id": "c1",
                     "name": "Renamed",
@@ -7151,7 +7151,7 @@ class TestClassUpdate(unittest.TestCase):
         with app.test_request_context("/instructor/dashboard"):
             session["role"] = "instructor"
             html = render_template(
-                "instructor_select_class.html",
+                "classes/instructor_select_class.html",
                 classes=classes,
                 create_class_token="t",
                 copy_class_token="c",
@@ -7197,7 +7197,7 @@ class TestClassHeaderTitle(unittest.TestCase):
     def _card(self, section):
         from app.routes import CLASS_DAYS
         return self._render(
-            "instructor_select_class.html",
+            "classes/instructor_select_class.html",
             classes=[{
                 "id": "c1",
                 "name": "Test Upload",
@@ -7215,7 +7215,7 @@ class TestClassHeaderTitle(unittest.TestCase):
         from datetime import date
         from app.routes import build_revision_report
         return self._render(
-            "class_detail.html",
+            "classes/class_detail.html",
             class_id="c1",
             class_name="Test Upload",
             class_days="MW",
@@ -7245,11 +7245,11 @@ class TestClassHeaderTitle(unittest.TestCase):
         }
         pages = (
             (
-                "class_students.html",
+                "classes/class_students.html",
                 {"class_id": "c1", "students": [student]},
             ),
             (
-                "class_learning_objectives_summary.html",
+                "classes/class_learning_objectives_summary.html",
                 {
                     "class_id": "c1",
                     "learning_objectives": [],
@@ -7258,7 +7258,7 @@ class TestClassHeaderTitle(unittest.TestCase):
                 },
             ),
             (
-                "class_student_detail.html",
+                "classes/class_student_detail.html",
                 {"class_id": "c1", "student": student},
             ),
         )
@@ -7275,7 +7275,7 @@ class TestClassHeaderTitle(unittest.TestCase):
 
     def test_print_mastery_badge_sizes_to_its_text(self):
         html = self._render(
-            "class_student_detail.html",
+            "classes/class_student_detail.html",
             class_id="c1",
             class_name="Test Upload",
             class_days="MW",
@@ -7297,7 +7297,7 @@ class TestClassHeaderTitle(unittest.TestCase):
 
     def test_history_email_and_report_print_keep_raw_name(self):
         history = self._render(
-            "student_history.html",
+            "classes/student_history.html",
             class_id="c1",
             student_id="s1",
             student_name="Lee, Ana",
@@ -7314,7 +7314,7 @@ class TestClassHeaderTitle(unittest.TestCase):
 
     def test_history_mr_score_renders_as_mastery_badge(self):
         html = self._render(
-            "student_history.html",
+            "classes/student_history.html",
             class_id="c1",
             student_id="s1",
             student_name="Lee, Ana",
@@ -7341,7 +7341,7 @@ class TestClassHeaderTitle(unittest.TestCase):
         self.assertNotRegex(html, r'student-history-numeric[^>]*>\s*MR\s*<')
 
         reports = self._render(
-            "class_reports.html",
+            "classes/class_reports.html",
             class_id="c1",
             class_name="Test Upload",
             class_days="MW",
@@ -7385,7 +7385,7 @@ class TestClassHeaderTitle(unittest.TestCase):
                     self.capture = False
 
         html = self._render(
-            "class_reports.html",
+            "classes/class_reports.html",
             class_id="c1",
             class_name="Test Upload",
             class_days="MW",
@@ -7751,7 +7751,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         with app.test_request_context("/"):
             session["role"] = "instructor"
             html = render_template(
-                "class_detail.html",
+                "classes/class_detail.html",
                 class_id="c1",
                 class_name="Test Upload",
                 class_days="MW",
@@ -8213,7 +8213,7 @@ class TestAttachedObjectives(unittest.TestCase):
 
     def test_assignments_page_states_the_unattached_count_outside_the_list(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "class_assignments.html"
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_assignments.html"
         )
         with open(path, encoding="utf-8") as handle:
             src = handle.read()
@@ -8224,7 +8224,7 @@ class TestAttachedObjectives(unittest.TestCase):
 
     def test_learning_objectives_card_links_to_the_summary_page(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "class_detail.html"
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_detail.html"
         )
         with open(path, encoding="utf-8") as handle:
             src = handle.read()
@@ -8233,7 +8233,7 @@ class TestAttachedObjectives(unittest.TestCase):
 
     def test_save_confirms_only_when_removed_objectives_have_grades(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "class_assignments.html"
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_assignments.html"
         )
         with open(path, encoding="utf-8") as handle:
             src = handle.read()
@@ -10274,7 +10274,7 @@ class TestArchivedClasses(unittest.TestCase):
         with app.test_request_context("/instructor/dashboard"):
             session["role"] = "instructor"
             html = render_template(
-                "instructor_select_class.html",
+                "classes/instructor_select_class.html",
                 classes=[],
                 create_class_token="t",
                 copy_class_token="c",
@@ -11170,7 +11170,7 @@ class TestPublicBaseUrlRequired(unittest.TestCase):
 
 class TestCsvUploadMarkup(unittest.TestCase):
     def _read(self, name):
-        path = os.path.join(os.path.dirname(__file__), "..", "app", "templates", name)
+        path = os.path.join(os.path.dirname(__file__), "..", "app", "templates", "classes", name)
         with open(path, encoding="utf-8") as f:
             return f.read()
 
@@ -11200,12 +11200,12 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         return match.group(0)
 
     def test_lo_preview_overlay_has_no_onclick(self):
-        src = self._read("app", "templates", "class_assignments.html")
+        src = self._read("app", "templates", "classes", "class_assignments.html")
         tag = self._opening_tag(src, "loCsvPreviewModal")
         self.assertNotIn("onclick", tag.lower())
 
     def test_assignments_calls_shared_scroll_helpers(self):
-        src = self._read("app", "templates", "class_assignments.html")
+        src = self._read("app", "templates", "classes", "class_assignments.html")
         self.assertIn("ClarityUI.lockPageScroll()", src)
         self.assertIn("ClarityUI.unlockPageScroll()", src)
 
@@ -11217,7 +11217,7 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         self.assertIn("unlockPageScroll,", src)
 
     def test_student_upload_overlays_have_no_onclick(self):
-        src = self._read("app", "templates", "class_detail.html")
+        src = self._read("app", "templates", "classes", "class_detail.html")
         for element_id in ("uploadStudentsModal", "studentUploadPreviewModal"):
             tag = self._opening_tag(src, element_id)
             self.assertNotIn("onclick", tag.lower())
@@ -11226,7 +11226,7 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         self.assertNotIn("setPageScrollLocked", src)
 
     def test_class_detail_lo_csv_preview_code_is_gone(self):
-        src = self._read("app", "templates", "class_detail.html")
+        src = self._read("app", "templates", "classes", "class_detail.html")
         for token in (
             "loCsvPreviewModal",
             "loCsvConfig",
@@ -11238,7 +11238,7 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
 
     def test_both_pages_load_ui_helpers(self):
         for name in ("class_assignments.html", "class_detail.html"):
-            src = self._read("app", "templates", name)
+            src = self._read("app", "templates", "classes", name)
             self.assertIn('{% extends "app_base.html" %}', src)
         base = self._read("app", "templates", "app_base.html")
         self.assertIn("js/ui_helpers.js", base)
@@ -11287,7 +11287,7 @@ class TestGeminiDependencyGone(unittest.TestCase):
 class TestPrintClassSheet(unittest.TestCase):
     def _template(self, name):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", name,
+            os.path.dirname(__file__), "..", "app", "templates", "classes", name,
         )
         with open(path, encoding="utf-8") as fh:
             return fh.read()
@@ -11372,7 +11372,7 @@ class TestPrintClassSheet(unittest.TestCase):
         with app.test_request_context("/class/c1/learning-objectives"):
             session["role"] = "instructor"
             return render_template(
-                "class_learning_objectives_summary.html",
+                "classes/class_learning_objectives_summary.html",
                 class_id="c1",
                 class_name="Test Upload",
                 class_days="MW",
@@ -11408,7 +11408,7 @@ class TestPrintClassSheet(unittest.TestCase):
         with app.test_request_context("/class/c1/students"):
             session["role"] = "instructor"
             html = render_template(
-                "class_students.html",
+                "classes/class_students.html",
                 class_id="c1",
                 class_name="MW",
                 students=[student],
@@ -11982,7 +11982,7 @@ class TestRevisionReminders(unittest.TestCase):
 
     def test_template_send_stays_disabled_and_close_reloads(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "class_detail.html",
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_detail.html",
         )
         with open(path, encoding="utf-8") as handle:
             src = handle.read()
@@ -12236,7 +12236,7 @@ class TestClassDetailReads(unittest.TestCase):
         captured = {}
 
         def grab(sender, template, context, **kwargs):
-            if getattr(template, "name", "") == "class_detail.html":
+            if getattr(template, "name", "") == "classes/class_detail.html":
                 captured["context"] = context
 
         template_rendered.connect(grab, app)
@@ -12567,7 +12567,7 @@ class TestAssignmentsPageReads(unittest.TestCase):
         captured = {}
 
         def grab(sender, template, context, **kwargs):
-            if getattr(template, "name", "") == "class_assignments.html":
+            if getattr(template, "name", "") == "classes/class_assignments.html":
                 captured["context"] = context
 
         template_rendered.connect(grab, app)
@@ -12872,7 +12872,7 @@ class TestUploadPageReads(unittest.TestCase):
         captured = {}
 
         def grab(sender, template, context, **kwargs):
-            if getattr(template, "name", "") == "update_grade.html":
+            if getattr(template, "name", "") == "classes/update_grade.html":
                 captured["context"] = context
 
         template_rendered.connect(grab, app)
@@ -13158,7 +13158,7 @@ class TestSpeedGraderReads(unittest.TestCase):
         captured = {}
 
         def grab(sender, template, context, **kwargs):
-            if getattr(template, "name", "") == "class_speed_grader.html":
+            if getattr(template, "name", "") == "classes/class_speed_grader.html":
                 captured["context"] = context
 
         template_rendered.connect(grab, app)

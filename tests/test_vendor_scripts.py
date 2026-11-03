@@ -13,7 +13,7 @@ class TestVendoredPdfScripts(unittest.TestCase):
         with app.test_request_context("/"):
             session["role"] = "instructor"
             return render_template(
-                "class_reports.html",
+                "classes/class_reports.html",
                 class_id="c1",
                 class_name="Test Upload",
                 class_days="MW",
