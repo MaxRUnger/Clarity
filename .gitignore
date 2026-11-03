@@ -17,8 +17,9 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Scripts / diagnostics (local only)
-scripts/
+# Scripts / diagnostics (local only); the schema compare script is tracked
+scripts/*
+!scripts/compare_schema_dumps.py
 
 # Editor / IDE
 .DS_Store
