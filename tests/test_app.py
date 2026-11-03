@@ -45,10 +45,12 @@ from app.helpers.gradesheet_csv import (
     _gradesheet_letter_map_from_rows,
     _lookup_enrolled_import_student_id,
 )
+from app.helpers.class_progress import (
+    _aggregate_lo_grades,
+    normalize_profile,
+)
 from app.routes import (
     organize_by_learning_objectives,
-    normalize_profile,
-    _aggregate_lo_grades,
 )
 from app import create_app
 from app.helpers.student_names import COMMA_REQUIRED, display_name, row_sort_key
@@ -2366,7 +2368,7 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         self.assertNotIn(("stu-1", "lo-d2"), mapped)
 
     def test_letter_map_keeps_every_grade_past_the_row_cap(self):
-        from app.routes import _gradesheet_letter_map_for_assignment
+        from app.helpers.gradesheet_lookup import _gradesheet_letter_map_for_assignment
 
         rows = []
         students = []
@@ -2426,7 +2428,7 @@ class TestGradesheetExportPrefill(unittest.TestCase):
                 self.last = name
                 return _Grades()
 
-        with unittest.mock.patch("app.routes.supabase_admin", _Admin()):
+        with unittest.mock.patch("app.helpers.gradesheet_lookup.supabase_admin", _Admin()):
             letter_map = _gradesheet_letter_map_for_assignment("asg-1", students, los)
 
         self.assertEqual(len(letter_map), 101 * 11)
@@ -5246,12 +5248,12 @@ class TestFullClassDataGradePaging(unittest.TestCase):
 
     def test_1520_rows_are_complete_and_ignore_the_other_class(self):
         from app.models import Course
-        from app.routes import _process_enrollments
+        from app.helpers.class_progress import _process_enrollments
         client, students = self._client(True)
         with unittest.mock.patch("app.models.supabase_admin", client):
             class_data = Course.get_full_class_data("class-mw")
         with unittest.mock.patch(
-            "app.routes.objectives_attached_to_assignments",
+            "app.helpers.class_progress.objectives_attached_to_assignments",
             side_effect=lambda class_id, pool: list(pool or []),
         ):
             active, _, _ = _process_enrollments(class_data)
@@ -5556,7 +5558,7 @@ class TestClassObjectiveTotal(unittest.TestCase):
             return template.module.student_progress_cards(student)
 
     def test_no_grades_card_is_zero_of_n(self):
-        from app.routes import _process_enrollments
+        from app.helpers.class_progress import _process_enrollments
         active, _, _ = _process_enrollments(self._class_data(self._pool(4), []))
         student = active[0]
         self.assertEqual(student["objective_total"], 4)
@@ -5566,7 +5568,7 @@ class TestClassObjectiveTotal(unittest.TestCase):
         self.assertEqual(html.count("lo-row"), 0)
 
     def test_partial_grades_use_class_total(self):
-        from app.routes import _process_enrollments
+        from app.helpers.class_progress import _process_enrollments
         active, _, _ = _process_enrollments(
             self._class_data(self._pool(3), self._passing("lo-0"))
         )
@@ -5579,7 +5581,7 @@ class TestClassObjectiveTotal(unittest.TestCase):
         self.assertIn("1 / 3", html)
 
     def test_empty_class_pool_is_zero_of_zero(self):
-        from app.routes import _process_enrollments
+        from app.helpers.class_progress import _process_enrollments
         active, _, _ = _process_enrollments(self._class_data([], []))
         student = active[0]
         self.assertEqual(student["objective_total"], 0)
@@ -5588,7 +5590,7 @@ class TestClassObjectiveTotal(unittest.TestCase):
         self.assertIn("0 / 0", html)
 
     def test_outside_pool_grade_does_not_raise_passed(self):
-        from app.routes import class_lo_lookup, class_progress
+        from app.helpers.class_progress import class_lo_lookup, class_progress
         rows, total = class_progress(
             self._passing("lo-0") + self._passing("other"),
             class_lo_lookup(self._pool(1)),
@@ -5620,7 +5622,7 @@ class TestClassObjectiveTotal(unittest.TestCase):
         self.assertIn("0 / 4 objectives passed", html)
 
     def test_enrollment_and_detail_share_total(self):
-        from app.routes import _process_enrollments, class_lo_lookup, class_progress
+        from app.helpers.class_progress import _process_enrollments, class_lo_lookup, class_progress
         pool = self._pool(2)
         grades = []
         active, _, _lookup = _process_enrollments(self._class_data(pool, grades))
@@ -5629,7 +5631,7 @@ class TestClassObjectiveTotal(unittest.TestCase):
         self.assertEqual(total, 2)
 
     def test_lookup_skips_missing_id_and_empty_progress(self):
-        from app.routes import class_lo_lookup, class_progress
+        from app.helpers.class_progress import class_lo_lookup, class_progress
         lookup = class_lo_lookup([
             {"id": "keep", "name": "Keep", "vendor_code": "K", "required_ms": 2},
             {"name": "No id"},
@@ -6595,6 +6597,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             session["user_id"] = "prof-1"
             session["role"] = "instructor"
             with patch("app.routes.supabase_admin", admin), \
+                 patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 rendered = student_history_print("c1")
         if isinstance(rendered, tuple):
@@ -6893,12 +6896,14 @@ class TestStudentHistoryOrder(unittest.TestCase):
             session["user_id"] = "prof-1"
             session["role"] = "instructor"
             with patch("app.routes.supabase_admin", admin), \
+                 patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 single = student_history("c1", "s-adams")
         with app.test_request_context("/class/c1/student-history/print"):
             session["user_id"] = "prof-1"
             session["role"] = "instructor"
             with patch("app.routes.supabase_admin", admin), \
+                 patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 batch = student_history_print("c1")
         single_table = self._print_table(single)
@@ -8165,7 +8170,7 @@ class TestAttachedObjectives(unittest.TestCase):
         }
         self._clear_cache()
         try:
-            with unittest.mock.patch.object(r, "supabase_admin") as sa:
+            with unittest.mock.patch("app.helpers.class_progress.supabase_admin") as sa:
                 sa.table.side_effect = lambda name: _Query(name)
                 active, _, _ = r._process_enrollments(class_data)
                 attached = r.objectives_attached_to_assignments(class_id, pool)
@@ -8831,7 +8836,7 @@ class TestClassArchiveExport(unittest.TestCase):
                         "app.helpers.archive_export._gradesheet_letter_map_for_assignment",
                         side_effect=letters,
                     ), \
-                    unittest.mock.patch("app.routes.supabase_admin", _Admin()):
+                    unittest.mock.patch("app.helpers.class_progress.supabase_admin", _Admin()):
                 zip_bytes, manifest = build_class_archive_zip("c-archive")
                 self.assertEqual(loaded.call_count, 1)
                 bundle.assert_not_called()
@@ -8965,7 +8970,7 @@ class TestClassArchiveExport(unittest.TestCase):
     def test_thirty_student_pdfs_open_with_name_progress_and_embedded_font(self):
         import fitz
         from app.helpers.archive_export import _student_pdf
-        from app.routes import _process_enrollments
+        from app.helpers.class_progress import _process_enrollments
 
         objectives = [
             {"id": "lo-1", "name": "D1", "vendor_code": "D1", "required_ms": 2},
@@ -11889,7 +11894,7 @@ class TestRevisionReminders(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r.Course, "get_full_class_data", return_value=class_data), \
                 unittest.mock.patch.object(r.Course, "get_learning_objectives", return_value=[]), \
-                unittest.mock.patch.object(r, "_attached_objective_ids", return_value=set()), \
+                unittest.mock.patch("app.helpers.class_progress._attached_objective_ids", return_value=set()), \
                 unittest.mock.patch.object(r, "load_assignments_for_class", return_value=[]), \
                 unittest.mock.patch.object(r, "_process_enrollments", return_value=(ready, ready, {})), \
                 unittest.mock.patch.object(r.Grade, "get_revision_candidates", return_value=rows), \
@@ -11925,7 +11930,7 @@ class TestRevisionReminders(unittest.TestCase):
         client = self._client()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r.Course, "get_full_class_data", return_value={"id": "c1", "name": "Algebra", "enrollments": [], "learning_objectives": []}), \
-                unittest.mock.patch.object(r, "_attached_objective_ids", return_value=set()), \
+                unittest.mock.patch("app.helpers.class_progress._attached_objective_ids", return_value=set()), \
                 unittest.mock.patch.object(r, "_process_enrollments", return_value=(students, students, {})), \
                 unittest.mock.patch.object(r.Grade, "get_revision_candidates", return_value=rows), \
                 unittest.mock.patch.object(r, "local_today", return_value=date(2026, 10, 21)), \
@@ -12253,6 +12258,7 @@ class TestClassDetailReads(unittest.TestCase):
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
                     unittest.mock.patch.object(models, "supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_progress.supabase_admin", admin), \
                     unittest.mock.patch.object(r, "local_today", return_value=self.TODAY):
                 response = client.get("/class/%s" % class_id)
         finally:
@@ -12583,7 +12589,8 @@ class TestAssignmentsPageReads(unittest.TestCase):
             sess["role"] = "instructor"
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
-                    unittest.mock.patch.object(models, "supabase_admin", admin):
+                    unittest.mock.patch.object(models, "supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_progress.supabase_admin", admin):
                 response = client.get("/class/%s/assignments" % class_id)
         finally:
             template_rendered.disconnect(grab, app)

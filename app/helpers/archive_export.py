@@ -21,11 +21,11 @@ from app.helpers.gradesheet_csv import (
     _build_gradesheet_csv_text,
     _gradesheet_csv_data_rows,
 )
-from app.routes import (
-    _gradesheet_letter_map_for_assignment,
+from app.helpers.class_progress import (
     _process_enrollments,
     objectives_attached_to_assignments,
 )
+from app.helpers.gradesheet_lookup import _gradesheet_letter_map_for_assignment
 
 _STEM_MAX = 80
 _OBJECTIVES_ENTRY = "learning_objectives.csv"
