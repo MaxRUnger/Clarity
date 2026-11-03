@@ -2920,7 +2920,7 @@ def _zip_over_archive_limit(zip_bytes):
 @api_instructor_required
 @rate_limited("archive_create", limit=5, window_sec=3600)
 def archive_class(class_id):
-    from app.archive_export import build_class_archive_zip, check_archive_manifest
+    from app.helpers.archive_export import build_class_archive_zip, check_archive_manifest
     from app.helpers.archive_snapshot import build_class_snapshot
     from app.helpers.archive_storage import (
         download_archive,
@@ -3961,7 +3961,7 @@ def export_class_archive(class_id):
     """Download a class archive zip. Does not delete the class or write a row."""
     if not _instructor_owns_class(class_id):
         return redirect(url_for("main.instructor_dashboard"))
-    from app.archive_export import (
+    from app.helpers.archive_export import (
         ArchiveClassNotFound,
         ArchiveManifestError,
         build_class_archive_zip,

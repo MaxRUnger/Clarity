@@ -92,7 +92,7 @@ class TestFormulaWriters(unittest.TestCase):
         self.assertEqual(found, [])
 
     def test_every_writer_neutralizes_hostile_cells(self):
-        from app.archive_export import _assignment_csv, _objectives_csv
+        from app.helpers.archive_export import _assignment_csv, _objectives_csv
         from app.models import Course, Homework
 
         students = self._students()
@@ -131,7 +131,7 @@ class TestFormulaWriters(unittest.TestCase):
                     Homework, "get_hw_prev_scores_map_for_assignment",
                     return_value=prev,
                 ), unittest.mock.patch(
-                    "app.archive_export._gradesheet_letter_map_for_assignment",
+                    "app.helpers.archive_export._gradesheet_letter_map_for_assignment",
                     return_value={},
                 ):
                     text = _assignment_csv("c1", assignment, los, students)

@@ -8758,7 +8758,7 @@ class TestClassArchiveExport(unittest.TestCase):
         ]
 
     def _build(self):
-        from app.archive_export import build_class_archive_zip
+        from app.helpers.archive_export import build_class_archive_zip
         from app.models import Course, Homework
         from flask import session
         from app.routes import class_learning_objectives_summary
@@ -8808,7 +8808,7 @@ class TestClassArchiveExport(unittest.TestCase):
                 Course, "get_full_class_data", return_value=self._class_data()
             ) as loaded, \
                     unittest.mock.patch(
-                        "app.archive_export._load_assignments",
+                        "app.helpers.archive_export._load_assignments",
                         return_value=self._assignments(),
                     ), \
                     unittest.mock.patch.object(
@@ -8824,7 +8824,7 @@ class TestClassArchiveExport(unittest.TestCase):
                         "app.routes._gradesheet_export_bundle"
                     ) as bundle, \
                     unittest.mock.patch(
-                        "app.archive_export._gradesheet_letter_map_for_assignment",
+                        "app.helpers.archive_export._gradesheet_letter_map_for_assignment",
                         side_effect=letters,
                     ), \
                     unittest.mock.patch("app.routes.supabase_admin", _Admin()):
@@ -8958,7 +8958,7 @@ class TestClassArchiveExport(unittest.TestCase):
 
     def test_thirty_student_pdfs_open_with_name_progress_and_embedded_font(self):
         import fitz
-        from app.archive_export import _student_pdf
+        from app.helpers.archive_export import _student_pdf
         from app.routes import _process_enrollments
 
         objectives = [
@@ -9001,7 +9001,7 @@ class TestClassArchiveExport(unittest.TestCase):
                 self.assertNotEqual(font[1], "n/a")
 
     def test_entry_stem_keeps_plain_names_and_cleans_illegal_characters(self):
-        from app.archive_export import archive_entry_stem
+        from app.helpers.archive_export import archive_entry_stem
         self.assertEqual(archive_entry_stem("Exam 1", "assignment"), "Exam 1")
         self.assertEqual(archive_entry_stem("Estes, Brody", "student"), "Estes, Brody")
         self.assertEqual(archive_entry_stem("Exam 1: A/B?", "assignment"), "Exam 1_ A_B_")
@@ -9010,7 +9010,7 @@ class TestClassArchiveExport(unittest.TestCase):
         self.assertEqual(archive_entry_stem("..", "assignment"), "assignment")
 
     def test_duplicate_stems_get_the_id_suffix_ignoring_case(self):
-        from app.archive_export import _suffix_duplicate_stems
+        from app.helpers.archive_export import _suffix_duplicate_stems
         self.assertEqual(
             _suffix_duplicate_stems([
                 ("Exam 1", self.ASG1),
@@ -9026,7 +9026,7 @@ class TestClassArchiveExport(unittest.TestCase):
 
     def test_an_entry_name_cannot_be_written_twice(self):
         import zipfile
-        from app.archive_export import ArchiveManifestError, _write_entry
+        from app.helpers.archive_export import ArchiveManifestError, _write_entry
         used = set()
         with zipfile.ZipFile(io.BytesIO(), "w") as archive:
             _write_entry(archive, "students/Lee, Ana_gradesheet.pdf", b"a", used)
@@ -9035,7 +9035,7 @@ class TestClassArchiveExport(unittest.TestCase):
 
     def test_manifest_check_catches_a_missing_file_and_a_count_mismatch(self):
         import zipfile
-        from app.archive_export import ArchiveManifestError, check_archive_manifest
+        from app.helpers.archive_export import ArchiveManifestError, check_archive_manifest
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("assignments/Exam 1_gradesheet.csv", "a")
@@ -9078,7 +9078,7 @@ class TestClassArchiveExport(unittest.TestCase):
     def test_non_owner_gets_no_zip(self):
         client = self._client()
         with unittest.mock.patch("app.routes._instructor_owns_class", return_value=False), \
-                unittest.mock.patch("app.archive_export.build_class_archive_zip") as build:
+                unittest.mock.patch("app.helpers.archive_export.build_class_archive_zip") as build:
             response = client.get("/class/c-archive/export-archive")
         self.assertEqual(response.status_code, 302)
         self.assertIn("/instructor/dashboard", response.headers["Location"])
@@ -9091,7 +9091,7 @@ class TestClassArchiveExport(unittest.TestCase):
         manifest = {"class_name": "Alg II"}
         with unittest.mock.patch("app.routes._instructor_owns_class", return_value=True), \
                 unittest.mock.patch(
-                    "app.archive_export.build_class_archive_zip",
+                    "app.helpers.archive_export.build_class_archive_zip",
                     return_value=(b"PK\x03\x04archive", manifest),
                 ), \
                 unittest.mock.patch("app.routes.supabase_admin") as admin:
@@ -9106,7 +9106,7 @@ class TestClassArchiveExport(unittest.TestCase):
         empty["class_name"] = ""
         with unittest.mock.patch("app.routes._instructor_owns_class", return_value=True), \
                 unittest.mock.patch(
-                    "app.archive_export.build_class_archive_zip",
+                    "app.helpers.archive_export.build_class_archive_zip",
                     return_value=(b"PK\x03\x04archive", empty),
                 ):
             fallback = client.get("/class/c-archive/export-archive")
@@ -9320,7 +9320,7 @@ class TestClassArchiveRoute(unittest.TestCase):
         patches = [
             unittest.mock.patch.object(r, "supabase_admin", admin),
             unittest.mock.patch.object(storage, "supabase_admin", admin),
-            unittest.mock.patch("app.archive_export.build_class_archive_zip", side_effect=build_zip),
+            unittest.mock.patch("app.helpers.archive_export.build_class_archive_zip", side_effect=build_zip),
             unittest.mock.patch("app.helpers.archive_snapshot.build_class_snapshot", side_effect=build_snapshot),
             unittest.mock.patch.object(r, "uuid4", return_value=UUID(self.ARCHIVE_ID)),
             unittest.mock.patch.object(r, "delete_class_rows", side_effect=delete_rows),

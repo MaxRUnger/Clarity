@@ -237,7 +237,7 @@ class TestArchiveZipLimit(unittest.TestCase):
         with unittest.mock.patch.object(r, "MAX_ARCHIVE_ZIP_BYTES", 8, create=True), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch(
-                    "app.archive_export.build_class_archive_zip",
+                    "app.helpers.archive_export.build_class_archive_zip",
                     return_value=(b"0123456789", manifest),
                 ):
             response = client.get("/class/c1/export-archive")
