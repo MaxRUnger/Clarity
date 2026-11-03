@@ -47,7 +47,7 @@ from app.routes import (
     MAX_IMPORT_ROWS,
 )
 from app import create_app
-from app.student_names import COMMA_REQUIRED, display_name, row_sort_key
+from app.helpers.student_names import COMMA_REQUIRED, display_name, row_sort_key
 from tests.test_student_names import CANVAS_ORDER
 
 
@@ -453,7 +453,7 @@ def _revision_row(student_id, name, due, assignment, code="", objective="", assi
 class TestRevisionReport(unittest.TestCase):
     def test_local_today_at_02_utc_is_the_previous_pacific_date(self):
         from datetime import datetime, timezone, date
-        from app.local_time import local_today
+        from app.helpers.local_time import local_today
         app = create_app()
         instant = datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc)
         with app.app_context():
@@ -571,7 +571,7 @@ class TestRevisionReport(unittest.TestCase):
 
     def test_due_on_the_pacific_date_is_not_overdue_at_02_utc(self):
         from datetime import datetime, timezone
-        from app.local_time import local_today
+        from app.helpers.local_time import local_today
         from app.routes import build_revision_report
         app = create_app()
         instant = datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc)
@@ -5637,7 +5637,7 @@ class TestClassObjectiveTotal(unittest.TestCase):
 
 class TestLoSortKey(unittest.TestCase):
     def _codes(self, rows):
-        from app.lo_order import lo_sort_key
+        from app.helpers.lo_order import lo_sort_key
         return [row["vendor_code"] for row in sorted(rows, key=lo_sort_key)]
 
     def test_letter_prefix_then_number(self):
@@ -5681,7 +5681,7 @@ class TestLoSortKey(unittest.TestCase):
         self.assertEqual(self._codes(rows), ["Alpha", "Keep"])
 
     def test_missing_label_sorts_last(self):
-        from app.lo_order import lo_sort_key
+        from app.helpers.lo_order import lo_sort_key
         rows = [
             {"id": "1"},
             {"id": "2", "vendor_code": "AO1"},
@@ -5693,7 +5693,7 @@ class TestLoSortKey(unittest.TestCase):
         )
 
     def test_equal_labels_tie_break_on_id(self):
-        from app.lo_order import lo_sort_key
+        from app.helpers.lo_order import lo_sort_key
         rows = [
             {"id": "b", "vendor_code": "AO1"},
             {"id": "a", "vendor_code": "AO1"},
@@ -6463,7 +6463,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         self.assertEqual([grade.get("top_score") for grade in emailed], ["M", "X"])
 
     def test_history_grade_read_pages_across_two_pages(self):
-        from app.paging import PAGE_SIZE
+        from app.helpers.paging import PAGE_SIZE
         grades = [
             {
                 "id": "g%04d" % index,
@@ -8851,7 +8851,7 @@ class TestClassArchiveExport(unittest.TestCase):
             learning_objective_cell_text,
             learning_objective_progress_text,
         )
-        from app.student_names import row_sort_key
+        from app.helpers.student_names import row_sort_key
 
         zip_bytes, manifest, hw, prev, html = self._build()
         self.assertEqual(manifest["objectives_entry"], "learning_objectives.csv")

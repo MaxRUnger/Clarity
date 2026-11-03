@@ -48,21 +48,21 @@ from flask import (  # type: ignore
 from werkzeug.utils import secure_filename
 from config import Config
 from app.authentication import new_anon_client, supabase, supabase_admin
-from app.passwords import password_error
-from app.lo_order import lo_sort_key
-from app.local_time import local_today
+from app.helpers.passwords import password_error
+from app.helpers.lo_order import lo_sort_key
+from app.helpers.local_time import local_today
 from app.archive_snapshot import _IN_CHUNK_SIZE
-from app.calendar_dates import clean_assignment_dates
-from app.csv_safety import csv_safe_row
+from app.helpers.calendar_dates import clean_assignment_dates
+from app.helpers.csv_safety import csv_safe_row
 from app.invites import invite_code_is_valid
-from app.paging import fetch_all_rows
+from app.helpers.paging import fetch_all_rows
 from app.models import (
     Course,
     Grade,
     Homework,
     ASSIGNMENT_TYPES,
 )
-from app.student_names import (
+from app.helpers.student_names import (
     COMMA_REQUIRED,
     display_name,
     name_key,

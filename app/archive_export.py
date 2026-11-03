@@ -11,8 +11,8 @@ import fitz
 
 from app.authentication import supabase_admin
 from app.models import Course, Homework
-from app.csv_safety import csv_safe_row
-from app.paging import fetch_all_rows
+from app.helpers.csv_safety import csv_safe_row
+from app.helpers.paging import fetch_all_rows
 from app.routes import (
     _build_gradesheet_csv_text,
     _gradesheet_csv_data_rows,

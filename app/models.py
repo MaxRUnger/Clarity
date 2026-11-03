@@ -18,8 +18,8 @@ from datetime import timedelta
 from typing import List, Optional, Dict, Any
 
 from app.authentication import supabase_admin
-from app.lo_order import lo_sort_key
-from app.paging import fetch_all_rows
+from app.helpers.lo_order import lo_sort_key
+from app.helpers.paging import fetch_all_rows
 
 logger = logging.getLogger(__name__)
 

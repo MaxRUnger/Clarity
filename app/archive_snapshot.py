@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Sequence
 
 from app.authentication import supabase_admin
-from app.paging import fetch_all_rows
+from app.helpers.paging import fetch_all_rows
 
 FORMAT_VERSION = 1
 # Each .in_() list holds at most this many ids.

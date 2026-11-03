@@ -76,7 +76,7 @@ PASSWORD_CASES = [
 
 def _load_passwords():
     try:
-        from app import passwords
+        from app.helpers import passwords
     except ImportError as exc:
         raise AssertionError("shared password validator is missing") from exc
     return passwords
@@ -1209,6 +1209,6 @@ class TestRateLimitIdleWindow(unittest.TestCase):
 class TestResetLogging(unittest.TestCase):
     def test_password_module_does_not_log(self):
         module = _load_passwords()
-        logger = logging.getLogger("app.passwords")
+        logger = logging.getLogger("app.helpers.passwords")
         with self.assertNoLogs(logger, level="DEBUG"):
             module.password_error("Aa1!bbbbbbbb", "ada.lovelace@school.edu")

@@ -39,7 +39,7 @@ def _leaks(csv_text):
 
 class TestCsvFormulaSafe(unittest.TestCase):
     def _safe(self, value):
-        from app.csv_safety import csv_formula_safe
+        from app.helpers.csv_safety import csv_formula_safe
         return csv_formula_safe(value)
 
     def test_prefixes_formula_triggers(self):
@@ -70,7 +70,7 @@ class TestCsvFormulaSafe(unittest.TestCase):
         self.assertEqual(self._safe(None), "")
 
     def test_csv_safe_row_guards_each_cell(self):
-        from app.csv_safety import csv_safe_row
+        from app.helpers.csv_safety import csv_safe_row
         self.assertEqual(csv_safe_row(["=cmd", "-1", None]), ["'=cmd", "-1", ""])
 
 

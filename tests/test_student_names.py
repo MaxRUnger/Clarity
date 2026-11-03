@@ -5,7 +5,7 @@ import os
 import random
 import unittest
 
-from app.student_names import (
+from app.helpers.student_names import (
     display_name,
     normalize_email,
     name_key,
