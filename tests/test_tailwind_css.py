@@ -115,8 +115,8 @@ class TestLocalTailwind(unittest.TestCase):
     def _pages(self):
         empty_report = build_revision_report([], date(2026, 10, 20))
         return {
-            "login": _render("login.html"),
-            "signup": _render("signup.html"),
+            "login": _render("auth/login.html"),
+            "signup": _render("auth/signup.html"),
             "class_detail": _render(
                 "class_detail.html",
                 class_id="c1",

@@ -1282,21 +1282,21 @@ def load_assignments_for_class(class_id, desc=False):
 @main_bp.route("/")
 @main_bp.route("/login")
 def login_page():
-    return render_template("login.html")
+    return render_template("auth/login.html")
 
 @main_bp.route("/signup")
 def signup_page():
-    return render_template("signup.html")
+    return render_template("auth/signup.html")
 
 
 @main_bp.route("/forgot-password")
 def forgot_password_page():
-    return render_template("forgot_password.html")
+    return render_template("auth/forgot_password.html")
 
 
 @main_bp.route("/reset-password")
 def reset_password_page():
-    return render_template("reset_password.html")
+    return render_template("auth/reset_password.html")
 
 
 @main_bp.route("/logout", methods=["POST"])

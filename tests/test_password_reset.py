@@ -638,7 +638,7 @@ class TestResetPages(unittest.TestCase):
         self.assertEqual(reset.status_code, 200)
 
     def test_reset_page_script_reads_the_fragment_and_drops_it(self):
-        path = Path("app/templates/reset_password.html")
+        path = Path("app/templates/auth/reset_password.html")
         self.assertTrue(path.is_file())
         text = path.read_text(encoding="utf-8")
         self.assertLess(text.index("At least 12 characters"), text.index('id="password"'))
@@ -732,8 +732,8 @@ class TestResetPages(unittest.TestCase):
         self.assertIn("showError(msg", text)
 
     def test_signup_and_reset_requirements_lists_match(self):
-        signup = _requirements_list("app/templates/signup.html")
-        reset = _requirements_list("app/templates/reset_password.html")
+        signup = _requirements_list("app/templates/auth/signup.html")
+        reset = _requirements_list("app/templates/auth/reset_password.html")
         self.assertEqual(signup, reset)
 
 

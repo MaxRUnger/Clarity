@@ -275,7 +275,7 @@ class TestSessionTimeout(unittest.TestCase):
             end = page.find("{% endif %}", start)
             self.assertIn("session_timeout.js", page[start:end])
         for name in ("login.html", "signup.html"):
-            page_path = os.path.join(root, "..", "app", "templates", name)
+            page_path = os.path.join(root, "..", "app", "templates", "auth", name)
             with open(page_path, encoding="utf-8") as fh:
                 page = fh.read()
             self.assertNotIn("session_timeout.js", page)
