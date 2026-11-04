@@ -43,8 +43,14 @@ from flask import (  # type: ignore
     Response,
 )
 from werkzeug.utils import secure_filename
-from config import Config
-from app.helpers.authentication import new_anon_client, supabase, supabase_admin
+from app.helpers.authentication import supabase, supabase_admin
+from app.helpers.account_mail import (
+    _forgot_ok,
+    _profile_role,
+    _public_base_url,
+    _send_account_email,
+    verify_recovery_token,
+)
 from app.helpers.passwords import password_error
 from app.helpers.local_time import local_today
 from app.helpers.archive_snapshot import _IN_CHUNK_SIZE
@@ -195,11 +201,6 @@ _rate_limit_events = defaultdict(deque)
 
 
 _INSTRUCTOR_HOME = "/instructor/dashboard"
-
-
-def _public_base_url():
-    """Return the configured public base URL, or an empty string."""
-    return (Config.PUBLIC_BASE_URL or "").strip().rstrip("/")
 
 
 _HW_REQUIRED_FOR_MARK_ERROR = (
@@ -487,67 +488,6 @@ def signup():
 
     except Exception as e:
         return _safe_api_error("Signup failed. Please try again.", 400, log_detail=e)
-
-
-def _forgot_ok():
-    return jsonify({
-        "success": True,
-        "message": "If an instructor account exists for that address, a reset message is on its way.",
-    })
-
-
-def _profile_role(user_id):
-    try:
-        response = (
-            supabase_admin.table("profiles")
-            .select("role")
-            .eq("id", user_id)
-            .limit(1)
-            .execute()
-        )
-    except Exception as exc:
-        logger.error("Password reset profile lookup failed: %s", type(exc).__name__)
-        return ""
-    rows = response.data or []
-    if not rows:
-        return ""
-    return str((rows[0] or {}).get("role") or "").strip().lower()
-
-
-def _send_account_email(to_email: str, subject: str, body_text: str) -> bool:
-    api_key = (os.environ.get("RESEND_API_KEY") or "").strip()
-    from_email = (os.environ.get("REPORTS_FROM_EMAIL") or "").strip()
-    if not api_key or not from_email:
-        logger.error("Account email blocked: mail is not configured")
-        return False
-    payload = {
-        "from": f'"Clarity Grader" <{from_email}>',
-        "to": [to_email],
-        "subject": subject,
-        "text": body_text,
-    }
-    try:
-        resp = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=20,
-        )
-    except Exception as exc:
-        logger.error("Account email failed: %s", type(exc).__name__)
-        return False
-    if resp.status_code >= 400:
-        logger.error("Account email rejected status %s", resp.status_code)
-        return False
-    return True
-
-
-def verify_recovery_token(token_hash):
-    client = new_anon_client()
-    return client.auth.verify_otp({"token_hash": token_hash, "type": "recovery"})
 
 
 @main_bp.route("/api/forgot-password", methods=["POST"])

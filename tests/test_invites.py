@@ -53,12 +53,8 @@ class TestSignupInvites(unittest.TestCase):
         with patch("app.routes.supabase", shared        ), patch(
             "app.helpers.invites.supabase_admin", admin
         ), patch(
-            "app.routes.Config.PUBLIC_BASE_URL",
+            "app.helpers.account_mail.Config.PUBLIC_BASE_URL",
             "https://clarity.example",
-            create=True,
-        ), patch(
-            "app.routes.Config.SIGNUP_INVITE_CODE",
-            invite_env,
             create=True,
         ), patch.dict(
             os.environ, {"SIGNUP_INVITE_CODE": invite_env}, clear=False
