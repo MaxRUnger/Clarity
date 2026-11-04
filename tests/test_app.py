@@ -2554,13 +2554,12 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         q.execute.return_value = MagicMock(
             data=[{"id": "asg-1", "name": "Quiz 1", "date_returned": "2026-08-20"}]
         )
-        with unittest.mock.patch.object(r, "supabase_admin") as sa, \
+        with unittest.mock.patch("app.helpers.class_data.supabase_admin") as sa, \
                 unittest.mock.patch.object(
                     r.Course, "get_full_class_data", return_value={"name": "C"}
                 ), \
-                unittest.mock.patch.object(
-                    r,
-                    "_process_enrollments",
+                unittest.mock.patch(
+                    "app.helpers.class_data._process_enrollments",
                     return_value=([{"id": "stu-1", "full_name": "Doe, Jane"}], [], {}),
                 ), \
                 unittest.mock.patch.object(
@@ -6624,6 +6623,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             with patch("app.routes.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.helpers.history_packet.supabase_admin", admin), \
+                 patch("app.helpers.class_data.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 rendered = student_history_print("c1")
         if isinstance(rendered, tuple):
@@ -6923,6 +6923,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             session["role"] = "instructor"
             with patch("app.routes.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
+                 patch("app.helpers.class_data.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 single = student_history("c1", "s-adams")
         with app.test_request_context("/class/c1/student-history/print"):
@@ -6931,6 +6932,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             with patch("app.routes.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.helpers.history_packet.supabase_admin", admin), \
+                 patch("app.helpers.class_data.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 batch = student_history_print("c1")
         single_table = self._print_table(single)
@@ -12292,6 +12294,7 @@ class TestClassDetailReads(unittest.TestCase):
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
                     unittest.mock.patch.object(models, "supabase_admin", admin), \
                     unittest.mock.patch("app.helpers.class_progress.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin), \
                     unittest.mock.patch.object(r, "local_today", return_value=self.TODAY):
                 response = client.get("/class/%s" % class_id)
         finally:
@@ -12623,7 +12626,8 @@ class TestAssignmentsPageReads(unittest.TestCase):
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
                     unittest.mock.patch.object(models, "supabase_admin", admin), \
-                    unittest.mock.patch("app.helpers.class_progress.supabase_admin", admin):
+                    unittest.mock.patch("app.helpers.class_progress.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin):
                 response = client.get("/class/%s/assignments" % class_id)
         finally:
             template_rendered.disconnect(grab, app)
@@ -12928,7 +12932,8 @@ class TestUploadPageReads(unittest.TestCase):
             sess["role"] = "instructor"
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
-                    unittest.mock.patch.object(models, "supabase_admin", admin):
+                    unittest.mock.patch.object(models, "supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin):
                 response = client.get("/class/%s/update_grade" % class_id)
         finally:
             template_rendered.disconnect(grab, app)
@@ -13215,7 +13220,8 @@ class TestSpeedGraderReads(unittest.TestCase):
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
                     unittest.mock.patch.object(models, "supabase_admin", admin), \
-                    unittest.mock.patch("app.helpers.free_passes.supabase_admin", admin):
+                    unittest.mock.patch("app.helpers.free_passes.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin):
                 response = client.get("/class/%s/speed_grader" % class_id)
         finally:
             template_rendered.disconnect(grab, app)
