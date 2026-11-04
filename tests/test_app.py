@@ -2831,7 +2831,8 @@ class TestImportRosterNameMatch(unittest.TestCase):
                 unittest.mock.patch.object(
                     r.Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
                 ), \
-                unittest.mock.patch.object(r, "supabase_admin", sa):
+                unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.lo_import.supabase_admin", sa):
             rv = client.post(
                 "/api/import-grades",
                 json=payload,
@@ -3742,7 +3743,8 @@ class TestImportGradesRateLimit(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
 
         with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
-                unittest.mock.patch.object(r, "supabase_admin", sa):
+                unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.lo_import.supabase_admin", sa):
             rv = self.client.post(
                 "/api/import-grades",
                 json={"class_id": "c1", "assignment_id": "a1", "students": []},
@@ -4093,6 +4095,9 @@ class TestMaxLengthValidation(unittest.TestCase):
         q.execute.return_value = MagicMock(data=[])
         sa.table.return_value = q
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch(
+                    "app.helpers.enrollment.supabase_admin", sa
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
             rv = self.client.post(
                 "/class/c1/add_student",
@@ -4157,6 +4162,9 @@ class TestMaxLengthValidation(unittest.TestCase):
         q.execute.return_value = MagicMock(data=[])
         sa.table.return_value = q
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch(
+                    "app.helpers.enrollment.supabase_admin", sa
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
             rv = self.client.post(
@@ -4245,6 +4253,9 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["role"] = "instructor"
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch(
+                    "app.helpers.enrollment.supabase_admin", admin
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
             response = self.client.post(
@@ -4547,6 +4558,9 @@ class TestStudentEmailMatch(unittest.TestCase):
     def _post_add(self, client, sa, body):
         from app import routes as r
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch(
+                    "app.helpers.enrollment.supabase_admin", sa
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
             return client.post(
                 "/class/c1/add_student",
@@ -4557,6 +4571,9 @@ class TestStudentEmailMatch(unittest.TestCase):
     def _post_edit(self, client, sa, body, student_id="stu-1"):
         from app import routes as r
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch(
+                    "app.helpers.enrollment.supabase_admin", sa
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
             return client.post(
@@ -4780,6 +4797,9 @@ class TestStudentEmailMatch(unittest.TestCase):
         from app import routes as r
         payload = {"file": (io.BytesIO(text.encode("utf-8")), "students.csv")}
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch(
+                    "app.helpers.enrollment.supabase_admin", sa
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_rate_limit", return_value=True):
             return client.post(
@@ -4943,7 +4963,7 @@ class TestStudentEmailMatch(unittest.TestCase):
             sa.table.assert_not_called()
 
     def test_add_student_and_csv_share_one_outcome(self):
-        from app.routes import decide_student_enrollment
+        from app.helpers.enrollment import decide_student_enrollment
         index = {
             "jane@example.edu": {
                 "profile_id": "stu-1",
@@ -5440,7 +5460,9 @@ class TestInsertLearningObjectives(unittest.TestCase):
             def table(self, name):
                 return _Query()
 
-        with unittest.mock.patch.object(r, "supabase_admin", _Client()):
+        with unittest.mock.patch(
+            "app.helpers.lo_import.supabase_admin", _Client()
+        ):
             result = r._insert_learning_objectives(payload)
         return inserted, result
 
@@ -5481,7 +5503,9 @@ class TestInsertLearningObjectives(unittest.TestCase):
             def table(self, name):
                 return _Query()
 
-        with unittest.mock.patch.object(r, "supabase_admin", _Client()):
+        with unittest.mock.patch(
+            "app.helpers.lo_import.supabase_admin", _Client()
+        ):
             with self.assertRaises(RuntimeError):
                 r._insert_learning_objectives({
                     "class_id": "c1",
@@ -7701,6 +7725,9 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         }[name]
         from app import routes as r
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch(
+                    "app.helpers.enrollment.supabase_admin", sa
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
             rv = client.post(

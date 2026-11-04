@@ -218,6 +218,9 @@ class TestFormulaImportRoundTrip(unittest.TestCase):
             admin = MagicMock()
             admin.table.return_value = query
             with unittest.mock.patch.object(routes_module, "supabase_admin", admin), \
+                    unittest.mock.patch(
+                        "app.helpers.enrollment.supabase_admin", admin
+                    ), \
                     unittest.mock.patch.object(
                         routes_module, "_instructor_owns_class", return_value=True
                     ):

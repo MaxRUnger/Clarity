@@ -60,12 +60,25 @@ from app.models import (
     DEFAULT_REQUIRED_MS,
 )
 from app.helpers.student_names import (
-    COMMA_REQUIRED,
     display_name,
     name_key,
     normalize_email,
-    require_canvas_name,
     row_sort_key,
+)
+from app.helpers.lo_import import (
+    _insert_learning_objectives,
+    _lo_vendor_code_conflict,
+    _select_class_pool_learning_objectives,
+    annotate_learning_objective_rows_for_preview,
+    import_learning_objectives_rows,
+)
+from app.helpers.enrollment import (
+    _classify_student_csv_rows,
+    _instructor_student_email_index,
+    _profile_used_by_another_instructor,
+    _student_csv_rejection,
+    decide_student_enrollment,
+    validate_student_name_and_email,
 )
 from app.helpers.class_form import (
     CLASS_DAYS,
@@ -273,16 +286,6 @@ def _user_ids_equal(a: Any, b: Any) -> bool:
     return sa.replace("-", "") == sb.replace("-", "")
 
 
-def _select_class_pool_learning_objectives(select_cols: str, class_id: str):
-    """Select learning objectives for a class."""
-    return (
-        supabase_admin.table("learning_objectives")
-        .select(select_cols)
-        .eq("class_id", class_id)
-        .execute()
-    )
-
-
 def _allowed_lo_ids_for_grading(class_id, assignment_id=None) -> set:
     """LO ids that may be graded.
 
@@ -296,101 +299,6 @@ def _allowed_lo_ids_for_grading(class_id, assignment_id=None) -> set:
     if assignment_id:
         return {str(x) for x in (Course.get_assignment_lo_ids(assignment_id) or [])}
     return {str(x) for x in (Course.get_lo_ids_for_class(class_id) or [])}
-
-
-def annotate_learning_objective_rows_for_preview(
-    class_id: str, rows: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    """Tag each row with duplicate=true if vendor_code already exists in the class."""
-    try:
-        existing_resp = _select_class_pool_learning_objectives(
-            "vendor_code", class_id
-        )
-        existing = {
-            (r.get("vendor_code") or "").strip().lower()
-            for r in (existing_resp.data or [])
-            if (r.get("vendor_code") or "").strip()
-        }
-    except Exception:
-        existing = set()
-    out = []
-    for row in rows:
-        r = dict(row)
-        vc = (r.get("vendor_code") or "").strip()
-        r["duplicate"] = bool(vc and vc.lower() in existing)
-        out.append(r)
-    return out
-
-
-def _insert_learning_objectives(payload: Any):
-    """Insert LO rows. name is the given name, or the vendor code when none is given."""
-    rows = payload if isinstance(payload, list) else [payload]
-    named = []
-    for row in rows:
-        item = dict(row or {})
-        name = str(item.get("name") or "").strip()
-        if not name:
-            name = str(item.get("vendor_code") or "").strip()
-        item["name"] = name
-        named.append(item)
-    body = named if isinstance(payload, list) else named[0]
-    return supabase_admin.table("learning_objectives").insert(body).execute()
-
-
-def import_learning_objectives_rows(class_id: str, rows: List[Dict[str, Any]]) -> Tuple[int, int, List[str]]:
-    """Insert new LOs; skip vendor_codes that already exist (case-insensitive). Returns (inserted, skipped, errors)."""
-    errors: List[str] = []
-    if not rows:
-        return 0, 0, errors
-    try:
-        existing_resp = _select_class_pool_learning_objectives(
-            "vendor_code", class_id
-        )
-        existing = {
-            (r.get("vendor_code") or "").strip().lower()
-            for r in (existing_resp.data or [])
-            if (r.get("vendor_code") or "").strip()
-        }
-    except Exception as e:
-        logger.error("Failed to load existing objectives: %s", e)
-        return 0, 0, ["Failed to load existing objectives."]
-
-    inserted = 0
-    skipped = 0
-    batch: List[Dict[str, Any]] = []
-    chunk = 80
-
-    for row in rows:
-        vc = (row.get("vendor_code") or "").strip()
-        if not vc:
-            continue
-        key = vc.lower()
-        if key in existing:
-            skipped += 1
-            continue
-        existing.add(key)
-        batch.append(
-            {
-                "class_id": class_id,
-                "vendor_code": vc,
-                "description": row.get("description"),
-                "required_ms": int(row.get("required_ms") or DEFAULT_REQUIRED_MS),
-            }
-        )
-
-    for i in range(0, len(batch), chunk):
-        piece = batch[i : i + chunk]
-        if not piece:
-            continue
-        try:
-            _insert_learning_objectives(piece)
-            inserted += len(piece)
-        except Exception as e:
-            err_id = str(uuid4())
-            logger.error("[%s] LO batch insert failed: %s", err_id, e)
-            errors.append(f"Import failed (ref {err_id}).")
-            break
-    return inserted, skipped, errors
 
 
 def _client_ip() -> str:
@@ -1454,84 +1362,6 @@ def class_learning_objectives_summary(class_id):
         grid_rows=grid_rows,
     )
 
-def _instructor_student_email_index(owner_id: str) -> Dict[str, Dict[str, Any]]:
-    """Map a lowercased email to the student enrolled in this instructor's classes.
-
-    The first profile seen for an email is kept. Later rows for that same
-    profile add class ids. A different profile with the same email is ignored.
-    """
-    class_rows = fetch_all_rows(
-        supabase_admin.table("classes").select("id").eq("instructor_id", owner_id).order("id")
-    )
-    class_ids = [str(row.get("id")) for row in class_rows if row.get("id")]
-    index: Dict[str, Dict[str, Any]] = {}
-    if not class_ids:
-        return index
-    enroll_rows = fetch_all_rows(
-        supabase_admin.table("enrollments")
-        .select("class_id, student_id, profiles(id, full_name, email)")
-        .in_("class_id", class_ids)
-        .order("id")
-    )
-    for row in enroll_rows:
-        prof = row.get("profiles") or {}
-        if isinstance(prof, list):
-            prof = prof[0] if prof else {}
-        email = normalize_email(prof.get("email") or "")
-        if not email:
-            continue
-        profile_id = str(prof.get("id") or row.get("student_id") or "").strip()
-        if not profile_id:
-            continue
-        enrolled_class = str(row.get("class_id") or "").strip()
-        entry = index.get(email)
-        if entry is None:
-            index[email] = {
-                "profile_id": profile_id,
-                "full_name": prof.get("full_name") or "",
-                "class_ids": {enrolled_class} if enrolled_class else set(),
-            }
-            continue
-        if entry["profile_id"] != profile_id or not enrolled_class:
-            continue
-        entry["class_ids"].add(enrolled_class)
-    return index
-
-
-def decide_student_enrollment(index, class_id, email, typed_name):
-    """Return outcome, stored name, and profile id for one normalized email.
-
-    outcome is already_in_class, name_differs, reuse, or create.
-    stored_name and profile_id are empty when the outcome is create.
-    """
-    entry = (index or {}).get(email)
-    if not entry:
-        return "create", "", ""
-    stored_name = entry.get("full_name") or ""
-    profile_id = str(entry.get("profile_id") or "")
-    if str(class_id) in (entry.get("class_ids") or ()):
-        return "already_in_class", stored_name, profile_id
-    if name_key(typed_name) != name_key(stored_name):
-        return "name_differs", stored_name, profile_id
-    return "reuse", stored_name, profile_id
-
-
-def validate_student_name_and_email(raw_name, raw_email):
-    """Return (canvas name, normalized email, error). One error string for add and edit."""
-    if not str(raw_email).strip() or not str(raw_name).strip():
-        return None, None, "Email and name are required"
-    name = require_canvas_name(raw_name)
-    if not name:
-        return None, None, COMMA_REQUIRED
-    if len(name) > 255:
-        return None, None, "Name must be 255 characters or fewer"
-    if len(str(raw_email).strip()) > 255:
-        return None, None, "Email must be 255 characters or fewer"
-    email = normalize_email(str(raw_email))
-    if not email:
-        return None, None, "Invalid email format"
-    return name, email, None
-
 
 def _filter_query(query, filters):
     for op, column, value in filters:
@@ -1945,26 +1775,6 @@ def api_student_removal_counts(class_id, student_id):
         "grade_rows": counts["grades"],
         "homework_scores": counts["homework_scores"],
     })
-
-
-def _profile_used_by_another_instructor(student_id, owner_id) -> bool:
-    rows = fetch_all_rows(
-        supabase_admin.table("enrollments")
-        .select("class_id, classes(instructor_id)")
-        .eq("student_id", student_id)
-        .order("id")
-    )
-    owner = str(owner_id or "")
-    for row in rows:
-        classes = row.get("classes") or {}
-        if isinstance(classes, list):
-            classes = classes[0] if classes else {}
-        if not isinstance(classes, dict):
-            return True
-        instructor_id = str(classes.get("instructor_id") or "")
-        if instructor_id != owner:
-            return True
-    return False
 
 
 @main_bp.route("/api/class/<class_id>/students/<student_id>/update", methods=["POST"])
@@ -3193,26 +3003,6 @@ def _student_enrolled_in_class(class_id: str, student_id: str) -> bool:
     if not class_id or not student_id:
         return False
     return str(student_id) in _enrolled_student_ids_for_class(class_id)
-
-
-def _lo_vendor_code_conflict(class_id: str, vendor_code: str, exclude_lo_id: str) -> bool:
-    """True if another LO in the class already uses this vendor_code (case-insensitive)."""
-    vc = (vendor_code or "").strip()
-    if not vc:
-        return False
-    try:
-        resp = _select_class_pool_learning_objectives("id, vendor_code", class_id)
-    except Exception:
-        return True
-    ex = str(exclude_lo_id).strip()
-    vcl = vc.lower()
-    for row in resp.data or []:
-        if str(row.get("id") or "").strip() == ex:
-            continue
-        other = (row.get("vendor_code") or "").strip()
-        if other and other.lower() == vcl:
-            return True
-    return False
 
 
 @main_bp.route("/class/<class_id>/delete_lo/<lo_id>", methods=["POST"])
@@ -4667,7 +4457,6 @@ def api_assignment_grades(class_id, assignment_id):
         return _safe_api_error("Could not load assignment grades", 500, log_detail=e)
 
 
-
 @main_bp.route("/api/class/<class_id>/save-hw-percentage", methods=["POST"])
 @api_login_required
 def save_hw_percentage(class_id):
@@ -4797,64 +4586,6 @@ def return_free_pass(class_id):
     except Exception as e:
         logger.error("return pass failed: %s", e)
         return _safe_api_error("Could not return free pass", 500, log_detail=e)
-
-
-def _student_csv_rejection(errors: List[str]):
-    shown = errors[:25]
-    summary = "\n".join(shown)
-    extra = len(errors) - len(shown)
-    if extra:
-        summary += f"\nand {extra} more rows have errors."
-    return jsonify({
-        "success": False,
-        "error": summary,
-        "errors": errors,
-    }), 400
-
-
-def _classify_student_csv_rows(class_id, owner_id, rows, parse_errors):
-    """Return row errors and actions. A non-empty error list means write nothing."""
-    errors = list(parse_errors)
-    if not rows:
-        return errors, []
-    index = _instructor_student_email_index(owner_id)
-    seen = set()
-    actions = []
-    for row in sorted(rows, key=lambda item: int(item["line"])):
-        line = row["line"]
-        email = row["email"]
-        name = row["full_name"]
-        if email in seen:
-            errors.append(f"Row {line}: {email} is listed more than once.")
-            continue
-        seen.add(email)
-        outcome, stored_name, profile_id = decide_student_enrollment(
-            index, class_id, email, name
-        )
-        if outcome == "already_in_class":
-            errors.append(f"Row {line}: {email} is already in this class.")
-        elif outcome == "name_differs":
-            errors.append(
-                f"Row {line}: {email} belongs to {stored_name}. "
-                f"Enter the name as {stored_name}."
-            )
-        elif outcome == "reuse":
-            actions.append({
-                "outcome": "reuse",
-                "full_name": stored_name,
-                "email": email,
-                "profile_id": profile_id,
-            })
-        else:
-            actions.append({
-                "outcome": "create",
-                "full_name": name,
-                "email": email,
-                "profile_id": "",
-            })
-    if errors:
-        return errors, []
-    return [], actions
 
 
 @main_bp.route("/api/class/<class_id>/upload_students", methods=["POST"])

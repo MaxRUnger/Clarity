@@ -352,6 +352,9 @@ class TestSensitiveLogs(unittest.TestCase):
         logger, handler, records, previous = _messages("app.routes")
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                    unittest.mock.patch(
+                        "app.helpers.enrollment.supabase_admin", admin
+                    ), \
                     unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                     unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True), \
                     unittest.mock.patch.object(
