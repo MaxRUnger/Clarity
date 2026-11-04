@@ -234,7 +234,9 @@ class TestArchiveZipLimit(unittest.TestCase):
             sess["user_id"] = "inst1"
             sess["role"] = "instructor"
         manifest = {"class_name": "Algebra"}
-        with unittest.mock.patch.object(r, "MAX_ARCHIVE_ZIP_BYTES", 8, create=True), \
+        with unittest.mock.patch(
+            "app.helpers.class_archive.MAX_ARCHIVE_ZIP_BYTES", 8, create=True
+        ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch(
                     "app.helpers.archive_export.build_class_archive_zip",

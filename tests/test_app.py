@@ -9919,6 +9919,7 @@ class TestArchivedClasses(unittest.TestCase):
         headers = {"X-CSRF-Token": "test-csrf"} if send_csrf and method != "GET" else {}
         patches = [
             unittest.mock.patch.object(r, "supabase_admin", admin),
+            unittest.mock.patch("app.helpers.class_archive.supabase_admin", admin),
             unittest.mock.patch.object(storage, "supabase_admin", admin),
         ]
         if monotonic is not None:
@@ -10692,7 +10693,7 @@ class TestArchivedClasses(unittest.TestCase):
 class TestRestoreChunks(unittest.TestCase):
     def test_row_cap_byte_cap_and_one_huge_record(self):
         import json
-        from app.routes import _RESTORE_BYTE_CAP, _restore_chunks
+        from app.helpers.class_archive import _RESTORE_BYTE_CAP, _restore_chunks
 
         small = [{"n": index} for index in range(401)]
         sized = _restore_chunks(small)
