@@ -2822,7 +2822,7 @@ class TestImportRosterNameMatch(unittest.TestCase):
         }
         if extra:
             payload.update(extra)
-        with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+        with unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
                 unittest.mock.patch.object(
@@ -3709,12 +3709,11 @@ class TestImportGradesRateLimit(unittest.TestCase):
     def test_returns_429_when_rate_limit_exhausted(self):
         """Patching _rate_limit to return False must produce a 429 with the
         standard rate-limit error message."""
-        from app import routes as r
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
             sess["csrf_token"] = "test-csrf"
 
-        with unittest.mock.patch.object(r, "_rate_limit", return_value=False):
+        with unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=False):
             rv = self.client.post(
                 "/api/import-grades",
                 json={"class_id": "c1"},
@@ -3742,7 +3741,7 @@ class TestImportGradesRateLimit(unittest.TestCase):
             sess["user_id"] = "inst1"
             sess["csrf_token"] = "test-csrf"
 
-        with unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+        with unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.lo_import.supabase_admin", sa):
             rv = self.client.post(
@@ -4438,7 +4437,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, None)):
             rv = self.client.post(
@@ -4457,7 +4456,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["role"] = "instructor"
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_send_via_resend", send_mock):
             rv = self.client.post(
                 "/api/class/c1/student/s1/send-report-email",
@@ -4477,7 +4476,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
                 unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, None)):
             rv = self.client.post(
@@ -4496,7 +4495,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["role"] = "instructor"
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_rate_limit", return_value=True), \
+                unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_send_via_resend", send_mock):
             rv = self.client.post(
                 "/api/class/c1/student/s1/send-report-email",
@@ -4812,7 +4811,7 @@ class TestStudentEmailMatch(unittest.TestCase):
                     "app.helpers.enrollment.supabase_admin", sa
                 ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_rate_limit", return_value=True):
+                unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True):
             return client.post(
                 path,
                 data=payload,
@@ -9133,8 +9132,8 @@ class TestClassArchiveExport(unittest.TestCase):
             check_archive_manifest(dict(complete, source_students=2), zip_bytes)
 
     def _client(self):
-        from app import routes as r
-        r._rate_limit_events.clear()
+        from app.helpers.rate_limit import _rate_limit_events
+        _rate_limit_events.clear()
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()
@@ -9319,9 +9318,10 @@ class TestClassArchiveRoute(unittest.TestCase):
     ):
         from uuid import UUID
         from app import routes as r
+        from app.helpers.rate_limit import _rate_limit_events
         import app.helpers.archive_storage as storage
 
-        r._rate_limit_events.clear()
+        _rate_limit_events.clear()
         log = []
         deleted = []
         selects = {"n": 0}
@@ -9850,9 +9850,10 @@ class TestArchivedClasses(unittest.TestCase):
         fail_delete=None,
     ):
         from app import routes as r
+        from app.helpers.rate_limit import _rate_limit_events
         import app.helpers.archive_storage as storage
 
-        r._rate_limit_events.clear()
+        _rate_limit_events.clear()
         log = []
         seen = {"columns": "", "orders": [], "rpc": []}
         shared = shared if shared is not None else {"row_deletes": 0}
@@ -11490,8 +11491,8 @@ class TestPrintClassSheet(unittest.TestCase):
 
 class TestRevisionReminders(unittest.TestCase):
     def _client(self):
-        from app import routes as r
-        r._rate_limit_events.clear()
+        from app.helpers.rate_limit import _rate_limit_events
+        _rate_limit_events.clear()
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()

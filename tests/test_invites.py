@@ -23,7 +23,7 @@ def _invite_row(**overrides):
 
 class TestSignupInvites(unittest.TestCase):
     def setUp(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         app = create_app()
@@ -31,7 +31,7 @@ class TestSignupInvites(unittest.TestCase):
         self.client = app.test_client()
 
     def _post(self, code, rows=None, boom=None, invite_env=""):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         shared = MagicMock()

@@ -151,7 +151,7 @@ class TestPasswordRulesOnBothRoutes(unittest.TestCase):
         self.client = self.app.test_client()
 
     def _clear_limits(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
 
@@ -240,7 +240,7 @@ class TestPasswordRulesOnBothRoutes(unittest.TestCase):
 
 class TestForgotPassword(unittest.TestCase):
     def setUp(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         self.app = create_app()
@@ -250,7 +250,7 @@ class TestForgotPassword(unittest.TestCase):
             sess["csrf_token"] = "tok"
 
     def tearDown(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
 
@@ -399,7 +399,7 @@ class TestForgotPassword(unittest.TestCase):
             headers={"X-CSRF-Token": "tok"},
         ).status_code, 429)
 
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         email_statuses = []
@@ -434,7 +434,7 @@ class TestForgotPassword(unittest.TestCase):
         self.assertEqual(last.get_json(), FORGOT_OK)
 
     def test_idle_rate_limit_buckets_are_removed(self):
-        from app.routes import _rate_limit, _rate_limit_bucket, _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit, _rate_limit_bucket, _rate_limit_events
 
         _rate_limit_events.clear()
         stale = time.time() - 4000
@@ -455,7 +455,7 @@ class TestForgotPassword(unittest.TestCase):
 
 class TestResetPassword(unittest.TestCase):
     def setUp(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         clear_app_session_cache()
@@ -464,7 +464,7 @@ class TestResetPassword(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         clear_app_session_cache()
@@ -686,7 +686,7 @@ class TestResetPages(unittest.TestCase):
         client = app.test_client()
         with client.session_transaction() as sess:
             sess["csrf_token"] = "tok"
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         with patch("app.routes.supabase_admin", admin), patch(
@@ -752,7 +752,7 @@ class TestResetPages(unittest.TestCase):
 
 class TestPasswordResetCsrf(unittest.TestCase):
     def setUp(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         self.app = create_app()
@@ -760,7 +760,7 @@ class TestPasswordResetCsrf(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
 
@@ -910,7 +910,7 @@ class TestVerifyRecoveryToken(unittest.TestCase):
 
 class TestResetRevokeOrder(unittest.TestCase):
     def setUp(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         clear_app_session_cache()
@@ -919,7 +919,7 @@ class TestResetRevokeOrder(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         clear_app_session_cache()
@@ -1018,7 +1018,7 @@ class TestRevokeUserSessionsFilter(unittest.TestCase):
 
 class TestResetPasswordGate(unittest.TestCase):
     def setUp(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         clear_app_session_cache()
@@ -1027,7 +1027,7 @@ class TestResetPasswordGate(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         clear_app_session_cache()
@@ -1154,7 +1154,7 @@ class TestResetPasswordGate(unittest.TestCase):
 
 class TestForgotPasswordHostHeader(unittest.TestCase):
     def setUp(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
         self.app = create_app()
@@ -1162,7 +1162,7 @@ class TestForgotPasswordHostHeader(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
 
@@ -1214,17 +1214,17 @@ class TestForgotPasswordHostHeader(unittest.TestCase):
 
 class TestRateLimitIdleWindow(unittest.TestCase):
     def setUp(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
 
     def tearDown(self):
-        from app.routes import _rate_limit_events
+        from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
 
     def test_window_longer_than_idle_limit_is_rejected(self):
-        from app.routes import _RATE_LIMIT_MAX_IDLE, _rate_limit_bucket
+        from app.helpers.rate_limit import _RATE_LIMIT_MAX_IDLE, _rate_limit_bucket
 
         self.assertEqual(_RATE_LIMIT_MAX_IDLE, 3600)
         with self.assertRaises(ValueError):

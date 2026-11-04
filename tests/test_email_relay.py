@@ -355,8 +355,7 @@ class TestEmailRelay(unittest.TestCase):
         self.assertIn(FOOTER_SENTENCE, body)
 
     def test_both_report_routes_return_429_when_the_burst_limit_is_exhausted(self):
-        from app import routes as r
-        with unittest.mock.patch.object(r, "_rate_limit", return_value=False):
+        with unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=False):
             single = self.client.post(
                 "/api/class/c1/student/stu-1/send-report-email",
                 json={"subject": "Progress", "body": "Hello"},

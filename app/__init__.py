@@ -59,7 +59,7 @@ def create_app(config_class=Config):
     # one X-Forwarded-For / X-Forwarded-Proto hop. Without this, a client can
     # set their own X-Forwarded-For header and have it trusted verbatim by
     # anything that reads request.remote_addr or the header directly (e.g.
-    # the rate limiter's _client_ip() in app/routes.py), trivially bypassing
+    # the rate limiter's _client_ip() in app.helpers.rate_limit), trivially bypassing
     # per-IP rate limits.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=0, x_port=0, x_prefix=0)
     
@@ -82,7 +82,7 @@ def create_app(config_class=Config):
     app.register_blueprint(main_bp)
     app.before_request(validate_app_session)
 
-    # Loud warning at boot: the rate-limit store in `app.routes`
+    # Loud warning at boot: the rate-limit store in `app.helpers.rate_limit`
     # (`_rate_limit_events`) and the form-token store in `app.helpers.form_tokens`
     # (`_used_form_tokens`)
     # are per-process. Running multiple gunicorn workers without sticky
@@ -94,7 +94,7 @@ def create_app(config_class=Config):
         "yes",
     ):
         logging.getLogger(__name__).warning(
-            "MULTI_WORKER is set: in-memory rate limits in app.routes and "
+            "MULTI_WORKER is set: in-memory rate limits in app.helpers.rate_limit and "
             "form-token replay tables in app.helpers.form_tokens are not shared across workers. "
             "Use one worker, sticky sessions, or Redis. See module docstring in app.routes."
         )

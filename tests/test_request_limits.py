@@ -122,8 +122,7 @@ class TestHeavyRouteRateLimits(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
 
     def _exhausted(self, method, path):
-        from app import routes as r
-        with unittest.mock.patch.object(r, "_rate_limit", return_value=False):
+        with unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=False):
             if method == "GET":
                 return self.client.get(path)
             return self.client.post(
