@@ -2,8 +2,9 @@
 
 Deployment (production)
 -----------------------
-In-memory structures in this module — request rate limits
-(``_rate_limit_events``) and one-time form tokens (``_used_form_tokens``) —
+In-memory structures — request rate limits in this module
+(``_rate_limit_events``) and one-time form tokens in ``app.helpers.form_tokens``
+(``_used_form_tokens``) —
 are **not** shared across Gunicorn/Uvicorn workers. With multiple workers,
 rate limits and token replay checks can appear broken or inconsistent.
 
@@ -85,8 +86,22 @@ from app.helpers.csv_text import (
     MAX_IMPORT_ROWS,
     _normalize_assignment_title,
     parse_blank_gradesheet_csv_text,
-    parse_learning_objectives_csv_text,
-    parse_students_csv_text,
+)
+from app.helpers.form_tokens import _consume_one_time_form_token
+from app.helpers.auth_decorators import (
+    _session_expired_response,
+    api_instructor_required,
+    api_login_required,
+    login_required,
+)
+from app.helpers.free_passes import (
+    FREE_PASSES_ALLOWED,
+    _batch_get_free_passes,
+    _promote_non_counting_masteries_for_student,
+)
+from app.helpers.csv_upload import (
+    _parse_lo_csv_upload,
+    _parse_student_csv_upload,
 )
 from app.helpers.gradesheet_csv import (
     _build_gradesheet_csv_text,
@@ -135,12 +150,6 @@ main_bp = Blueprint('main', __name__, template_folder='templates')
 # the module docstring; the brief notes here are reminders for anyone editing
 # this file directly. See `create_app` for the MULTI_WORKER startup warning.
 
-# Single-use form tokens to block replay of state-changing POSTs that have
-# already been processed (e.g. double-click submit).
-FORM_TOKEN_TTL = 900  # 15 minutes
-_used_form_tokens = {}
-_form_token_lock = threading.Lock()
-
 # `_rate_limit_events[(scope, identity)] = deque[timestamp]`. A deque per
 # bucket avoids re-allocating a list every check and keeps trimming O(1) at
 # the head.
@@ -154,30 +163,6 @@ _INSTRUCTOR_HOME = "/instructor/dashboard"
 def _public_base_url():
     """Return the configured public base URL, or an empty string."""
     return (Config.PUBLIC_BASE_URL or "").strip().rstrip("/")
-
-
-def _consume_one_time_form_token(namespace: str, token: str) -> bool:
-    """Return True once per (namespace, token) within TTL; False for replays."""
-    key = f"{namespace}:{token}"
-    now = time.time()
-    with _form_token_lock:
-        expired = [
-            k for k, created in _used_form_tokens.items()
-            if now - created > FORM_TOKEN_TTL
-        ]
-        for k in expired:
-            _used_form_tokens.pop(k, None)
-
-        if key in _used_form_tokens:
-            return False
-
-        _used_form_tokens[key] = now
-        return True
-
-# Shared caps for all bulk-import entry points (CSV and JSON body alike).
-# Bytes cap matches the pre-existing LO CSV limit; row cap keeps a single
-# request from blocking a worker on thousands of upserts / DoS-ing memory.
-MAX_IMPORT_UPLOAD_BYTES = 5 * 1024 * 1024
 
 
 def _class_auto_convert_m_enabled(class_id: str) -> bool:
@@ -408,51 +393,6 @@ def import_learning_objectives_rows(class_id: str, rows: List[Dict[str, Any]]) -
     return inserted, skipped, errors
 
 
-# ============================================================================
-# AUTH DECORATORS
-# ============================================================================
-
-def login_required(f):
-    """Redirect to login page if the user has no active session."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if 'user_id' not in session:
-            return redirect(url_for('main.login_page'))
-        return f(*args, **kwargs)
-    return decorated
-
-
-def _session_expired_response():
-    return jsonify({
-        "success": False,
-        "error": "Unauthorized",
-        "code": "session_expired",
-    }), 401
-
-
-def api_login_required(f):
-    """Return 401 JSON if the user has no active session (for API routes)."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if 'user_id' not in session:
-            return _session_expired_response()
-        return f(*args, **kwargs)
-    return decorated
-
-
-def api_instructor_required(f):
-    """Return 401 JSON if the user is not a logged-in instructor."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if "user_id" not in session:
-            return _session_expired_response()
-        role = (session.get("role") or "").strip().lower()
-        if role != "instructor":
-            return jsonify({"success": False, "error": "Unauthorized"}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-
 def _client_ip() -> str:
     # ProxyFix (registered in app/__init__.py) already resolves the real
     # client IP into `remote_addr`, trusting exactly one hop (Railway's
@@ -606,24 +546,6 @@ def _gradesheet_export_bundle(class_id: str, assignment_id: str):
 
     hw_map = Homework.get_hw_scores_map_for_assignment(class_id, assignment_id)
     return assignment, students, learning_objectives, hw_map
-
-
-FREE_PASSES_ALLOWED = 2
-
-
-def _batch_get_free_passes(student_ids, class_id):
-    """Batch-fetch passes_used for a list of students. Returns {student_id: passes_used}."""
-    if not student_ids:
-        return {}
-    try:
-        resp = supabase_admin.table("free_passes") \
-            .select("student_id, passes_used") \
-            .eq("class_id", class_id) \
-            .in_("student_id", student_ids) \
-            .execute()
-        return {r['student_id']: r['passes_used'] for r in (resp.data or [])}
-    except Exception:
-        return {}
 
 
 def _class_data_for_progress(class_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -3390,51 +3312,6 @@ def api_update_learning_objective(class_id, lo_id):
         return _safe_api_error("Could not update learning objective", 500, log_detail=e)
 
 
-def _parse_lo_csv_upload() -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], List[str]]:
-    """Read CSV from request.files['file']; return (error_message or None, rows or None, warnings)."""
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return "No file uploaded", None, []
-    if not f.filename.lower().endswith(".csv"):
-        return "Upload a .csv file", None, []
-    try:
-        raw = f.read()
-        if len(raw) > MAX_IMPORT_UPLOAD_BYTES:
-            return "CSV must be 5MB or smaller", None, []
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return "CSV must be UTF-8 encoded", None, []
-    rows, parse_warnings = parse_learning_objectives_csv_text(text)
-    if not rows:
-        return parse_warnings[0] if parse_warnings else "No objectives to import", None, parse_warnings
-    if len(rows) > MAX_IMPORT_ROWS:
-        return f"CSV has too many rows (max {MAX_IMPORT_ROWS})", None, parse_warnings
-    return None, rows, parse_warnings
-
-
-def _parse_student_csv_upload() -> Tuple[Optional[str], Optional[List[Dict[str, str]]], List[str]]:
-    """Read CSV from request.files['file']; return (error_message or None, rows or None, row errors)."""
-    f = request.files.get("file")
-    if not f or not (f.filename or "").strip():
-        return "Please choose a CSV file.", None, []
-    if not f.filename.lower().endswith(".csv"):
-        return "Upload a .csv file", None, []
-    try:
-        raw = f.read()
-        if len(raw) > MAX_IMPORT_UPLOAD_BYTES:
-            return "CSV must be 5MB or smaller", None, []
-        text = raw.decode("utf-8-sig", errors="replace")
-    except Exception:
-        return "Could not read CSV file", None, []
-
-    rows, parse_errors = parse_students_csv_text(text)
-    if not rows and parse_errors and not str(parse_errors[0]).startswith("Row "):
-        return parse_errors[0], None, parse_errors
-    if len(rows) > MAX_IMPORT_ROWS:
-        return f"CSV has too many rows (max {MAX_IMPORT_ROWS})", None, parse_errors
-    return None, rows, parse_errors
-
-
 @main_bp.route("/api/class/<class_id>/preview-learning-objectives", methods=["POST"])
 @api_instructor_required
 def api_preview_learning_objectives(class_id):
@@ -4789,42 +4666,6 @@ def api_assignment_grades(class_id, assignment_id):
     except Exception as e:
         return _safe_api_error("Could not load assignment grades", 500, log_detail=e)
 
-
-def _promote_non_counting_masteries_for_student(class_id: str, student_id: str, changed_by: str = None) -> int:
-    """When a student uses an HW pass, restore all their non-counting M/MR rows."""
-    lo_ids = Course.get_all_lo_ids_for_class(class_id)
-    if not lo_ids:
-        return 0
-    resp = supabase_admin.table("grades").select(
-        "student_id, learning_objective_id, assignment_id, top_score, counts_for_mastery"
-    ).eq("student_id", student_id).in_("learning_objective_id", lo_ids).in_(
-        "top_score", ["M", "MR"]
-    ).execute()
-
-    rows = []
-    for grade in resp.data or []:
-        if grade.get("counts_for_mastery") is not False:
-            continue
-        row = {
-            "student_id": student_id,
-            "learning_objective_id": grade["learning_objective_id"],
-            "top_score": grade["top_score"],
-            "counts_for_mastery": True,
-        }
-        if changed_by is not None:
-            row["last_modified_by"] = changed_by
-        aid = grade.get("assignment_id")
-        if aid is not None:
-            row["assignment_id"] = aid
-        rows.append(row)
-
-    if not rows:
-        return 0
-
-    supabase_admin.table("grades").upsert(
-        rows, on_conflict="student_id,learning_objective_id,assignment_id"
-    ).execute()
-    return len(rows)
 
 
 @main_bp.route("/api/class/<class_id>/save-hw-percentage", methods=["POST"])

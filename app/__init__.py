@@ -82,8 +82,9 @@ def create_app(config_class=Config):
     app.register_blueprint(main_bp)
     app.before_request(validate_app_session)
 
-    # Loud warning at boot: several in-memory stores in `app.routes`
-    # (`_rate_limit_events`, `_used_form_tokens`)
+    # Loud warning at boot: the rate-limit store in `app.routes`
+    # (`_rate_limit_events`) and the form-token store in `app.helpers.form_tokens`
+    # (`_used_form_tokens`)
     # are per-process. Running multiple gunicorn workers without sticky
     # sessions silently breaks them, so we log this once at startup rather
     # than risk debugging it under load.
@@ -93,8 +94,8 @@ def create_app(config_class=Config):
         "yes",
     ):
         logging.getLogger(__name__).warning(
-            "MULTI_WORKER is set: in-memory rate limits and "
-            "form-token replay tables in app.routes are not shared across workers. "
+            "MULTI_WORKER is set: in-memory rate limits in app.routes and "
+            "form-token replay tables in app.helpers.form_tokens are not shared across workers. "
             "Use one worker, sticky sessions, or Redis. See module docstring in app.routes."
         )
 

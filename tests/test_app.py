@@ -1197,6 +1197,7 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
         headers = {"X-CSRF-Token": "test-csrf"}
 
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.free_passes.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
                     r, "_student_enrolled_in_class", return_value=True
@@ -3881,7 +3882,7 @@ class TestGradeChangeLog(unittest.TestCase):
             "top_score": "M",
             "counts_for_mastery": False,
         }])
-        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+        with unittest.mock.patch("app.helpers.free_passes.supabase_admin", sa), \
                 unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=["lo-x"]):
             n = r._promote_non_counting_masteries_for_student("class-1", "stu-1", changed_by="inst1")
         self.assertEqual(n, 1)
@@ -7831,7 +7832,7 @@ class TestFreePassAllowance(unittest.TestCase):
         return rv, log
 
     def test_first_use_inserts_one_and_returns_one_less_than_the_allowance(self):
-        from app.routes import FREE_PASSES_ALLOWED
+        from app.helpers.free_passes import FREE_PASSES_ALLOWED
         rv, log = self._post("/api/class/c1/use_pass", [])
         self.assertEqual(rv.status_code, 200)
         self.assertEqual(rv.get_json()["passes_remaining"], FREE_PASSES_ALLOWED - 1)
@@ -7844,7 +7845,7 @@ class TestFreePassAllowance(unittest.TestCase):
         )
 
     def test_use_at_the_limit_returns_400_and_does_not_update(self):
-        from app.routes import FREE_PASSES_ALLOWED
+        from app.helpers.free_passes import FREE_PASSES_ALLOWED
         rv, log = self._post(
             "/api/class/c1/use_pass",
             [{"id": "fp1", "passes_used": FREE_PASSES_ALLOWED}],
@@ -7857,7 +7858,7 @@ class TestFreePassAllowance(unittest.TestCase):
         )
 
     def test_return_from_one_used_restores_the_allowance(self):
-        from app.routes import FREE_PASSES_ALLOWED
+        from app.helpers.free_passes import FREE_PASSES_ALLOWED
         rv, log = self._post(
             "/api/class/c1/return_pass",
             [{"id": "fp1", "passes_used": 1}],
@@ -13186,7 +13187,8 @@ class TestSpeedGraderReads(unittest.TestCase):
             sess["role"] = "instructor"
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
-                    unittest.mock.patch.object(models, "supabase_admin", admin):
+                    unittest.mock.patch.object(models, "supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.free_passes.supabase_admin", admin):
                 response = client.get("/class/%s/speed_grader" % class_id)
         finally:
             template_rendered.disconnect(grab, app)
