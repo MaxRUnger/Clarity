@@ -111,6 +111,9 @@ class TestAssignmentCalendarDates(unittest.TestCase):
             patches.append(patch.object(
                 routes_module, "_assignment_belongs_to_class", return_value=True
             ))
+            patches.append(patch(
+                "app.helpers.grade_log.supabase_admin", admin
+            ))
             url = "/class/c1/assignments/asg-1/update"
             method = self.client.put
         else:

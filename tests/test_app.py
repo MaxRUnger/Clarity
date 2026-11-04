@@ -3892,13 +3892,14 @@ class TestGradeChangeLog(unittest.TestCase):
 
     def test_allowed_operations_and_python_writer(self):
         from app import routes as r
+        from app.helpers import grade_log
         self.assertEqual(
-            r.GRADE_LOG_OPERATIONS,
-            (r.GRADE_LOG_INSERT, r.GRADE_LOG_UPDATE, r.GRADE_LOG_DELETE),
+            grade_log.GRADE_LOG_OPERATIONS,
+            (grade_log.GRADE_LOG_INSERT, grade_log.GRADE_LOG_UPDATE, grade_log.GRADE_LOG_DELETE),
         )
-        self.assertEqual(r.GRADE_LOG_OPERATIONS, ("INSERT", "UPDATE", "DELETE"))
+        self.assertEqual(grade_log.GRADE_LOG_OPERATIONS, ("INSERT", "UPDATE", "DELETE"))
         sa, _grade_rows, log_rows = self._make_sa_mock()
-        with unittest.mock.patch.object(r, "supabase_admin", sa):
+        with unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa):
             r._log_grade_deletions(
                 [{
                     "student_id": "stu-1",
@@ -3912,11 +3913,12 @@ class TestGradeChangeLog(unittest.TestCase):
                 "inst1",
             )
         ops = {row["operation"] for row in log_rows}
-        self.assertEqual(ops, {r.GRADE_LOG_DELETE})
-        self.assertTrue(ops <= set(r.GRADE_LOG_OPERATIONS))
+        self.assertEqual(ops, {grade_log.GRADE_LOG_DELETE})
+        self.assertTrue(ops <= set(grade_log.GRADE_LOG_OPERATIONS))
 
     def test_constraint_violation_logs_error_with_operation(self):
         from app import routes as r
+        from app.helpers import grade_log
 
         class CheckViolation(Exception):
             def __init__(self):
@@ -3928,9 +3930,11 @@ class TestGradeChangeLog(unittest.TestCase):
         q.execute.side_effect = CheckViolation()
         sa = MagicMock()
         sa.table.return_value = q
-        with unittest.mock.patch.object(r, "supabase_admin", sa), \
-                unittest.mock.patch.object(r.logger, "error") as err, \
-                unittest.mock.patch.object(r.logger, "warning") as warn:
+        with unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
+                unittest.mock.patch.object(grade_log.logger, "error") as err, \
+                unittest.mock.patch.object(grade_log.logger, "warning") as warn, \
+                unittest.mock.patch.object(r.logger, "error") as routes_err, \
+                unittest.mock.patch.object(r.logger, "warning") as routes_warn:
             r._log_grade_deletions(
                 [{
                     "student_id": "stu-1",
@@ -3943,10 +3947,13 @@ class TestGradeChangeLog(unittest.TestCase):
                 "inst1",
             )
         warn.assert_not_called()
-        self.assertIn(r.GRADE_LOG_DELETE, err.call_args[0])
+        routes_err.assert_not_called()
+        routes_warn.assert_not_called()
+        self.assertIn(grade_log.GRADE_LOG_DELETE, err.call_args[0])
 
     def test_missing_table_logs_warning_only(self):
         from app import routes as r
+        from app.helpers import grade_log
 
         class MissingTable(Exception):
             def __init__(self):
@@ -3957,9 +3964,11 @@ class TestGradeChangeLog(unittest.TestCase):
         q.execute.side_effect = MissingTable()
         sa = MagicMock()
         sa.table.return_value = q
-        with unittest.mock.patch.object(r, "supabase_admin", sa), \
-                unittest.mock.patch.object(r.logger, "error") as err, \
-                unittest.mock.patch.object(r.logger, "warning") as warn:
+        with unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
+                unittest.mock.patch.object(grade_log.logger, "error") as err, \
+                unittest.mock.patch.object(grade_log.logger, "warning") as warn, \
+                unittest.mock.patch.object(r.logger, "error") as routes_err, \
+                unittest.mock.patch.object(r.logger, "warning") as routes_warn:
             r._log_grade_deletions(
                 [{
                     "student_id": "stu-1",
@@ -3972,7 +3981,9 @@ class TestGradeChangeLog(unittest.TestCase):
                 "inst1",
             )
         err.assert_not_called()
+        routes_err.assert_not_called()
         warn.assert_called()
+        routes_warn.assert_not_called()
 
 
 class TestMaxLengthValidation(unittest.TestCase):
@@ -7614,6 +7625,8 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         client = self._client()
         sa = self._removal_sa(log, fail_delete=fail_delete)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.class_removal.supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
                 unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=enrolled), \
                 unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=["lo-this"]):
@@ -7654,7 +7667,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         self.assertNotIn("profiles", deleted_tables)
         self.assertTrue(any(e["table"] == "grade_change_log" and e["op"] == "insert" for e in log))
         self.assertFalse(any(e["table"] == "grade_change_log" and e["op"] == "delete" for e in log))
-        from app import routes as r
+        from app.helpers.grade_log import GRADE_LOG_DELETE
         audit_rows = [
             row
             for entry in log
@@ -7662,7 +7675,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
             for row in (entry.get("rows") or [])
         ]
         self.assertTrue(audit_rows)
-        self.assertTrue(all(row["operation"] == r.GRADE_LOG_DELETE for row in audit_rows))
+        self.assertTrue(all(row["operation"] == GRADE_LOG_DELETE for row in audit_rows))
         for entry in log:
             for _op, _column, value in entry["filters"]:
                 values = value if isinstance(value, list) else [value]
@@ -7919,6 +7932,8 @@ class TestClassDeleteRoutes(unittest.TestCase):
 
         client = self._client()
         with unittest.mock.patch.object(r, "supabase_admin") as sa, \
+                unittest.mock.patch("app.helpers.class_removal.supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns):
             sa.table.side_effect = table
             rv = client.post(path, headers={"X-CSRF-Token": "test-csrf"})
@@ -7936,7 +7951,8 @@ class TestClassDeleteRoutes(unittest.TestCase):
 
         sa = unittest.mock.MagicMock()
         sa.table.side_effect = table
-        with unittest.mock.patch.object(r, "supabase_admin", sa):
+        with unittest.mock.patch("app.helpers.class_removal.supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa):
             r.delete_class_rows("c1", "inst1")
         return log
 
@@ -8362,6 +8378,7 @@ class TestUpdateAssignmentDetach(unittest.TestCase):
                 unittest.mock.patch(
                     "app.helpers.assignment_rows.supabase_admin", sa
                 ), \
+                unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
                 unittest.mock.patch.object(
                     r.Course, "get_lo_ids_for_class", return_value=["lo-1", "lo-2"]
