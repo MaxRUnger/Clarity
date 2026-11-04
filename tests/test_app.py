@@ -12146,6 +12146,19 @@ def _class_detail_client(store, calls, selects):
     return admin
 
 
+def _page_without_csrf(page):
+    """Return page HTML with the meta and hidden CSRF token values removed."""
+    stripped = page
+    for marker in ('name="csrf-token" content="', 'name="csrf_token" value="'):
+        start = stripped.find(marker)
+        if start == -1:
+            continue
+        value_start = start + len(marker)
+        value_end = stripped.find('"', value_start)
+        stripped = stripped[:value_start] + stripped[value_end:]
+    return stripped
+
+
 class TestClassDetailReads(unittest.TestCase):
     TODAY = date(2026, 10, 21)
     CLASS_ID = "class-full"
@@ -13029,7 +13042,7 @@ class TestUploadPageReads(unittest.TestCase):
         self.assertNotIn("stu-ghost", page)
         self.assertNotIn("stu-skip", page)
         self.assertNotIn("Skip, Sue", page)
-        self.assertNotIn("ZQ", page)
+        self.assertNotIn("ZQ", _page_without_csrf(page))
         self.assertNotIn("Gamma", page)
         raw_roster, roster = self._roster_json(page)
         self.assertEqual(roster, expected_roster)
@@ -13337,7 +13350,7 @@ class TestSpeedGraderReads(unittest.TestCase):
         self.assertIn("Unnamed student", page)
         self.assertNotIn("Mute, Mo", page)
         self.assertNotIn("stu-ghost", page)
-        self.assertNotIn("ZQ", page)
+        self.assertNotIn("ZQ", _page_without_csrf(page))
         self.assertEqual(
             [(lo["id"], lo["name"], lo["vendor_code"]) for lo in context["lo_names"]],
             [("lo-2", "Alpha", "A1"), ("lo-1", "Beta", "B2"), ("lo-9", "Gamma", "C3")],
