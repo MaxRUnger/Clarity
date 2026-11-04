@@ -26,7 +26,6 @@ from html import escape as html_escape
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
-from itsdangerous import BadSignature
 from collections import defaultdict, deque
 from functools import wraps
 from typing import Any, Dict, List, Optional, Tuple
@@ -105,6 +104,27 @@ from app.helpers.class_progress import (
     objectives_attached_to_assignments,
 )
 from app.helpers.gradesheet_lookup import _gradesheet_letter_map_for_assignment
+from app.helpers.assignment_rows import (
+    _assignment_type_fields_from_payload,
+    _insert_assignment_objectives,
+)
+from app.helpers.api_input import (
+    _require_json_object,
+    _safe_api_error,
+)
+from app.helpers.history_packet import (
+    _HISTORY_GRADE_COLS,
+    _HISTORY_LO_CHUNK,
+    _HISTORY_PRINT_ERROR,
+    _grades_for_this_class,
+    _history_objective_ids,
+    _history_packet_grades,
+    student_history_sheet,
+)
+from app.helpers.session_status import (
+    _session_seconds_left,
+    _session_status_response,
+)
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -489,40 +509,6 @@ def rate_limited(key_prefix: str, limit: int, window_sec: int):
     return decorator
 
 
-def _safe_api_error(message: str = "Request failed", status: int = 500, *, log_detail: Optional[Exception] = None):
-    # Return a generic message to the client but include a correlation id so
-    # the server log can be cross-referenced. Prevents accidentally leaking
-    # internal exception details over the wire.
-    err_id = str(uuid4())
-    if log_detail is not None:
-        logger.error("[%s] %s: %s", err_id, message, log_detail)
-    return jsonify({"success": False, "error": message, "error_id": err_id}), status
-
-
-def _require_json_object() -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[Any, int]]]:
-    """Parse JSON object body for state-changing APIs.
-
-    Returns ``(data, None)`` on success, or ``(None, (response, status_code))`` on failure.
-
-    Strict on purpose: a lot of routes used to call ``request.get_json(silent=True) or {}``,
-    which silently turned a wrong content type or a JSON array into an "empty
-    body" and then proceeded with whatever defaults the route had. That
-    behavior masked real client bugs and accepted unexpected payloads, so
-    state-changing endpoints route their body parsing through here instead.
-    """
-    if not request.is_json:
-        return None, (jsonify({"success": False, "error": "Content-Type must be application/json"}), 415)
-    try:
-        data = request.get_json(force=False, silent=False)
-    except Exception:
-        return None, (jsonify({"success": False, "error": "Invalid JSON body"}), 400)
-    if data is None:
-        return None, (jsonify({"success": False, "error": "Invalid or empty JSON body"}), 400)
-    if not isinstance(data, dict):
-        return None, (jsonify({"success": False, "error": "JSON body must be an object"}), 400)
-    return data, None
-
-
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
@@ -732,28 +718,6 @@ def logout():
     if reason == "inactivity":
         return redirect(url_for("main.login_page", reason="inactivity"))
     return redirect(url_for("main.login_page"))
-
-
-def _session_seconds_left():
-    raw = request.cookies.get(current_app.config["SESSION_COOKIE_NAME"])
-    serializer = current_app.session_interface.get_signing_serializer(current_app)
-    if not raw or serializer is None:
-        return None
-    max_age = int(current_app.permanent_session_lifetime.total_seconds())
-    try:
-        _payload, issued = serializer.loads(raw, max_age=max_age, return_timestamp=True)
-    except BadSignature:
-        return None
-    issued_at = issued.timestamp() if hasattr(issued, "timestamp") else float(issued)
-    remaining = max_age - int(time.time() - issued_at)
-    return remaining if remaining > 0 else 0
-
-
-def _session_status_response(body, status):
-    response = jsonify(body)
-    response.headers["Cache-Control"] = "no-store"
-    response.status_code = status
-    return response
 
 
 @main_bp.route("/api/session-status")
@@ -2934,24 +2898,6 @@ def class_assignments(class_id):
         unattached_count=unattached_count,
     )
 
-def _insert_assignment_objectives(ao_rows: List[Dict[str, Any]]) -> None:
-    """Insert assignment_objectives rows."""
-    if not ao_rows:
-        return
-    supabase_admin.table("assignment_objectives").insert(ao_rows).execute()
-
-
-def _assignment_type_fields_from_payload(data: Dict[str, Any]) -> str:
-    """Parse assignment_type from create/update body.
-
-    Invalid / missing type falls back to 'mastery_opp'.
-    'project' is a valid label and follows the same path as 'exam'.
-    """
-    raw = data.get("assignment_type") or "mastery_opp"
-    if not isinstance(raw, str):
-        raw = "mastery_opp"
-    return raw.strip() if raw.strip() in ASSIGNMENT_TYPES else "mastery_opp"
-
 
 @main_bp.route("/class/<class_id>/create_assignment", methods=["POST"])
 @api_instructor_required
@@ -4254,139 +4200,6 @@ def api_send_revision_reminders(class_id):
         "message": message,
         "warning": warning,
     })
-
-
-_HISTORY_PACKET_COLS = (
-    "student_id, learning_objective_id, assignment_id, top_score, second_score"
-)
-_HISTORY_GRADE_COLS = (
-    "learning_objective_id, assignment_id, top_score, second_score, assignments(name)"
-)
-_HISTORY_LO_CHUNK = 100
-_HISTORY_PRINT_ERROR = "Could not load student history. Please try again."
-
-
-def _history_objective_ids(learning_objectives) -> List[str]:
-    ids: List[str] = []
-    seen = set()
-    for lo in learning_objectives or []:
-        lo_id = str(lo.get("id") or "").strip()
-        if not lo_id or lo_id in seen:
-            continue
-        seen.add(lo_id)
-        ids.append(lo_id)
-    return ids
-
-
-def _grades_for_this_class(rows, assignments) -> List[Dict[str, Any]]:
-    allowed = {
-        str(assignment.get("id"))
-        for assignment in assignments or []
-        if assignment.get("id")
-    }
-    kept = []
-    for grade in rows or []:
-        raw = grade.get("assignment_id")
-        if raw is None or str(raw) in allowed:
-            kept.append(grade)
-    return kept
-
-
-def _history_packet_grades(lo_ids: List[str]) -> List[Dict[str, Any]]:
-    """Every grade for these objectives, in id order. One page-set per 100 ids."""
-    ids: List[str] = []
-    seen = set()
-    for raw in lo_ids:
-        lo_id = str(raw or "").strip()
-        if not lo_id or lo_id in seen:
-            continue
-        seen.add(lo_id)
-        ids.append(lo_id)
-    if not ids:
-        return []
-    rows: List[Dict[str, Any]] = []
-    for start in range(0, len(ids), _HISTORY_LO_CHUNK):
-        chunk = ids[start:start + _HISTORY_LO_CHUNK]
-        rows.extend(fetch_all_rows(
-            supabase_admin.table("grades")
-            .select(_HISTORY_PACKET_COLS)
-            .in_("learning_objective_id", chunk)
-            .order("id")
-        ))
-    return rows
-
-
-def student_history_sheet(learning_objectives, assignments, student_grades):
-    """One student's grades in class assignment order, plus print rows.
-
-    Grade lists follow the class assignment list, then grades whose assignment
-    is not in that list, then grades with a null assignment_id. Duplicates stay
-    in the order they were loaded. Print rows are class assignments that have
-    a grade. Each print row's cells are the objective texts in that same order.
-    """
-    shown_lo_ids = {str(lo.get('id')) for lo in learning_objectives}
-    class_assignment_ids = {str(assignment.get('id')) for assignment in assignments}
-    grades_by_pair = {}
-    outside_by_lo = {}
-    unscoped_by_lo = {}
-    for grade in student_grades:
-        raw_lo = grade.get('learning_objective_id')
-        if raw_lo is None:
-            continue
-        lo_id = str(raw_lo)
-        if lo_id not in shown_lo_ids:
-            continue
-        # save_grades and api_import_grades store a null assignment_id when
-        # the request omits one. Legacy rows are the same case.
-        if grade.get('assignment_id') is None:
-            unscoped_by_lo.setdefault(lo_id, []).append(grade)
-            continue
-        aid = str(grade.get('assignment_id'))
-        if aid not in class_assignment_ids:
-            outside_by_lo.setdefault(lo_id, []).append(grade)
-            continue
-        grades_by_pair.setdefault((lo_id, aid), []).append(grade)
-
-    lo_grade_data = []
-    for lo in learning_objectives:
-        lo_id = str(lo.get('id'))
-        grades = []
-        for assignment in assignments:
-            aid = str(assignment.get('id'))
-            grades.extend(grades_by_pair.get((lo_id, aid), []))
-        # Covers a failed or partial assignment load.
-        grades.extend(outside_by_lo.get(lo_id, []))
-        grades.extend(unscoped_by_lo.get(lo_id, []))
-        lo_info = {
-            'id': lo_id,
-            'vendor_code': lo.get('vendor_code'),
-            'description': lo.get('description'),
-            'grades': grades
-        }
-        lo_grade_data.append(lo_info)
-
-    used_assignment_ids = {pair[1] for pair in grades_by_pair}
-    history_assignments = []
-    for assignment in assignments:
-        aid = str(assignment.get('id'))
-        if aid not in used_assignment_ids:
-            continue
-        cells = []
-        for lo in learning_objectives:
-            lo_id = str(lo.get('id'))
-            scores = []
-            for grade in grades_by_pair.get((lo_id, aid), []):
-                top_score = grade.get('top_score')
-                second_score = grade.get('second_score')
-                if top_score:
-                    scores.append(top_score)
-                if second_score:
-                    scores.append(second_score)
-            cells.append(", ".join(scores) if scores else "—")
-        printed = dict(assignment)
-        printed['cells'] = cells
-        history_assignments.append(printed)
-    return lo_grade_data, history_assignments
 
 
 @main_bp.route("/class/<class_id>/student/<student_id>/history")

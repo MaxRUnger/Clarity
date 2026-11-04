@@ -139,7 +139,7 @@ class TestSessionTimeout(unittest.TestCase):
         t0 = 1_700_000_000
         self._sign_in_at(t0)
         with patch("itsdangerous.timed.time.time", return_value=t0 + 100 * 60), patch(
-            "app.routes.time.time", return_value=t0 + 100 * 60
+            "app.helpers.session_status.time.time", return_value=t0 + 100 * 60
         ):
             status = self.client.get("/api/session-status")
         self.assertEqual(status.status_code, 200)

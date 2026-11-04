@@ -281,7 +281,8 @@ class TestSensitiveLogs(unittest.TestCase):
             sess["user_id"] = "inst1"
             sess["role"] = "instructor"
             sess["csrf_token"] = "test-csrf"
-        logger, handler, records, previous = _messages("app.routes")
+        route_logger, route_handler, route_records, route_previous = _messages("app.routes")
+        api_logger, api_handler, api_records, api_previous = _messages("app.helpers.api_input")
         try:
             with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True):
                 client.post(
@@ -290,7 +291,9 @@ class TestSensitiveLogs(unittest.TestCase):
                     headers={"X-CSRF-Token": "test-csrf"},
                 )
         finally:
-            _stop(logger, handler, previous)
+            _stop(route_logger, route_handler, route_previous)
+            _stop(api_logger, api_handler, api_previous)
+        records = route_records + api_records
         self.assertFalse(any("PAYLOADMARKER" in message for message in records))
 
     def test_grade_save_log_names_the_actor_and_class(self):

@@ -895,7 +895,7 @@ class TestRequireJsonObject(unittest.TestCase):
         self.app.config['TESTING'] = True
 
     def test_invalid_json_returns_400(self):
-        from app.routes import _require_json_object
+        from app.helpers.api_input import _require_json_object
 
         with self.app.test_request_context(
             "/dummy",
@@ -909,7 +909,7 @@ class TestRequireJsonObject(unittest.TestCase):
             self.assertEqual(err[1], 400)
 
     def test_non_json_content_type_returns_415(self):
-        from app.routes import _require_json_object
+        from app.helpers.api_input import _require_json_object
 
         with self.app.test_request_context(
             "/dummy",
@@ -922,7 +922,7 @@ class TestRequireJsonObject(unittest.TestCase):
             self.assertEqual(err[1], 415)
 
     def test_array_json_returns_400(self):
-        from app.routes import _require_json_object
+        from app.helpers.api_input import _require_json_object
 
         with self.app.test_request_context(
             "/dummy",
@@ -935,7 +935,7 @@ class TestRequireJsonObject(unittest.TestCase):
             self.assertEqual(err[1], 400)
 
     def test_valid_object_returns_data(self):
-        from app.routes import _require_json_object
+        from app.helpers.api_input import _require_json_object
 
         with self.app.test_request_context(
             "/dummy",
@@ -6598,6 +6598,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             session["role"] = "instructor"
             with patch("app.routes.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
+                 patch("app.helpers.history_packet.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 rendered = student_history_print("c1")
         if isinstance(rendered, tuple):
@@ -6733,7 +6734,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
 
     def test_packet_grades_use_one_read_per_hundred_objectives(self):
         from unittest.mock import MagicMock, patch
-        from app.routes import _history_packet_grades
+        from app.helpers.history_packet import _history_packet_grades
 
         chain = MagicMock()
         chain.select.return_value = chain
@@ -6743,7 +6744,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         chain.execute.return_value = MagicMock(data=[])
         admin = MagicMock()
         admin.table.return_value = chain
-        with patch("app.routes.supabase_admin", admin):
+        with patch("app.helpers.history_packet.supabase_admin", admin):
             rows = _history_packet_grades([f"lo{index}" for index in range(101)])
         self.assertEqual(rows, [])
         self.assertEqual(chain.execute.call_count, 2)
@@ -6904,6 +6905,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             session["role"] = "instructor"
             with patch("app.routes.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
+                 patch("app.helpers.history_packet.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 batch = student_history_print("c1")
         single_table = self._print_table(single)
@@ -8327,6 +8329,9 @@ class TestUpdateAssignmentDetach(unittest.TestCase):
 
         client = self._client()
         with unittest.mock.patch.object(r, "supabase_admin") as sa, \
+                unittest.mock.patch(
+                    "app.helpers.assignment_rows.supabase_admin", sa
+                ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
                 unittest.mock.patch.object(
                     r.Course, "get_lo_ids_for_class", return_value=["lo-1", "lo-2"]
