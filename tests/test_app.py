@@ -818,14 +818,14 @@ class TestRequestCacheMemoization(unittest.TestCase):
         return sa, call_count
 
     def test_class_instructor_id_memoized(self):
-        from app import routes as r
         sa, calls = self._patch_supabase_admin({
             "classes": [{"instructor_id": "u1"}],
         })
+        from app.helpers import class_access
         with self.app.test_request_context("/"):
-            with unittest.mock.patch.object(r, "supabase_admin", sa):
-                a = r._class_instructor_id("c1")
-                b = r._class_instructor_id("c1")
+            with unittest.mock.patch("app.helpers.class_access.supabase_admin", sa):
+                a = class_access._class_instructor_id("c1")
+                b = class_access._class_instructor_id("c1")
                 self.assertEqual(a, "u1")
                 self.assertEqual(b, "u1")
                 self.assertEqual(calls["total"], 1)
@@ -838,10 +838,11 @@ class TestRequestCacheMemoization(unittest.TestCase):
             sa, _calls = self._patch_supabase_admin({
                 "classes": [{"instructor_id": raw}],
             })
+            from app.helpers import class_access
             with self.app.test_request_context("/"):
-                with unittest.mock.patch.object(r, "supabase_admin", sa):
+                with unittest.mock.patch("app.helpers.class_access.supabase_admin", sa):
                     session["user_id"] = "u1"
-                    self.assertIsNone(r._class_instructor_id("c1"))
+                    self.assertIsNone(class_access._class_instructor_id("c1"))
                     self.assertFalse(r._instructor_owns_class("c1"))
 
     def test_assignment_belongs_to_class_memoized(self):
@@ -850,7 +851,7 @@ class TestRequestCacheMemoization(unittest.TestCase):
             "assignments": [{"id": "a1"}],
         })
         with self.app.test_request_context("/"):
-            with unittest.mock.patch.object(r, "supabase_admin", sa):
+            with unittest.mock.patch("app.helpers.class_access.supabase_admin", sa):
                 self.assertTrue(r._assignment_belongs_to_class("c1", "a1"))
                 self.assertTrue(r._assignment_belongs_to_class("c1", "a1"))
                 self.assertEqual(calls["total"], 1)
@@ -5117,6 +5118,7 @@ class TestStudentEmailMatch(unittest.TestCase):
         )
         sa.table.return_value = query
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.class_access.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=[]):
             if json_body is None:
@@ -6635,6 +6637,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
                  patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.helpers.history_packet.supabase_admin", admin), \
                  patch("app.helpers.class_data.supabase_admin", admin), \
+                 patch("app.helpers.class_access.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 rendered = student_history_print("c1")
         if isinstance(rendered, tuple):
@@ -6935,6 +6938,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             with patch("app.routes.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.helpers.class_data.supabase_admin", admin), \
+                 patch("app.helpers.class_access.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 single = student_history("c1", "s-adams")
         with app.test_request_context("/class/c1/student-history/print"):
@@ -6944,6 +6948,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
                  patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.helpers.history_packet.supabase_admin", admin), \
                  patch("app.helpers.class_data.supabase_admin", admin), \
+                 patch("app.helpers.class_access.supabase_admin", admin), \
                  patch("app.models.supabase_admin", admin):
                 batch = student_history_print("c1")
         single_table = self._print_table(single)
@@ -8164,8 +8169,8 @@ class TestClassDeleteRoutes(unittest.TestCase):
 
 class TestAttachedObjectives(unittest.TestCase):
     def _clear_cache(self):
-        from app import routes as r
-        r._request_cache().clear()
+        from app.helpers.request_cache import _request_cache
+        _request_cache().clear()
 
     def _passing(self, lo_id):
         return [
@@ -8379,6 +8384,7 @@ class TestUpdateAssignmentDetach(unittest.TestCase):
                     "app.helpers.assignment_rows.supabase_admin", sa
                 ), \
                 unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.class_access.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
                 unittest.mock.patch.object(
                     r.Course, "get_lo_ids_for_class", return_value=["lo-1", "lo-2"]
@@ -8765,8 +8771,8 @@ class TestClassArchiveExport(unittest.TestCase):
     ASG2 = "22222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
     def _clear_attached_cache(self):
-        from app import routes as routes_module
-        routes_module._request_cache().pop(("_attached_objective_ids", "c-archive"), None)
+        from app.helpers.request_cache import _request_cache
+        _request_cache().pop(("_attached_objective_ids", "c-archive"), None)
 
     def _class_data(self):
         def marks(lo_id, count):
@@ -9382,6 +9388,7 @@ class TestClassArchiveRoute(unittest.TestCase):
         headers = {"X-CSRF-Token": "test-csrf"} if send_csrf else {}
         patches = [
             unittest.mock.patch.object(r, "supabase_admin", admin),
+            unittest.mock.patch("app.helpers.class_access.supabase_admin", admin),
             unittest.mock.patch.object(storage, "supabase_admin", admin),
             unittest.mock.patch("app.helpers.archive_export.build_class_archive_zip", side_effect=build_zip),
             unittest.mock.patch("app.helpers.archive_snapshot.build_class_snapshot", side_effect=build_snapshot),
@@ -12312,6 +12319,7 @@ class TestClassDetailReads(unittest.TestCase):
                     unittest.mock.patch.object(models, "supabase_admin", admin), \
                     unittest.mock.patch("app.helpers.class_progress.supabase_admin", admin), \
                     unittest.mock.patch("app.helpers.class_data.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_access.supabase_admin", admin), \
                     unittest.mock.patch.object(r, "local_today", return_value=self.TODAY):
                 response = client.get("/class/%s" % class_id)
         finally:
@@ -12644,7 +12652,8 @@ class TestAssignmentsPageReads(unittest.TestCase):
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
                     unittest.mock.patch.object(models, "supabase_admin", admin), \
                     unittest.mock.patch("app.helpers.class_progress.supabase_admin", admin), \
-                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin):
+                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_access.supabase_admin", admin):
                 response = client.get("/class/%s/assignments" % class_id)
         finally:
             template_rendered.disconnect(grab, app)
@@ -12950,7 +12959,8 @@ class TestUploadPageReads(unittest.TestCase):
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
                     unittest.mock.patch.object(models, "supabase_admin", admin), \
-                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin):
+                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_access.supabase_admin", admin):
                 response = client.get("/class/%s/update_grade" % class_id)
         finally:
             template_rendered.disconnect(grab, app)
@@ -13238,7 +13248,8 @@ class TestSpeedGraderReads(unittest.TestCase):
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
                     unittest.mock.patch.object(models, "supabase_admin", admin), \
                     unittest.mock.patch("app.helpers.free_passes.supabase_admin", admin), \
-                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin):
+                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_access.supabase_admin", admin):
                 response = client.get("/class/%s/speed_grader" % class_id)
         finally:
             template_rendered.disconnect(grab, app)
