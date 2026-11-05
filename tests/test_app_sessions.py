@@ -516,7 +516,7 @@ class TestLoginSessionRow(unittest.TestCase):
 
 class TestAddClassProfile(unittest.TestCase):
     def test_add_class_does_not_write_profiles(self):
-        from app import routes
+        from app.routes import classes
         seen = []
 
         def table(name):
@@ -539,12 +539,12 @@ class TestAddClassProfile(unittest.TestCase):
             session["user_id"] = "user-1"
             session["role"] = "instructor"
             session["create_class_token"] = "profile-skip"
-            with patch("app.routes.supabase_admin") as admin:
+            with patch("app.routes.classes.supabase_admin") as admin:
                 admin.table.side_effect = table
-                result = routes.add_class()
+                result = classes.add_class()
         self.assertEqual(result.status_code, 302)
         self.assertNotIn("profiles", seen)
-        self.assertFalse(hasattr(routes, "ensure_profile_exists"))
+        self.assertFalse(hasattr(classes, "ensure_profile_exists"))
 
 
 class TestLogoutMarkup(unittest.TestCase):

@@ -1542,7 +1542,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
             )
 
     def _post_single_email(self, payload, *, owns_class=True, send_result=(True, "")):
-        from app import routes as r
+        from app.routes import class_email as r
         sa = _filter_client(self.store)
         send_mock = unittest.mock.MagicMock(return_value=send_result)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
@@ -1558,7 +1558,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         return rv, send_mock
 
     def _post_bulk_email(self, payload, *, owns_class=True, send_result=(True, "")):
-        from app import routes as r
+        from app.routes import class_email as r
         sa = _filter_client(self.store)
         send_mock = unittest.mock.MagicMock(return_value=send_result)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
@@ -4439,7 +4439,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_report_email_subject_255_accepted(self):
         """Exactly 255-char subject must pass the length check."""
-        from app import routes as r
+        from app.routes import class_email as r
         sa = self._report_email_sa_mock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -4461,7 +4461,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_report_email_subject_256_rejected(self):
         """256-char subject must be rejected with 400; _send_via_resend must not be called."""
-        from app import routes as r
+        from app.routes import class_email as r
         send_mock = unittest.mock.MagicMock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -4480,7 +4480,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_report_email_body_5000_accepted(self):
         """Exactly 5 000-char body must pass the length check."""
-        from app import routes as r
+        from app.routes import class_email as r
         sa = self._report_email_sa_mock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -4502,7 +4502,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_report_email_body_5001_rejected(self):
         """5 001-char body must be rejected with 400; _send_via_resend must not be called."""
-        from app import routes as r
+        from app.routes import class_email as r
         send_mock = unittest.mock.MagicMock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -5794,12 +5794,12 @@ class TestLearningObjectivesProgressColumn(unittest.TestCase):
     def _render(self, pool, grades):
         from flask import session
         from unittest.mock import patch
-        from app.routes import class_learning_objectives_summary
+        from app.routes.classes import class_learning_objectives_summary
         app = create_app()
         with app.test_request_context("/class/c1/learning-objectives"):
             session["user_id"] = "u1"
             session["role"] = "instructor"
-            with patch("app.routes._instructor_owns_class", return_value=True), \
+            with patch("app.routes.classes._instructor_owns_class", return_value=True), \
                  patch("app.models.Course.get_full_class_data", return_value=self._class_data(pool, grades)):
                 return class_learning_objectives_summary("c1")
 
@@ -5854,7 +5854,7 @@ class TestLoCellStatus(unittest.TestCase):
     def test_summary_renders_check_and_yellow_fraction(self):
         from flask import session
         from unittest.mock import patch
-        from app.routes import class_learning_objectives_summary
+        from app.routes.classes import class_learning_objectives_summary
         import re
         pool = [
             {"id": "lo-0", "name": "T0", "vendor_code": "T0", "required_ms": 2},
@@ -5883,7 +5883,7 @@ class TestLoCellStatus(unittest.TestCase):
         with app.test_request_context("/class/c1/learning-objectives"):
             session["user_id"] = "u1"
             session["role"] = "instructor"
-            with patch("app.routes._instructor_owns_class", return_value=True), \
+            with patch("app.routes.classes._instructor_owns_class", return_value=True), \
                  patch("app.models.Course.get_full_class_data", return_value=class_data):
                 html = class_learning_objectives_summary("c1")
         self.assertIn(">passed</span>", html)
@@ -5895,7 +5895,7 @@ class TestLoCellStatus(unittest.TestCase):
     def test_helper_text_matches_the_page(self):
         from flask import session
         from unittest.mock import patch
-        from app.routes import class_learning_objectives_summary
+        from app.routes.classes import class_learning_objectives_summary
         from app.helpers.lo_progress import (
             learning_objective_cell_text,
             learning_objective_progress_text,
@@ -5927,7 +5927,7 @@ class TestLoCellStatus(unittest.TestCase):
         with app.test_request_context("/class/c1/learning-objectives"):
             session["user_id"] = "u1"
             session["role"] = "instructor"
-            with patch("app.routes._instructor_owns_class", return_value=True), \
+            with patch("app.routes.classes._instructor_owns_class", return_value=True), \
                  patch("app.models.Course.get_full_class_data", return_value=class_data):
                 html = class_learning_objectives_summary("c1")
         self.assertEqual(learning_objective_cell_text(2, 2), "✓")
@@ -5956,7 +5956,7 @@ class TestClassSectionNumber(unittest.TestCase):
     def _add(self, section, token, days="MW"):
         from flask import session
         from unittest.mock import patch
-        from app.routes import add_class
+        from app.routes.classes import add_class
         saved, insert = self._capture_insert()
         app = create_app()
         data = {
@@ -5971,7 +5971,7 @@ class TestClassSectionNumber(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             session["create_class_token"] = token
-            with patch("app.routes.supabase_admin") as sb:
+            with patch("app.routes.classes.supabase_admin") as sb:
                 sb.table.return_value.insert.side_effect = insert
                 result = add_class()
         return result, saved.get("payload")
@@ -5979,7 +5979,7 @@ class TestClassSectionNumber(unittest.TestCase):
     def _copy(self, section, token, days="MW"):
         from flask import session
         from unittest.mock import MagicMock, patch
-        from app.routes import copy_class
+        from app.routes.classes import copy_class
         saved, insert = self._capture_insert()
         source = MagicMock()
         source.data = [{
@@ -6006,9 +6006,9 @@ class TestClassSectionNumber(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             session["copy_class_token"] = token
-            with patch("app.routes._instructor_owns_class", return_value=True), \
-                 patch("app.routes._select_class_pool_learning_objectives", return_value=lo_resp), \
-                 patch("app.routes.supabase_admin") as sb:
+            with patch("app.routes.classes._instructor_owns_class", return_value=True), \
+                 patch("app.routes.classes._select_class_pool_learning_objectives", return_value=lo_resp), \
+                 patch("app.routes.classes.supabase_admin") as sb:
                 sb.table.return_value = classes
                 result = copy_class("c1")
         return result, saved.get("payload")
@@ -6105,7 +6105,7 @@ class TestClassSectionNumber(unittest.TestCase):
     def test_create_schema_error_is_one_insert(self):
         from flask import session
         from unittest.mock import MagicMock, patch
-        from app.routes import add_class
+        from app.routes.classes import add_class
         calls = {"n": 0}
 
         def insert(_payload):
@@ -6131,7 +6131,7 @@ class TestClassSectionNumber(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             session["create_class_token"] = "schema-create"
-            with patch("app.routes.supabase_admin") as sb:
+            with patch("app.routes.classes.supabase_admin") as sb:
                 sb.table.return_value.insert.side_effect = insert
                 result = add_class()
         self.assertEqual(result[1], 500)
@@ -6141,7 +6141,7 @@ class TestClassSectionNumber(unittest.TestCase):
     def test_copy_schema_error_is_one_insert(self):
         from flask import session
         from unittest.mock import MagicMock, patch
-        from app.routes import copy_class
+        from app.routes.classes import copy_class
         calls = {"n": 0}
         saved = {}
         source = MagicMock()
@@ -6182,9 +6182,9 @@ class TestClassSectionNumber(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             session["copy_class_token"] = "schema-copy"
-            with patch("app.routes._instructor_owns_class", return_value=True), \
-                 patch("app.routes._select_class_pool_learning_objectives", return_value=lo_resp), \
-                 patch("app.routes.supabase_admin") as sb:
+            with patch("app.routes.classes._instructor_owns_class", return_value=True), \
+                 patch("app.routes.classes._select_class_pool_learning_objectives", return_value=lo_resp), \
+                 patch("app.routes.classes.supabase_admin") as sb:
                 sb.table.return_value = classes
                 result = copy_class("c1")
         self.assertEqual(result[1], 500)
@@ -7071,7 +7071,7 @@ class TestClassUpdate(unittest.TestCase):
     def _update(self, data, owns=True, execute_error=None):
         from flask import session
         from unittest.mock import MagicMock, patch
-        from app.routes import update_class
+        from app.routes.classes import update_class
         saved = {}
         tables = []
         execute_calls = {"n": 0}
@@ -7099,8 +7099,8 @@ class TestClassUpdate(unittest.TestCase):
         with app.test_request_context("/class/c1/update", method="POST", data=data):
             session["user_id"] = "u1"
             session["role"] = "instructor"
-            with patch("app.routes._instructor_owns_class", return_value=owns), \
-                 patch("app.routes.supabase_admin") as sb:
+            with patch("app.routes.classes._instructor_owns_class", return_value=owns), \
+                 patch("app.routes.classes.supabase_admin") as sb:
                 sb.table.side_effect = table
                 result = update_class("c1")
         saved["execute_calls"] = execute_calls["n"]
@@ -7940,7 +7940,7 @@ class TestClassDeleteRoutes(unittest.TestCase):
         return client
 
     def _post(self, path, rows_for, owns=True):
-        from app import routes
+        from app.routes import classes
         from app.routes import assignments
         from tests.patching import patch_attr
         log = []
@@ -7950,11 +7950,11 @@ class TestClassDeleteRoutes(unittest.TestCase):
 
         client = self._client()
         sa = unittest.mock.MagicMock()
-        with patch_attr((routes, assignments), "supabase_admin", sa), \
+        with patch_attr((classes, assignments), "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.class_removal.supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
                 patch_attr(
-                    (routes, assignments),
+                    (classes, assignments),
                     "_instructor_owns_class",
                     unittest.mock.Mock(return_value=owns),
                 ):
@@ -8844,7 +8844,7 @@ class TestClassArchiveExport(unittest.TestCase):
         from app.helpers.archive_export import build_class_archive_zip
         from app.models import Course, Homework
         from flask import session
-        from app.routes import class_learning_objectives_summary
+        from app.routes.classes import class_learning_objectives_summary
 
         class _Links:
             def __init__(self, rows):
@@ -8918,7 +8918,7 @@ class TestClassArchiveExport(unittest.TestCase):
                 with app.test_request_context("/class/c-archive/learning-objectives"):
                     session["user_id"] = "inst"
                     session["role"] = "instructor"
-                    with unittest.mock.patch("app.routes._instructor_owns_class", return_value=True):
+                    with unittest.mock.patch("app.routes.classes._instructor_owns_class", return_value=True):
                         html = class_learning_objectives_summary("c-archive")
         finally:
             self._clear_attached_cache()
@@ -11676,7 +11676,7 @@ class TestRevisionReminders(unittest.TestCase):
         )
 
     def test_preview_returns_one_sample_and_escapes_it(self):
-        from app import routes as r
+        from app.routes import class_email as r
         from app.helpers.report_email import _report_body_html
         partition = self._partition()
         partition["recipients"][0]["name"] = "Lee, <b>x</b>"
@@ -11711,7 +11711,7 @@ class TestRevisionReminders(unittest.TestCase):
         sender.assert_not_called()
 
     def test_send_ignores_a_body_list_and_pauses_between_sends(self):
-        from app import routes as r
+        from app.routes import class_email as r
         inserted = []
         client = self._client()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
@@ -11737,7 +11737,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual(sender.call_args.kwargs["sender_name"], "Ada Lovelace")
 
     def test_second_send_skips_students_already_reminded(self):
-        from app import routes as r
+        from app.routes import class_email as r
         partition = self._partition()
         partition["already_reminded"] = partition["already_reminded"] + [
             {"student_id": "stu-1", "name": "Lee, Ana"},
@@ -11760,7 +11760,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual(rv.get_json()["counts"]["skipped"], 3)
 
     def test_one_failure_does_not_stop_the_rest_or_record_the_failure(self):
-        from app import routes as r
+        from app.routes import class_email as r
         inserted = []
 
         def send(to_email, subject, body_text, *, sender_name, log_provider_body=True):
@@ -11787,7 +11787,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual(inserted, ["stu-2"])
 
     def test_budget_marks_the_rest_not_attempted(self):
-        from app import routes as r
+        from app.routes import class_email as r
         from app.helpers.revision_mail import _REVISION_EMAIL_BUDGET_SECONDS
         clock = {"now": 0.0}
 
@@ -11833,7 +11833,7 @@ class TestRevisionReminders(unittest.TestCase):
         )
 
     def test_insert_failure_is_sent_not_recorded(self):
-        from app import routes as r
+        from app.routes import class_email as r
         client = self._client()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=self._partition()), \
@@ -11907,7 +11907,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertNotIn("reply_to", posted.call_args.kwargs["json"])
 
     def test_non_owner_and_missing_csrf_are_forbidden(self):
-        from app import routes as r
+        from app.routes import class_email as r
         client = self._client()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=False):
             owned = client.post(
@@ -11920,7 +11920,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual(missing.status_code, 403)
 
     def test_missing_email_config_sends_nothing(self):
-        from app import routes as r
+        from app.routes import class_email as r
         client = self._client()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch("app.helpers.revision_mail._send_via_resend") as sender, \
@@ -11934,7 +11934,7 @@ class TestRevisionReminders(unittest.TestCase):
         sender.assert_not_called()
 
     def _page(self, rows, students, reminder_rows=None, reminder_error=False):
-        from app import routes as r
+        from app.routes import classes as r
         from datetime import date
         calls = []
 
@@ -11988,7 +11988,7 @@ class TestRevisionReminders(unittest.TestCase):
         return rv, calls
 
     def test_counter_matches_preview_recipients(self):
-        from app import routes as r
+        from app.routes import class_email as r
         from datetime import date
         rows = [
             _revision_row(
@@ -12092,10 +12092,10 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertIn("location.reload()", src)
         self.assertIn(
             "Close this window and choose Email students again to send the rest.",
-            open(os.path.join(os.path.dirname(__file__), "..", "app", os.path.join("routes", "__init__.py")), encoding="utf-8").read(),
+            open(os.path.join(os.path.dirname(__file__), "..", "app", "routes", "class_email.py"), encoding="utf-8").read(),
         )
         self.assertNotIn("_REVISION_EMAIL_CAP", open(
-            os.path.join(os.path.dirname(__file__), "..", "app", os.path.join("routes", "__init__.py")),
+            os.path.join(os.path.dirname(__file__), "..", "app", "routes", "class_email.py"),
             encoding="utf-8",
         ).read())
         self.assertNotIn("over_limit", src)
@@ -12335,7 +12335,7 @@ class TestClassDetailReads(unittest.TestCase):
     def _page(self, store, class_id):
         from flask import template_rendered
         from app import models
-        from app import routes as r
+        from app.routes import classes as r
         calls, selects = [], []
         admin = _class_detail_client(store, calls, selects)
         app = create_app()

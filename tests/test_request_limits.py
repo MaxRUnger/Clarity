@@ -383,7 +383,7 @@ class TestSensitiveLogs(unittest.TestCase):
         self.assertNotIn("@", text)
 
     def test_report_send_log_names_the_actor_and_class(self):
-        from app import routes as r
+        from app.routes import class_email as r
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()
@@ -443,7 +443,7 @@ class TestSensitiveLogs(unittest.TestCase):
         self.assertNotIn("@", text)
 
     def test_revision_send_log_names_the_actor_and_class(self):
-        from app import routes as r
+        from app.routes import class_email as r
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()

@@ -150,7 +150,7 @@ class TestEmailRelay(unittest.TestCase):
         )
         admin = serving_admin()
         self.route_admin = unittest.mock.patch(
-            "app.routes.supabase_admin", admin
+            "app.routes.class_email.supabase_admin", admin
         )
         self.session_admin = unittest.mock.patch(
             "app.helpers.authentication.supabase_admin", admin
@@ -200,7 +200,7 @@ class TestEmailRelay(unittest.TestCase):
         }
 
     def _post_single(self, db, body="Hello Ana,", subject="Progress", extra=None):
-        from app import routes as r
+        from app.routes import class_email as r
         payload = {"subject": subject, "body": body}
         if extra:
             payload.update(extra)
@@ -280,7 +280,7 @@ class TestEmailRelay(unittest.TestCase):
         sender.assert_not_called()
 
     def test_bulk_call_of_101_students_sends_nothing(self):
-        from app import routes as r
+        from app.routes import class_email as r
         reports = []
         students = []
         for index in range(101):
@@ -396,7 +396,7 @@ class TestEmailRelay(unittest.TestCase):
         sender.assert_not_called()
 
     def test_revision_send_ignores_a_posted_recipient_and_records_the_reminder(self):
-        from app import routes as r
+        from app.routes import class_email as r
         partition = {
             "due": "2026-10-24",
             "recipients": [{
@@ -514,7 +514,7 @@ class TestEmailRelay(unittest.TestCase):
         return admin, calls
 
     def test_bulk_of_40_reads_email_sends_twice(self):
-        from app import routes as r
+        from app.routes import class_email as r
         students = []
         reports = []
         for index in range(40):
