@@ -152,10 +152,18 @@ def create_app(config_class=Config):
 
     @app.after_request
     def add_security_headers(resp):
-        # CSP is in report-only mode while the codebase still ships inline
-        # event handlers and CDN scripts; flipping to enforcing mode requires
-        # auditing every `onclick=` / inline `<script>` first.
-        resp.headers.setdefault("Content-Security-Policy-Report-Only", "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; img-src 'self' https: data: blob:;")
+        # Enforced policy blocks plugins, base-tag hijacks, framing, and
+        # cross-origin form posts. Inline scripts and event handlers still
+        # run. The report-only policy is the strict script and connect
+        # policy; the browser logs violations and still runs the page.
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+        )
+        resp.headers.setdefault(
+            "Content-Security-Policy-Report-Only",
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'",
+        )
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
