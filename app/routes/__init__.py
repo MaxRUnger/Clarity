@@ -26,7 +26,6 @@ from datetime import date
 from typing import Any, Dict, List, Tuple
 from urllib.parse import quote
 from flask import (  # type: ignore
-    Blueprint,
     render_template,
     request,
     jsonify,
@@ -218,7 +217,9 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-main_bp = Blueprint('main', __name__, template_folder='templates')
+from app.routes.blueprint import main_bp
+
+ROUTE_MODULES = ()
 
 _INSTRUCTOR_HOME = "/instructor/dashboard"
 

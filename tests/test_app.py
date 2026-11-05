@@ -12085,10 +12085,10 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertIn("location.reload()", src)
         self.assertIn(
             "Close this window and choose Email students again to send the rest.",
-            open(os.path.join(os.path.dirname(__file__), "..", "app", "routes.py"), encoding="utf-8").read(),
+            open(os.path.join(os.path.dirname(__file__), "..", "app", os.path.join("routes", "__init__.py")), encoding="utf-8").read(),
         )
         self.assertNotIn("_REVISION_EMAIL_CAP", open(
-            os.path.join(os.path.dirname(__file__), "..", "app", "routes.py"),
+            os.path.join(os.path.dirname(__file__), "..", "app", os.path.join("routes", "__init__.py")),
             encoding="utf-8",
         ).read())
         self.assertNotIn("over_limit", src)
