@@ -5,61 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% block title %}Project Clarity{% endblock %}</title>
-    <script>
-        // CSRF auto-inject. Mirrors the wrapper in app_base.html so pages that
-        // extend auth_base.html (login, signup, instructor_select_class) can
-        // POST to state-changing endpoints (e.g. /api/set-instructor-mode for
-        // the Mark / Shelbi toggle) without the before_request CSRF check
-        // returning 403 and silently breaking the UI.
-        (function setupCsrfFetchInterceptor() {
-            function csrfToken() {
-                var m = document.querySelector('meta[name="csrf-token"]');
-                return m ? String(m.getAttribute('content') || '') : '';
-            }
-
-            function ensureCsrfOnForm(form) {
-                if (!form || form.tagName !== 'FORM') return;
-                var method = String(form.getAttribute('method') || 'GET').toUpperCase();
-                if (['POST', 'PUT', 'PATCH', 'DELETE'].indexOf(method) < 0) return;
-                if (form.querySelector('input[name="csrf_token"]')) return;
-                var token = csrfToken();
-                if (!token) return;
-                var hidden = document.createElement('input');
-                hidden.type = 'hidden';
-                hidden.name = 'csrf_token';
-                hidden.value = token;
-                form.appendChild(hidden);
-            }
-
-            var originalFetch = window.fetch;
-            window.fetch = function (input, init) {
-                init = init || {};
-                init.headers = init.headers || {};
-                var token = csrfToken();
-                var method = String((init.method || 'GET')).toUpperCase();
-                if (token && ['POST', 'PUT', 'PATCH', 'DELETE'].indexOf(method) >= 0) {
-                    if (init.headers instanceof Headers) {
-                        if (!init.headers.has('X-CSRF-Token')) init.headers.set('X-CSRF-Token', token);
-                    } else if (!init.headers['X-CSRF-Token']) {
-                        init.headers['X-CSRF-Token'] = token;
-                    }
-                }
-                return originalFetch(input, init);
-            };
-
-            // Native form.submit() does not fire the submit event, so also
-            // inject CSRF for programmatic submits.
-            var originalFormSubmit = HTMLFormElement.prototype.submit;
-            HTMLFormElement.prototype.submit = function () {
-                ensureCsrfOnForm(this);
-                return originalFormSubmit.call(this);
-            };
-
-            document.addEventListener('submit', function (evt) {
-                ensureCsrfOnForm(evt.target);
-            }, true);
-        })();
-    </script>
+    <script src="{{ url_for('static', filename='js/auth_csrf.js') }}?v=1"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}?v=1">
 </head>
 <body class="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col transition-colors">
@@ -81,21 +27,7 @@
 
     {% block content %}{% endblock %}
 
-    <script>
-        (function() {
-            const stored = localStorage.getItem('theme');
-            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            if (stored === 'dark' || (!stored && prefersDark)) {
-                document.documentElement.classList.add('dark');
-            } else {
-                document.documentElement.classList.remove('dark');
-            }
-            document.getElementById('themeToggle')?.addEventListener('click', function() {
-                document.documentElement.classList.toggle('dark');
-                localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
-            });
-        })();
-    </script>
+    <script src="{{ url_for('static', filename='js/auth_theme.js') }}?v=1"></script>
     {% block scripts %}{% endblock %}
     {% if session.get('user_id') %}
     <script type="application/json" id="sessionTimeoutConfig">{{ session_timeout|tojson }}</script>
