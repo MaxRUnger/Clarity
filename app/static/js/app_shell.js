@@ -242,3 +242,32 @@ document.addEventListener('click', function (event) {
   copyEmailFromBtn(btn);
   event.preventDefault();
 }, true);
+document.addEventListener('click', function (event) {
+  var btn = event.target && event.target.closest ? event.target.closest('[data-print]') : null;
+  if (!btn) return;
+  window.print();
+});
+
+(function () {
+  if (!document.querySelector('[data-auto-print]')) return;
+  var params = new URLSearchParams(window.location.search);
+  if (params.get("print") !== "1") {
+    return;
+  }
+  window.addEventListener("load", function () {
+    window.setTimeout(function () {
+      window.print();
+      params.delete("print");
+      var query = params.toString();
+      var next = window.location.pathname + (query ? "?" + query : "") + window.location.hash;
+      history.replaceState(null, "", next);
+    }, 250);
+  });
+})();
+
+(function () {
+  if (!window.ClarityUI || typeof window.ClarityUI.applyInstructorModeVisibility !== 'function') return;
+  var modeEl = document.getElementById('instructorModeJson');
+  if (!modeEl) return;
+  window.ClarityUI.applyInstructorModeVisibility(JSON.parse(modeEl.textContent));
+})();

@@ -13,7 +13,7 @@
       <p class="hidden print:block text-sm text-slate-500 mt-1">{{ class_name }}</p>
     </div>
     <div class="flex items-center gap-2 print:hidden">
-      <button type="button" id="printStudentHistoryBtn"
+      <button type="button" data-print
         class="flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
@@ -117,7 +117,7 @@
   'instructor_title': instructor_title,
   'objectives': learning_objectives
 } | tojson }}</script>
-<script src="{{ url_for('static', filename='js/student_history.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='js/student_history.js') }}?v=2"></script>
 
 {{ mastery_badge_styles() }}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/student_history_table.css') }}">

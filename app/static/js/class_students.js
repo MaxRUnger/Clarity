@@ -31,9 +31,6 @@ function handleSearch() {
   _runHandleSearch();
 }
 
-document.getElementById('printStudentSheetsBtn').addEventListener('click', function () {
-  window.print();
-});
 document.getElementById('searchInput').addEventListener('input', function () {
   handleSearch();
 });

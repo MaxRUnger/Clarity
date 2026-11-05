@@ -10,7 +10,7 @@
       <p class="text-slate-500 dark:text-slate-400 mt-1">{{ class_display_title(class_name, class_days, class_section) }} · View individual student progress</p>
     </div>
     <div class="flex items-center gap-2 print:hidden">
-      <button type="button" id="printStudentSheetsBtn"
+      <button type="button" data-print
         class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
@@ -90,7 +90,7 @@
 </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/class_students.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='js/class_students.js') }}?v=2"></script>
 {{ mastery_badge_styles() }}
 {{ student_progress_print_styles() }}
 <style>

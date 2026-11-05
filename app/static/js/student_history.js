@@ -83,9 +83,6 @@ function emailStudentHistoryReport(btnEl) {
     });
 }
 
-document.getElementById('printStudentHistoryBtn').addEventListener('click', function () {
-  window.print();
-});
 var emailHistoryBtn = document.getElementById('emailStudentHistoryBtn');
 if (emailHistoryBtn) {
   emailHistoryBtn.addEventListener('click', function () {

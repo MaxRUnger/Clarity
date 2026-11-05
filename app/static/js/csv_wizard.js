@@ -1,3 +1,10 @@
+(function () {
+  var classEl = document.getElementById('classIdJson');
+  window.CLASS_ID = JSON.parse(classEl.textContent);
+  // Pass assignment LO data from server to JS
+  var assignmentEl = document.getElementById('assignmentsJson');
+  window.ASSIGNMENTS_DATA = JSON.parse(assignmentEl.textContent);
+})();
 /**
  * Grade Sheet CSV Upload
  * Step order: Upload -> Map Assignment -> Review & Edit -> Confirm
@@ -1298,4 +1305,28 @@ document.addEventListener('input', function (event) {
   if (el.classList.contains('grade-input-hw')) {
     updateExtractedHomeworkPct(Number(el.getAttribute('data-row')), el.value);
   }
+});
+document.getElementById('csvInput').addEventListener('change', function () {
+  handleFileSelect(this);
+});
+document.getElementById('nextBtn1').addEventListener('click', function () {
+  goToStep(2);
+});
+document.getElementById('assignmentSelect').addEventListener('change', function () {
+  onAssignmentSelected();
+});
+document.getElementById('mapBackBtn').addEventListener('click', function () {
+  goToStep(1);
+});
+document.getElementById('nextBtn2').addEventListener('click', function () {
+  continueFromMapStep();
+});
+document.getElementById('reviewBackBtn').addEventListener('click', function () {
+  goToStep(2);
+});
+document.getElementById('reviewContinueBtn').addEventListener('click', function () {
+  continueFromReviewStep();
+});
+document.getElementById('confirmBackBtn').addEventListener('click', function () {
+  goToStep(3);
 });

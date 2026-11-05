@@ -3603,7 +3603,7 @@ class TestCsvUploadMarkup(unittest.TestCase):
         self.assertIn('id="loCsvChooseBtn"', assignments)
         self.assertIn('id="loCsvTemplateCount"', assignments)
         script_path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "static", "js", "class_assignments_lo_csv.js"
+            os.path.dirname(__file__), "..", "app", "static", "js", "class_assignments.js"
         )
         with open(script_path, encoding="utf-8") as handle:
             lo_csv = handle.read()
@@ -3630,7 +3630,7 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         self.assertNotIn("onclick", tag.lower())
 
     def test_assignments_calls_shared_scroll_helpers(self):
-        src = self._read("app", "static", "js", "class_assignments_lo_csv.js")
+        src = self._read("app", "static", "js", "class_assignments.js")
         self.assertIn("ClarityUI.lockPageScroll()", src)
         self.assertIn("ClarityUI.unlockPageScroll()", src)
 
@@ -3730,9 +3730,10 @@ class TestPrintClassSheet(unittest.TestCase):
 
     def test_summary_auto_print_is_only_for_print_param(self):
         src = self._template("class_learning_objectives_summary.html")
+        self.assertIn("data-auto-print", src)
         script_path = os.path.join(
             os.path.dirname(__file__), "..", "app", "static", "js",
-            "class_learning_objectives_summary.js",
+            "app_shell.js",
         )
         with open(script_path, encoding="utf-8") as fh:
             script = fh.read()

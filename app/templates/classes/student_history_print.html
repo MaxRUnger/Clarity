@@ -8,7 +8,7 @@
     Back to Reports
   </a>
 </div>
-<div class="history-batch">
+<div class="history-batch" data-auto-print>
   {% for sheet in sheets %}
   <section class="history-batch-student">
     {% with student_name=sheet.student_name, class_name=class_name, learning_objectives=sheet.learning_objectives, history_assignments=sheet.history_assignments %}
@@ -17,7 +17,6 @@
   </section>
   {% endfor %}
 </div>
-<script src="{{ url_for('static', filename='js/student_history_print.js') }}?v=1"></script>
 <style>
 .history-batch-student {
   background: #fff;

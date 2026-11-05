@@ -636,7 +636,8 @@ class TestStudentHistoryOrder(unittest.TestCase):
         self.assertIn("print-color-adjust: exact", batch)
         self.assertIn("break-after: page", batch)
         self.assertIn("break-inside: avoid", batch)
-        script_path = os.path.join(root, "..", "static", "js", "student_history_print.js")
+        self.assertIn("data-auto-print", batch)
+        script_path = os.path.join(root, "..", "static", "js", "app_shell.js")
         with open(script_path, encoding="utf-8") as handle:
             print_script = handle.read()
         self.assertIn("}, 250);", print_script)
