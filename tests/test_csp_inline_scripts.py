@@ -204,3 +204,44 @@ class TestCspInlineScripts(unittest.TestCase):
                 if "src=" in opener:
                     continue
                 self.assertIn("application/json", opener, name)
+
+    def test_assignments_page_has_no_inline_script_and_keeps_script_order(self):
+        from flask import render_template
+        text = (ROOT / "app/templates/classes/class_assignments.html").read_text(encoding="utf-8")
+        self.assertIsNone(ON_ATTR.search(text))
+        for match in SCRIPT_OPEN.finditer(text):
+            attrs = match.group(1)
+            if "src=" in attrs:
+                continue
+            self.assertIn("application/json", attrs)
+        app = create_app()
+        with app.test_request_context():
+            session["user_id"] = "inst-1"
+            session["role"] = "instructor"
+            html = render_template(
+                "classes/class_assignments.html",
+                class_id="class-1",
+                class_name="Algebra",
+                assignments=[{
+                    "id": "asg-1",
+                    "name": "Quiz",
+                    "assignment_type": "exam",
+                    "homework_group": "HW",
+                    "assignment_objectives": [],
+                }],
+                all_los=[],
+                unattached_count=0,
+            )
+        class_json = html.find('id="classIdJson"')
+        page_js = html.find("js/class_assignments.js?v=1")
+        config = html.find('id="loCsvConfig"')
+        csv_js = html.find("js/class_assignments_lo_csv.js?v=1")
+        mode_json = html.find('id="instructorModeJson"')
+        mode_js = html.find("js/class_assignments_mode.js?v=1")
+        shell = html.find("js/app_shell.js")
+        self.assertLess(class_json, page_js)
+        self.assertLess(page_js, config)
+        self.assertLess(config, csv_js)
+        self.assertLess(csv_js, mode_json)
+        self.assertLess(mode_json, mode_js)
+        self.assertLess(mode_js, shell)

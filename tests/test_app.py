@@ -2618,7 +2618,7 @@ class TestAttachedObjectives(unittest.TestCase):
 
     def test_save_confirms_only_when_removed_objectives_have_grades(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_assignments.html"
+            os.path.dirname(__file__), "..", "app", "static", "js", "class_assignments.js"
         )
         with open(path, encoding="utf-8") as handle:
             src = handle.read()
@@ -3602,7 +3602,12 @@ class TestCsvUploadMarkup(unittest.TestCase):
         self.assertIn('id="loCsvInput"', assignments)
         self.assertIn('id="loCsvChooseBtn"', assignments)
         self.assertIn('id="loCsvTemplateCount"', assignments)
-        self.assertIn("downloadLoCsvTemplate()", assignments)
+        script_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "class_assignments_lo_csv.js"
+        )
+        with open(script_path, encoding="utf-8") as handle:
+            lo_csv = handle.read()
+        self.assertIn("downloadLoCsvTemplate()", lo_csv)
 
 
 class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
@@ -3625,7 +3630,7 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         self.assertNotIn("onclick", tag.lower())
 
     def test_assignments_calls_shared_scroll_helpers(self):
-        src = self._read("app", "templates", "classes", "class_assignments.html")
+        src = self._read("app", "static", "js", "class_assignments_lo_csv.js")
         self.assertIn("ClarityUI.lockPageScroll()", src)
         self.assertIn("ClarityUI.unlockPageScroll()", src)
 
