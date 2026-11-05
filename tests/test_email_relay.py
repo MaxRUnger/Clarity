@@ -155,10 +155,15 @@ class TestEmailRelay(unittest.TestCase):
         self.session_admin = unittest.mock.patch(
             "app.helpers.authentication.supabase_admin", admin
         )
+        self.revision_admin = unittest.mock.patch(
+            "app.helpers.revision_mail.supabase_admin", admin
+        )
         self.route_admin.start()
         self.session_admin.start()
+        self.revision_admin.start()
 
     def tearDown(self):
+        self.revision_admin.stop()
         self.session_admin.stop()
         self.route_admin.stop()
 
@@ -203,6 +208,9 @@ class TestEmailRelay(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", admin), \
                 unittest.mock.patch(
                     "app.helpers.report_email.supabase_admin", admin
+                ), \
+                unittest.mock.patch(
+                    "app.helpers.revision_mail.supabase_admin", admin
                 ), \
                 unittest.mock.patch(
                     "app.helpers.authentication.supabase_admin", admin
@@ -409,11 +417,11 @@ class TestEmailRelay(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=partition), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
-                unittest.mock.patch.object(r, "_insert_reminder_rows", side_effect=lambda *args: inserted.append(args[1]["student_id"])), \
-                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
-                unittest.mock.patch.object(r, "_record_email_send"), \
-                unittest.mock.patch.object(r.time, "sleep"), \
-                unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")) as sender, \
+                unittest.mock.patch("app.helpers.revision_mail._insert_reminder_rows", side_effect=lambda *args: inserted.append(args[1]["student_id"])), \
+                unittest.mock.patch("app.helpers.revision_mail._email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch("app.helpers.revision_mail._record_email_send"), \
+                unittest.mock.patch("app.helpers.revision_mail.time.sleep"), \
+                unittest.mock.patch("app.helpers.revision_mail._send_via_resend", return_value=(True, "")) as sender, \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "reports@school.edu"}):
             response = self.client.post(
                 "/api/class/c1/revision-reminders/send",
@@ -532,6 +540,9 @@ class TestEmailRelay(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", admin), \
                 unittest.mock.patch(
                     "app.helpers.report_email.supabase_admin", admin
+                ), \
+                unittest.mock.patch(
+                    "app.helpers.revision_mail.supabase_admin", admin
                 ), \
                 unittest.mock.patch(
                     "app.helpers.authentication.supabase_admin", admin

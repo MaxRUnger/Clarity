@@ -1532,6 +1532,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         send_mock = unittest.mock.MagicMock(return_value=send_result)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.report_email.supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.revision_mail.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns_class), \
                 unittest.mock.patch.object(r, "_send_via_resend", send_mock):
             rv = self.client.post(
@@ -1547,6 +1548,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         send_mock = unittest.mock.MagicMock(return_value=send_result)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.report_email.supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.revision_mail.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns_class), \
                 unittest.mock.patch.object(r, "_send_via_resend", send_mock):
             rv = self.client.post(
@@ -4439,6 +4441,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.report_email.supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.revision_mail.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
@@ -4479,6 +4482,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.report_email.supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.revision_mail.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
@@ -11585,8 +11589,9 @@ class TestRevisionReminders(unittest.TestCase):
     def test_partition_keeps_only_unsent_items_due_in_three_days(self):
         from datetime import date
         from app import routes as r
+        from app.helpers.revision_text import _revision_message
         sent = {("stu-1", "a1", "lo-1"), ("stu-4", "a1", "lo-1")}
-        with unittest.mock.patch.object(r, "_load_sent_reminder_keys", return_value=sent):
+        with unittest.mock.patch("app.helpers.revision_mail._load_sent_reminder_keys", return_value=sent):
             part = r.revision_reminder_partition(
                 "c1",
                 date(2026, 10, 21),
@@ -11596,7 +11601,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual([row["student_id"] for row in part["recipients"]], ["stu-1"])
         objectives = part["recipients"][0]["assignments"][0]["objectives"]
         self.assertEqual([obj["learning_objective_id"] for obj in objectives], ["lo-2"])
-        body = r._revision_message(
+        body = _revision_message(
             part["recipients"][0], part["due"], "Algebra", "Professor Lovelace"
         )
         self.assertIn("Assignment: Quiz", body)
@@ -11611,8 +11616,9 @@ class TestRevisionReminders(unittest.TestCase):
     def test_signoff_greeting_and_from_header(self):
         from app import routes as r
         from app.helpers.report_email import _reports_from_header
-        self.assertEqual(r._revision_signoff("Lovelace, Ada"), "Ada Lovelace")
-        self.assertEqual(r._revision_signoff("Ada Lovelace"), "Ada Lovelace")
+        from app.helpers.revision_text import _revision_message, _revision_signoff
+        self.assertEqual(_revision_signoff("Lovelace, Ada"), "Ada Lovelace")
+        self.assertEqual(_revision_signoff("Ada Lovelace"), "Ada Lovelace")
         self.assertEqual(r.instructor_title("Lovelace, Ada"), "Professor Lovelace")
         self.assertEqual(r.instructor_title("Ada Lovelace"), "Professor Lovelace")
         self.assertEqual(r.instructor_title("brody estes"), "Professor Estes")
@@ -11640,7 +11646,7 @@ class TestRevisionReminders(unittest.TestCase):
                 "top_score": "R",
             }],
         }
-        body = r._revision_message(
+        body = _revision_message(
             {"name": "Pat Kim", "assignments": [quiz, homework]},
             "2026-10-24",
             "Algebra | MWF | 1",
@@ -11671,7 +11677,7 @@ class TestRevisionReminders(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=partition), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
-                unittest.mock.patch.object(r, "_send_via_resend") as sender:
+                unittest.mock.patch("app.helpers.revision_mail._send_via_resend") as sender:
             rv = client.post(
                 "/api/class/c1/revision-reminders/preview",
                 json={},
@@ -11704,11 +11710,11 @@ class TestRevisionReminders(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=self._partition()), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
-                unittest.mock.patch.object(r, "_insert_reminder_rows", side_effect=lambda *args: inserted.append(args[1]["student_id"])), \
-                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
-                unittest.mock.patch.object(r, "_record_email_send"), \
-                unittest.mock.patch.object(r.time, "sleep") as sleeper, \
-                unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")) as sender, \
+                unittest.mock.patch("app.helpers.revision_mail._insert_reminder_rows", side_effect=lambda *args: inserted.append(args[1]["student_id"])), \
+                unittest.mock.patch("app.helpers.revision_mail._email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch("app.helpers.revision_mail._record_email_send"), \
+                unittest.mock.patch("app.helpers.revision_mail.time.sleep") as sleeper, \
+                unittest.mock.patch("app.helpers.revision_mail._send_via_resend", return_value=(True, "")) as sender, \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}):
             rv = client.post(
                 "/api/class/c1/revision-reminders/send",
@@ -11735,7 +11741,7 @@ class TestRevisionReminders(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=partition), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
-                unittest.mock.patch.object(r, "_send_via_resend") as sender, \
+                unittest.mock.patch("app.helpers.revision_mail._send_via_resend") as sender, \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}):
             rv = client.post(
                 "/api/class/c1/revision-reminders/send",
@@ -11757,11 +11763,11 @@ class TestRevisionReminders(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=self._partition()), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
-                unittest.mock.patch.object(r, "_insert_reminder_rows", side_effect=lambda *args: inserted.append(args[1]["student_id"])), \
-                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
-                unittest.mock.patch.object(r, "_record_email_send"), \
-                unittest.mock.patch.object(r.time, "sleep"), \
-                unittest.mock.patch.object(r, "_send_via_resend", side_effect=send), \
+                unittest.mock.patch("app.helpers.revision_mail._insert_reminder_rows", side_effect=lambda *args: inserted.append(args[1]["student_id"])), \
+                unittest.mock.patch("app.helpers.revision_mail._email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch("app.helpers.revision_mail._record_email_send"), \
+                unittest.mock.patch("app.helpers.revision_mail.time.sleep"), \
+                unittest.mock.patch("app.helpers.revision_mail._send_via_resend", side_effect=send), \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}):
             rv = client.post(
                 "/api/class/c1/revision-reminders/send",
@@ -11775,6 +11781,7 @@ class TestRevisionReminders(unittest.TestCase):
 
     def test_budget_marks_the_rest_not_attempted(self):
         from app import routes as r
+        from app.helpers.revision_mail import _REVISION_EMAIL_BUDGET_SECONDS
         clock = {"now": 0.0}
 
         def monotonic():
@@ -11797,12 +11804,12 @@ class TestRevisionReminders(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=partition), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
-                unittest.mock.patch.object(r, "_insert_reminder_rows"), \
-                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
-                unittest.mock.patch.object(r, "_record_email_send"), \
-                unittest.mock.patch.object(r.time, "monotonic", side_effect=monotonic), \
-                unittest.mock.patch.object(r.time, "sleep", side_effect=sleep), \
-                unittest.mock.patch.object(r, "_send_via_resend", side_effect=send), \
+                unittest.mock.patch("app.helpers.revision_mail._insert_reminder_rows"), \
+                unittest.mock.patch("app.helpers.revision_mail._email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch("app.helpers.revision_mail._record_email_send"), \
+                unittest.mock.patch("app.helpers.revision_mail.time.monotonic", side_effect=monotonic), \
+                unittest.mock.patch("app.helpers.revision_mail.time.sleep", side_effect=sleep), \
+                unittest.mock.patch("app.helpers.revision_mail._send_via_resend", side_effect=send), \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}):
             rv = client.post(
                 "/api/class/c1/revision-reminders/send",
@@ -11810,7 +11817,7 @@ class TestRevisionReminders(unittest.TestCase):
                 headers={"X-CSRF-Token": "test-csrf"},
             )
         payload = rv.get_json()
-        self.assertEqual(r._REVISION_EMAIL_BUDGET_SECONDS, 60)
+        self.assertEqual(_REVISION_EMAIL_BUDGET_SECONDS, 60)
         self.assertEqual(payload["counts"]["sent"], 2)
         self.assertEqual(payload["counts"]["not_attempted"], 1)
         self.assertEqual(
@@ -11824,13 +11831,14 @@ class TestRevisionReminders(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "revision_reminder_partition", return_value=self._partition()), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"), \
-                unittest.mock.patch.object(r, "_insert_reminder_rows", side_effect=RuntimeError("db")), \
-                unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
-                unittest.mock.patch.object(r, "_record_email_send"), \
-                unittest.mock.patch.object(r.time, "sleep"), \
-                unittest.mock.patch.object(r, "_send_via_resend", return_value=(True, "")), \
+                unittest.mock.patch("app.helpers.revision_mail._insert_reminder_rows", side_effect=RuntimeError("db")), \
+                unittest.mock.patch("app.helpers.revision_mail._email_cap_counts", return_value=(0, {})), \
+                unittest.mock.patch("app.helpers.revision_mail._record_email_send"), \
+                unittest.mock.patch("app.helpers.revision_mail.time.sleep"), \
+                unittest.mock.patch("app.helpers.revision_mail._send_via_resend", return_value=(True, "")), \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}):
-            with self.assertLogs("app.routes", level="ERROR") as logs:
+            with self.assertLogs("app.helpers.revision_mail", level="ERROR") as mail_logs, \
+                    self.assertNoLogs("app.routes", level="ERROR"):
                 rv = client.post(
                     "/api/class/c1/revision-reminders/send",
                     json={},
@@ -11839,10 +11847,10 @@ class TestRevisionReminders(unittest.TestCase):
         payload = rv.get_json()
         self.assertEqual(payload["counts"]["sent_not_recorded"], 2)
         self.assertIn("may email that student twice", payload["warning"])
-        self.assertNotIn("@", "\n".join(logs.output))
+        self.assertNotIn("@", "\n".join(mail_logs.output))
 
     def test_upsert_ignores_duplicate_reminder_rows(self):
-        from app import routes as r
+        from app.helpers.revision_mail import _insert_reminder_rows
         query = MagicMock()
         admin = MagicMock()
         admin.table.return_value = query
@@ -11854,8 +11862,8 @@ class TestRevisionReminders(unittest.TestCase):
                 "objectives": [{"learning_objective_id": "lo-1"}],
             }],
         }
-        with unittest.mock.patch.object(r, "supabase_admin", admin):
-            r._insert_reminder_rows("c1", student, "2026-10-24", "inst-1")
+        with unittest.mock.patch("app.helpers.revision_mail.supabase_admin", admin):
+            _insert_reminder_rows("c1", student, "2026-10-24", "inst-1")
         args, kwargs = query.upsert.call_args
         self.assertEqual(args[0][0]["assignment_id"], "a1")
         self.assertEqual(args[0][0]["learning_objective_id"], "lo-1")
@@ -11870,7 +11878,7 @@ class TestRevisionReminders(unittest.TestCase):
             "assignments": [{"assignment_id": "a1", "objectives": [{}]}],
         }
         with self.assertRaises(KeyError):
-            r._insert_reminder_rows("c1", broken, "2026-10-24", "inst-1")
+            _insert_reminder_rows("c1", broken, "2026-10-24", "inst-1")
 
     def test_provider_429_is_failed_and_logs_no_address(self):
         from app import routes as r
@@ -11909,7 +11917,7 @@ class TestRevisionReminders(unittest.TestCase):
         from app import routes as r
         client = self._client()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_send_via_resend") as sender, \
+                unittest.mock.patch("app.helpers.revision_mail._send_via_resend") as sender, \
                 unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "", "REPORTS_FROM_EMAIL": ""}, clear=False):
             rv = client.post(
                 "/api/class/c1/revision-reminders/send",
@@ -11958,6 +11966,7 @@ class TestRevisionReminders(unittest.TestCase):
             item.setdefault("learning_objectives", [])
             ready.append(item)
         client = self._client()
+        admin = MagicMock()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r.Course, "get_full_class_data", return_value=class_data), \
                 unittest.mock.patch.object(r.Course, "get_learning_objectives", return_value=[]), \
@@ -11966,7 +11975,8 @@ class TestRevisionReminders(unittest.TestCase):
                 unittest.mock.patch.object(r, "_process_enrollments", return_value=(ready, ready, {})), \
                 unittest.mock.patch.object(r.Grade, "get_revision_candidates", return_value=rows), \
                 unittest.mock.patch.object(r, "local_today", return_value=date(2026, 10, 21)), \
-                unittest.mock.patch.object(r, "supabase_admin") as admin:
+                unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch("app.helpers.revision_mail.supabase_admin", admin):
             admin.table.side_effect = Query
             rv = client.get("/class/c1")
         return rv, calls
@@ -11996,12 +12006,12 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual(calls.count("revision_reminders_sent"), 1)
         client = self._client()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r.Course, "get_full_class_data", return_value={"id": "c1", "name": "Algebra", "enrollments": [], "learning_objectives": []}), \
+                unittest.mock.patch("app.helpers.revision_mail.Course.get_full_class_data", return_value={"id": "c1", "name": "Algebra", "enrollments": [], "learning_objectives": []}), \
                 unittest.mock.patch("app.helpers.class_progress._attached_objective_ids", return_value=set()), \
-                unittest.mock.patch.object(r, "_process_enrollments", return_value=(students, students, {})), \
-                unittest.mock.patch.object(r.Grade, "get_revision_candidates", return_value=rows), \
+                unittest.mock.patch("app.helpers.revision_mail._process_enrollments", return_value=(students, students, {})), \
+                unittest.mock.patch("app.helpers.revision_mail.Grade.get_revision_candidates", return_value=rows), \
                 unittest.mock.patch.object(r, "local_today", return_value=date(2026, 10, 21)), \
-                unittest.mock.patch.object(r, "_load_sent_reminder_keys", return_value=set()), \
+                unittest.mock.patch("app.helpers.revision_mail._load_sent_reminder_keys", return_value=set()), \
                 unittest.mock.patch.object(r, "_revision_class_title", return_value="Algebra"):
             preview = client.post(
                 "/api/class/c1/revision-reminders/preview",
@@ -12341,6 +12351,7 @@ class TestClassDetailReads(unittest.TestCase):
                     unittest.mock.patch("app.helpers.class_progress.supabase_admin", admin), \
                     unittest.mock.patch("app.helpers.class_data.supabase_admin", admin), \
                     unittest.mock.patch("app.helpers.class_access.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.revision_mail.supabase_admin", admin), \
                     unittest.mock.patch.object(r, "local_today", return_value=self.TODAY):
                 response = client.get("/class/%s" % class_id)
         finally:
