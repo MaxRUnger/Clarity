@@ -74,12 +74,11 @@ def create_app(config_class=Config):
         allow_headers=["Content-Type", "X-CSRF-Token"],
     )
     
-    # Late import: `app.routes` pulls in models / Supabase clients, so config
-    # is applied before that import chain runs. Each name in ROUTE_MODULES is
-    # imported after main_bp exists and before the blueprint is registered,
-    # so those modules can attach routes to main_bp.
+    # Late import: the app.routes package pulls in models and Supabase clients, so config
+    # is applied before that import runs.
     import importlib
-    from app.routes import main_bp, ROUTE_MODULES
+    from app.routes import ROUTE_MODULES
+    from app.routes.blueprint import main_bp
     from app.helpers.class_form import class_display_title
     from app.helpers.app_sessions import validate_app_session
     for module_name in ROUTE_MODULES:

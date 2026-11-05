@@ -1032,7 +1032,7 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
 
     def _patched_save_grades_call(self, hw_map, grade="M"):
         """Common scaffolding: returns the rows the route attempted to upsert."""
-        from app import routes as r
+        from app.routes import grading as r
         captured_rows = []
         exec_m = MagicMock()
         q = MagicMock()
@@ -1175,7 +1175,7 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
         self.client = self.app.test_client()
 
     def test_hw_pass_promotes_non_counting_masteries(self):
-        from app import routes as r
+        from app.routes import grading as r
 
         captured_upserts = []
 
@@ -1246,7 +1246,7 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
         self.assertTrue(captured_upserts[0].get("counts_for_mastery"))
 
     def test_typed_score_does_not_write_previous_or_shift(self):
-        from app import routes as r
+        from app.routes import grading as r
 
         captured = []
 
@@ -1520,7 +1520,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         return {"X-CSRF-Token": self.csrf}
 
     def _grades_patches(self, *, owns_class=True, belongs=True):
-        from app import routes as r
+        from app.routes import grading as r
         sa = _filter_client(self.store)
         return (
             unittest.mock.patch.object(r, "supabase_admin", sa),
@@ -1933,7 +1933,7 @@ class TestAssignmentGradesResponse(unittest.TestCase):
 
     def _get(self, assignment_id):
         from app import models
-        from app import routes as r
+        from app.routes import grading as r
         calls = []
         admin = _grades_api_client(self._store(), calls)
         app = create_app()
@@ -2732,7 +2732,7 @@ class TestImportRosterNameMatch(unittest.TestCase):
         self, students, enroll_rows, extra=None, lo_rows=None, learning_objectives=None,
         hw_map=None,
     ):
-        from app import routes as r
+        from app.routes import grading as r
         if hw_map is None:
             hw_map = {}
         self.hw_upserts = []
@@ -3121,7 +3121,7 @@ class TestImportRosterNameMatch(unittest.TestCase):
 
 class TestUpdateGradeRoster(unittest.TestCase):
     def test_update_grade_roster_is_id_and_full_name_including_muted(self):
-        from app import routes as r
+        from app.routes import grading as r
 
         app = create_app()
         app.config["TESTING"] = True
@@ -3187,7 +3187,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             self.assertEqual(set(row.keys()), {"id", "full_name"})
 
     def test_update_grade_post_is_not_allowed(self):
-        from app import routes as r
+        from app.routes import grading as r
 
         app = create_app()
         app.config["TESTING"] = True
@@ -3383,7 +3383,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         self.assertEqual(rv.status_code, 401)
 
     def test_valid_csv_matches_assignment(self):
-        from app import routes as r
+        from app.routes import grading as r
         csv_text = (
             "Assignment,Quiz 1\n"
             "Date,2026-08-20\n"
@@ -3421,7 +3421,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         self.assertEqual(body["data"]["students"][0]["grades"], {"D1": "M"})
 
     def test_three_metadata_row_csv_parses_header_and_students(self):
-        from app import routes as r
+        from app.routes import grading as r
         csv_text = (
             "Assignment,Quiz 1\n"
             "Date,2026-08-20\n"
@@ -3470,7 +3470,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         self.assertFalse(any("NOTE" in (s.get("name") or "").upper() for s in students))
 
     def test_malformed_csv_returns_400(self):
-        from app import routes as r
+        from app.routes import grading as r
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
             sess["role"] = "instructor"
@@ -3488,7 +3488,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         self.assertIn("not a Clarity gradesheet export", rv.get_json().get("error") or "")
 
     def _post_grade_csv(self, csv_text, assignment_rows, owns=True):
-        from app import routes as r
+        from app.routes import grading as r
         sa = MagicMock()
         q = MagicMock()
         q.select.return_value = q
@@ -3611,7 +3611,7 @@ class TestAllowedLoIdsAssignmentScoping(unittest.TestCase):
         linked_lo_ids controls what Course.get_assignment_lo_ids returns —
         i.e. which LOs are actually linked to the assignment.
         """
-        from app import routes as r
+        from app.routes import grading as r
         if hw_map is None:
             hw_map = {"stu-1": 80}   # recorded score so HW gate passes
         captured_rows = []
@@ -3671,7 +3671,7 @@ class TestAllowedLoIdsAssignmentScoping(unittest.TestCase):
     def test_no_assignment_id_uses_full_class_pool(self):
         """Without an assignment_id, the full class LO pool is still allowed
         (unscoped grade entry path)."""
-        from app import routes as r
+        from app.routes import grading as r
         captured_rows = []
         exec_m = MagicMock()
         q = MagicMock()
@@ -3740,7 +3740,7 @@ class TestImportGradesRateLimit(unittest.TestCase):
     def test_route_proceeds_when_rate_limit_not_exhausted(self):
         """When the limiter passes, the request must not produce a 429.
         (It may fail for other reasons — missing data — but not rate-limiting.)"""
-        from app import routes as r
+        from app.routes import grading as r
         sa = MagicMock()
         q = MagicMock()
         q.select.return_value = q
@@ -3826,7 +3826,7 @@ class TestGradeChangeLog(unittest.TestCase):
         )
 
     def test_save_grades_empty_payload_writes_no_audit_row(self):
-        from app import routes as r
+        from app.routes import grading as r
         sa, grade_rows, log_rows = self._make_sa_mock()
         self._login()
         patches = self._save_patches(r, sa, {})
@@ -3841,7 +3841,7 @@ class TestGradeChangeLog(unittest.TestCase):
         self.assertEqual(log_rows, [])
 
     def test_save_grades_does_not_insert_grade_change_log(self):
-        from app import routes as r
+        from app.routes import grading as r
         sa, grade_rows, log_rows = self._make_sa_mock()
         self._login()
         patches = self._save_patches(r, sa, {"stu-1": 80})
@@ -3857,7 +3857,7 @@ class TestGradeChangeLog(unittest.TestCase):
         self.assertEqual(log_rows, [])
 
     def test_save_grades_upsert_failure_returns_500_after_one_attempt(self):
-        from app import routes as r
+        from app.routes import grading as r
         upsert_calls = []
         grades_q = MagicMock()
         grades_q.select.return_value = grades_q
@@ -3927,7 +3927,7 @@ class TestGradeChangeLog(unittest.TestCase):
         self.assertTrue(ops <= set(grade_log.GRADE_LOG_OPERATIONS))
 
     def test_constraint_violation_logs_error_with_operation(self):
-        from app import routes as r
+        from app.routes import grading as r
         from app.helpers import grade_log
 
         class CheckViolation(Exception):
@@ -3962,7 +3962,7 @@ class TestGradeChangeLog(unittest.TestCase):
         self.assertIn(grade_log.GRADE_LOG_DELETE, err.call_args[0])
 
     def test_missing_table_logs_warning_only(self):
-        from app import routes as r
+        from app.routes import grading as r
         from app.helpers import grade_log
 
         class MissingTable(Exception):
@@ -7842,7 +7842,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
 
 class TestFreePassAllowance(unittest.TestCase):
     def _post(self, path, rows):
-        from app import routes as r
+        from app.routes import grading as r
         log = []
 
         class _PassQuery:
@@ -12978,7 +12978,7 @@ class TestUploadPageReads(unittest.TestCase):
     def _page(self, store, class_id):
         from flask import template_rendered
         from app import models
-        from app import routes as r
+        from app.routes import grading as r
         calls = []
         admin = _class_detail_client(store, calls, [])
         app = create_app()
@@ -13266,7 +13266,7 @@ class TestSpeedGraderReads(unittest.TestCase):
     def _page(self, store, class_id):
         from flask import template_rendered
         from app import models
-        from app import routes as r
+        from app.routes import grading as r
         calls = []
         admin = _class_detail_client(store, calls, [])
         app = create_app()

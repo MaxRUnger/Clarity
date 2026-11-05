@@ -302,7 +302,7 @@ class TestSensitiveLogs(unittest.TestCase):
         self.assertFalse(any("PAYLOADMARKER" in message for message in records))
 
     def test_grade_save_log_names_the_actor_and_class(self):
-        from app import routes as r
+        from app.routes import grading as r
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()

@@ -9,7 +9,7 @@ These classes are intentionally thin façades over Supabase queries. They are
     revision eligibility) so the same rule is enforced everywhere.
 
 All write paths use the service-role client (``supabase_admin``); ownership /
-authorization is enforced upstream by helpers in ``app/routes.py``.
+authorization is enforced upstream by helpers in ``app/routes``.
 """
 
 import logging

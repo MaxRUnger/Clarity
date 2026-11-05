@@ -8,7 +8,7 @@ PostgREST layer:
   end-user, so it can never be used for cross-row admin reads/writes.
 - ``supabase_admin`` (service-role key) bypasses RLS and is used for every
   table read/write the server performs on behalf of the authenticated user.
-  Authorization is enforced separately in ``app/routes.py`` (see helpers
+  Authorization is enforced separately in ``app/routes`` (see helpers
   like ``_instructor_owns_class``).
 
 Keeping these two clients distinct is what prevents the service-role key
