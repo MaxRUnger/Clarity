@@ -177,7 +177,7 @@ class TestCacheControl(unittest.TestCase):
         return client
 
     def test_archive_download_and_csv_export_are_no_store(self):
-        from app import routes as r
+        from app.routes import assignments as r
         from app.routes import archives as archive_routes
         client = self._session_client()
         archive_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -278,7 +278,7 @@ class TestSensitiveLogs(unittest.TestCase):
         self.assertNotIn("BODYTEXT", text)
 
     def test_create_assignment_does_not_log_the_payload(self):
-        from app import routes as r
+        from app.routes import assignments as r
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()

@@ -80,7 +80,7 @@ class TestAssignmentCalendarDates(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
 
     def _post(self, kind, field, value):
-        from app import routes as routes_module
+        from app.routes import assignments as routes_module
 
         table = _Table()
         admin = MagicMock()

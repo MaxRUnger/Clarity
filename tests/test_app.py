@@ -1131,7 +1131,7 @@ class TestAssignmentHomeworkGroupRequired(unittest.TestCase):
         return {"X-CSRF-Token": "test-csrf"}
 
     def test_create_blank_homework_group_400(self):
-        from app import routes as r
+        from app.routes import assignments as r
         headers = self._session()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
@@ -1148,7 +1148,7 @@ class TestAssignmentHomeworkGroupRequired(unittest.TestCase):
         self.assertIn("homework group", (body.get("error") or "").lower())
 
     def test_update_blank_homework_group_400(self):
-        from app import routes as r
+        from app.routes import assignments as r
         headers = self._session()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
@@ -4014,7 +4014,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_create_assignment_name_255_accepted(self):
         """Exactly 255 chars must be accepted (boundary)."""
-        from app import routes as r
+        from app.routes import assignments as r
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
             sess["csrf_token"] = "test-csrf"
@@ -4037,7 +4037,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_create_assignment_name_256_rejected(self):
         """256 chars must be rejected with 400 and no DB call."""
-        from app import routes as r
+        from app.routes import assignments as r
         sa = MagicMock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -4059,7 +4059,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_create_assignment_homework_group_101_rejected(self):
         """homework_group over 100 chars must be rejected with 400."""
-        from app import routes as r
+        from app.routes import assignments as r
         sa = MagicMock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -4350,7 +4350,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_update_lo_vendor_code_50_accepted(self):
         """Exactly 50-char vendor_code must pass the length check."""
-        from app import routes as r
+        from app.routes import assignments as r
         sa = self._lo_update_sa_mock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -4368,7 +4368,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_update_lo_vendor_code_51_rejected(self):
         """51-char vendor_code must be rejected with 400."""
-        from app import routes as r
+        from app.routes import assignments as r
         sa = self._lo_update_sa_mock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -4387,7 +4387,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_update_lo_description_2000_accepted(self):
         """Exactly 2000-char description must pass the length check."""
-        from app import routes as r
+        from app.routes import assignments as r
         sa = self._lo_update_sa_mock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -4405,7 +4405,7 @@ class TestMaxLengthValidation(unittest.TestCase):
 
     def test_update_lo_description_2001_rejected(self):
         """2001-char description must be rejected with 400."""
-        from app import routes as r
+        from app.routes import assignments as r
         sa = self._lo_update_sa_mock()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
@@ -7940,17 +7940,24 @@ class TestClassDeleteRoutes(unittest.TestCase):
         return client
 
     def _post(self, path, rows_for, owns=True):
-        from app import routes as r
+        from app import routes
+        from app.routes import assignments
+        from tests.patching import patch_attr
         log = []
 
         def table(name):
             return _RemovalQuery(log, name, rows_for.get(name, []), None)
 
         client = self._client()
-        with unittest.mock.patch.object(r, "supabase_admin") as sa, \
+        sa = unittest.mock.MagicMock()
+        with patch_attr((routes, assignments), "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.class_removal.supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
-                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns):
+                patch_attr(
+                    (routes, assignments),
+                    "_instructor_owns_class",
+                    unittest.mock.Mock(return_value=owns),
+                ):
             sa.table.side_effect = table
             rv = client.post(path, headers={"X-CSRF-Token": "test-csrf"})
         return rv, log
@@ -8374,7 +8381,7 @@ class TestUpdateAssignmentDetach(unittest.TestCase):
         }
 
     def _send(self, method, path, rows_for, body=None, owns=True, fail_delete=None, fail_insert=None, fail_update=None):
-        from app import routes as r
+        from app.routes import assignments as r
         log = []
 
         def table(name):
@@ -8897,7 +8904,7 @@ class TestClassArchiveExport(unittest.TestCase):
                         Homework, "get_hw_prev_scores_map_for_assignment", return_value=prev
                     ), \
                     unittest.mock.patch(
-                        "app.routes._gradesheet_export_bundle"
+                        "app.routes.assignments._gradesheet_export_bundle"
                     ) as bundle, \
                     unittest.mock.patch(
                         "app.helpers.archive_export._gradesheet_letter_map_for_assignment",
@@ -12663,7 +12670,7 @@ class TestAssignmentsPageReads(unittest.TestCase):
     def _page(self, store, class_id):
         from flask import template_rendered
         from app import models
-        from app import routes as r
+        from app.routes import assignments as r
         calls, selects = [], []
         admin = _class_detail_client(store, calls, selects)
         app = create_app()
