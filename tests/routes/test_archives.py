@@ -1,4 +1,5 @@
 import io
+import os
 import unittest
 import unittest.mock
 
@@ -648,8 +649,11 @@ class TestArchivedClasses(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         page = response.get_data(as_text=True)
-        from pathlib import Path
-        page_script = Path("app/static/js/archived_classes.js").read_text(encoding="utf-8")
+        script_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "archived_classes.js",
+        )
+        with open(script_path, encoding="utf-8") as handle:
+            page_script = handle.read()
         self.assertIn("snapshot_path", seen["columns"])
         self.assertIn("restored_at", seen["columns"])
         self.assertIn("restored_class_id", seen["columns"])
@@ -707,6 +711,7 @@ class TestArchivedClasses(unittest.TestCase):
         )
         self.assertNotIn("The archive stays in Archived Classes.", page)
         self.assertNotIn("restoreArchiveClose", page)
+        self.assertNotIn("restoreArchiveClose", page_script)
         script = page_script.split("const restoreNetworkError", 1)[1]
         network_branch = script.split("catch {", 1)[1].split("catch {", 1)[0]
         parse_branch = script.split("catch {", 1)[1].split("catch {", 1)[1].split("payload.success", 1)[0]

@@ -3730,14 +3730,14 @@ class TestPrintClassSheet(unittest.TestCase):
             "class_learning_objectives_summary.js",
         )
         with open(script_path, encoding="utf-8") as fh:
-            src = fh.read() + "\n" + src
-        self.assertIn('params.get("print") !== "1"', src)
-        gate = src.find('params.get("print") !== "1"')
-        load = src.find('addEventListener("load"', gate)
-        timer = src.find("setTimeout", load)
-        printed = src.find("window.print()", timer)
-        delay = src.find("}, 250);", timer)
-        replaced = src.find("history.replaceState", printed)
+            script = fh.read()
+        self.assertIn('params.get("print") !== "1"', script)
+        gate = script.find('params.get("print") !== "1"')
+        load = script.find('addEventListener("load"', gate)
+        timer = script.find("setTimeout", load)
+        printed = script.find("window.print()", timer)
+        delay = script.find("}, 250);", timer)
+        replaced = script.find("history.replaceState", printed)
         self.assertGreater(load, gate)
         self.assertGreater(timer, load)
         self.assertGreater(printed, timer)

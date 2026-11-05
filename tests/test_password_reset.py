@@ -649,7 +649,8 @@ class TestResetPages(unittest.TestCase):
         self.assertEqual(reset.status_code, 200)
 
     def test_reset_page_script_reads_the_fragment_and_drops_it(self):
-        path = Path("app/templates/auth/reset_password.html")
+        root = Path(__file__).resolve().parents[1]
+        path = root / "app" / "templates" / "auth" / "reset_password.html"
         self.assertTrue(path.is_file())
         text = path.read_text(encoding="utf-8")
         self.assertLess(text.index("At least 12 characters"), text.index('id="password"'))
@@ -659,22 +660,22 @@ class TestResetPages(unittest.TestCase):
         self.assertIn("Uppercase letter", text)
         self.assertIn("Digit", text)
         self.assertIn("One symbol, such as ! or #", text)
-        text = Path("app/static/js/reset_password.js").read_text(encoding="utf-8") + "\n" + text
-        self.assertIn("location.hash", text)
-        self.assertIn("history.replaceState", text)
-        self.assertIn('params.get("token_hash")', text)
-        self.assertIn('params.get("email")', text)
-        self.assertIn('fetch("/api/reset-password"', text)
-        self.assertIn('addEventListener("input"', text)
-        self.assertIn("value.length < 12", text)
-        self.assertIn("encoder.encode(value).length > 72", text)
-        self.assertIn("/[a-z]/", text)
-        self.assertIn("/[A-Z]/", text)
-        self.assertIn("/[0-9]/", text)
-        self.assertIn("[^A-Za-z0-9\\s]", text)
-        self.assertNotIn("/api/reset-password?", text)
         self.assertNotIn('type="email"', text)
         self.assertNotIn('id="email"', text)
+        script = (root / "app" / "static" / "js" / "reset_password.js").read_text(encoding="utf-8")
+        self.assertIn("location.hash", script)
+        self.assertIn("history.replaceState", script)
+        self.assertIn('params.get("token_hash")', script)
+        self.assertIn('params.get("email")', script)
+        self.assertIn('fetch("/api/reset-password"', script)
+        self.assertIn('addEventListener("input"', script)
+        self.assertIn("value.length < 12", script)
+        self.assertIn("encoder.encode(value).length > 72", script)
+        self.assertIn("/[a-z]/", script)
+        self.assertIn("/[A-Z]/", script)
+        self.assertIn("/[0-9]/", script)
+        self.assertIn("[^A-Za-z0-9\\s]", script)
+        self.assertNotIn("/api/reset-password?", script)
 
     def test_emailed_link_contains_quoted_email_and_page_has_no_email_input(self):
         admin = MagicMock()
@@ -742,7 +743,7 @@ class TestResetPages(unittest.TestCase):
         self.assertIn("Uppercase letter", text)
         self.assertIn("Digit", text)
         self.assertIn("One symbol, such as ! or #", text)
-        script = Path("app/static/js/signup.js").read_text(encoding="utf-8")
+        script = (Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "signup.js").read_text(encoding="utf-8")
         self.assertIn("res.message", script)
         self.assertIn("showError(msg", script)
 
