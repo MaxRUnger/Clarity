@@ -254,12 +254,13 @@ class TestSensitiveLogs(unittest.TestCase):
         resp.status_code = 400
         resp.text = "rejected student@school.edu BODYTEXT"
         resp.json.return_value = {"message": "student@school.edu"}
-        logger, handler, records, previous = _messages("app.routes")
+        route_logger, route_handler, route_records, route_previous = _messages("app.routes")
+        mail_logger, mail_handler, mail_records, mail_previous = _messages("app.helpers.report_email")
         try:
             with unittest.mock.patch.dict(
                 os.environ,
                 {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "reports@school.edu"},
-            ), unittest.mock.patch.object(r.requests, "post", return_value=resp):
+            ), unittest.mock.patch("app.helpers.report_email.requests.post", return_value=resp):
                 ok, _err = r._send_via_resend(
                     "student@school.edu",
                     "Subject",
@@ -267,9 +268,10 @@ class TestSensitiveLogs(unittest.TestCase):
                     sender_name="Ada",
                 )
         finally:
-            _stop(logger, handler, previous)
+            _stop(route_logger, route_handler, route_previous)
+            _stop(mail_logger, mail_handler, mail_previous)
         self.assertFalse(ok)
-        text = "\n".join(records)
+        text = "\n".join(route_records + mail_records)
         self.assertNotIn("@", text)
         self.assertNotIn("BODYTEXT", text)
 
@@ -405,6 +407,7 @@ class TestSensitiveLogs(unittest.TestCase):
         logger, handler, records, previous = _messages("app.routes")
         try:
             with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.report_email.supabase_admin", admin), \
                     unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                     unittest.mock.patch.object(r, "_report_sender_name", return_value="Ada"), \
                     unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \

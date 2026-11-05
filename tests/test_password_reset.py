@@ -198,7 +198,7 @@ class TestPasswordRulesOnBothRoutes(unittest.TestCase):
             "app.helpers.account_mail.supabase_admin", admin
         ), patch(
             "app.helpers.authentication.supabase_admin", admin
-        ), patch("app.routes.requests.post", return_value=_resend_ok()):
+        ), patch("app.helpers.account_mail.requests.post", return_value=_resend_ok()):
             response = self.client.post(
                 "/api/reset-password",
                 json={
@@ -270,7 +270,7 @@ class TestForgotPassword(unittest.TestCase):
             clear=False,
         ):
             sender = MagicMock(return_value=_resend_ok())
-            with patch("app.routes.requests.post", sender):
+            with patch("app.helpers.account_mail.requests.post", sender):
                 response = self.client.post(
                     "/api/forgot-password",
                     json={"email": email},
@@ -490,7 +490,7 @@ class TestResetPassword(unittest.TestCase):
         ), patch(
             "app.helpers.authentication.supabase_admin", admin
         ), patch(
-            "app.routes.requests.post", sender
+            "app.helpers.account_mail.requests.post", sender
         ), patch.dict(
             os.environ,
             {
@@ -702,7 +702,7 @@ class TestResetPages(unittest.TestCase):
                 "REPORTS_FROM_EMAIL": "reports@school.edu",
             },
             clear=False,
-        ), patch("app.routes.requests.post", return_value=_resend_ok()) as sender:
+        ), patch("app.helpers.account_mail.requests.post", return_value=_resend_ok()) as sender:
             response = client.post(
                 "/api/forgot-password",
                 json={"email": "Ada.Lovelace@school.edu"},
@@ -819,7 +819,7 @@ class TestPasswordResetCsrf(unittest.TestCase):
         ), patch(
             "app.helpers.authentication.supabase_admin", reset_admin
         ), patch(
-            "app.routes.requests.post", return_value=_resend_ok()
+            "app.helpers.account_mail.requests.post", return_value=_resend_ok()
         ), patch.dict(
             os.environ,
             {
@@ -938,7 +938,7 @@ class TestResetRevokeOrder(unittest.TestCase):
         ), patch(
             "app.helpers.app_sessions.revoke_user_sessions", revoke
         ), patch(
-            "app.routes.requests.post", return_value=_resend_ok()
+            "app.helpers.account_mail.requests.post", return_value=_resend_ok()
         ), patch.dict(
             os.environ,
             {
@@ -1042,7 +1042,7 @@ class TestResetPasswordGate(unittest.TestCase):
         ), patch(
             "app.helpers.app_sessions.revoke_user_sessions", MagicMock()
         ), patch(
-            "app.routes.requests.post", return_value=_resend_ok()
+            "app.helpers.account_mail.requests.post", return_value=_resend_ok()
         ), patch.dict(
             os.environ,
             {
@@ -1193,7 +1193,7 @@ class TestForgotPasswordHostHeader(unittest.TestCase):
                 "REPORTS_FROM_EMAIL": "reports@school.edu",
             },
             clear=False,
-        ), patch("app.routes.requests.post", sender):
+        ), patch("app.helpers.account_mail.requests.post", sender):
             response = self.client.post(
                 "/api/forgot-password",
                 json={"email": "ada.lovelace@school.edu"},

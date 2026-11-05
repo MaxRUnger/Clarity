@@ -202,6 +202,9 @@ class TestEmailRelay(unittest.TestCase):
         admin = _admin(db)
         with unittest.mock.patch.object(r, "supabase_admin", admin), \
                 unittest.mock.patch(
+                    "app.helpers.report_email.supabase_admin", admin
+                ), \
+                unittest.mock.patch(
                     "app.helpers.authentication.supabase_admin", admin
                 ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
@@ -323,7 +326,7 @@ class TestEmailRelay(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {
             "RESEND_API_KEY": "k",
             "REPORTS_FROM_EMAIL": "reports@claritygrader.net",
-        }), unittest.mock.patch.object(r.requests, "post", posted):
+        }), unittest.mock.patch("app.helpers.report_email.requests.post", posted):
             ok, err = r._send_via_resend(
                 "ada@school.edu",
                 "Progress",
@@ -423,7 +426,7 @@ class TestEmailRelay(unittest.TestCase):
         self.assertEqual(sender.call_args.args[0], "ana@example.edu")
 
     def test_footer_is_one_blank_line_before_the_instructor(self):
-        from app import routes as r
+        from app.helpers.report_email import _report_body_html
         settled = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         response, sender = self._post_single(
             self._db(email_set_at=settled),
@@ -433,7 +436,7 @@ class TestEmailRelay(unittest.TestCase):
         text = sender.call_args.args[2]
         self.assertIn("\n\nProfessor Estes\n", text)
         self.assertNotIn("\n\n\nProfessor Estes", text)
-        html = r._report_body_html(text, "Progress")
+        html = _report_body_html(text, "Progress")
         paragraphs = html.split("<p ")[1:]
         self.assertEqual(len(paragraphs), 2)
         self.assertIn("D1  |  M", paragraphs[0])
@@ -447,6 +450,7 @@ class TestEmailRelay(unittest.TestCase):
 
     def test_footer_with_no_trailing_newline_and_with_internal_blank_lines(self):
         from app import routes as r
+        from app.helpers.report_email import _report_body_html
         bare = "Hello Ana,\nD1  |  M" + r._report_footer("Professor Estes", "Algebra")
         spaced = "Hello Ana,\n\n\nD1  |  M\nD2  |  R" + r._report_footer(
             "Professor Estes", "Algebra"
@@ -457,7 +461,7 @@ class TestEmailRelay(unittest.TestCase):
         ):
             self.assertIn("\n\nProfessor Estes\n", text)
             self.assertNotIn("\n\n\nProfessor Estes", text)
-            paragraphs = r._report_body_html(text, "Progress").split("<p ")[1:]
+            paragraphs = _report_body_html(text, "Progress").split("<p ")[1:]
             self.assertEqual(len(paragraphs), 2 if text is bare else 3)
             grade = paragraphs[-2]
             footer = paragraphs[-1]
@@ -481,7 +485,7 @@ class TestEmailRelay(unittest.TestCase):
         db = self._db()
         db["boom"] = "email_sends"
         db["boom_message"] = "relay-count-error"
-        with self.assertLogs("app.routes", level="ERROR") as logs:
+        with self.assertLogs("app.helpers.report_email", level="ERROR") as logs:
             response, sender = self._post_single(db)
         self.assertEqual(response.status_code, 503)
         sender.assert_not_called()
@@ -527,6 +531,9 @@ class TestEmailRelay(unittest.TestCase):
         admin, calls = self._count_tables(db)
         with unittest.mock.patch.object(r, "supabase_admin", admin), \
                 unittest.mock.patch(
+                    "app.helpers.report_email.supabase_admin", admin
+                ), \
+                unittest.mock.patch(
                     "app.helpers.authentication.supabase_admin", admin
                 ), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
@@ -550,7 +557,7 @@ class TestEmailRelay(unittest.TestCase):
         db["hash_counts"][hashes[119]] = 5
         admin, _calls = self._count_tables(db)
         with self.app.app_context():
-            with unittest.mock.patch.object(r, "supabase_admin", admin):
+            with unittest.mock.patch("app.helpers.report_email.supabase_admin", admin):
                 instructor_count, per_hash = r._email_cap_counts("inst1", hashes)
         self.assertEqual(instructor_count, 0)
         self.assertEqual(db["recipient_reads"], 3)

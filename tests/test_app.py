@@ -1531,6 +1531,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         sa = _filter_client(self.store)
         send_mock = unittest.mock.MagicMock(return_value=send_result)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.report_email.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns_class), \
                 unittest.mock.patch.object(r, "_send_via_resend", send_mock):
             rv = self.client.post(
@@ -1545,6 +1546,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         sa = _filter_client(self.store)
         send_mock = unittest.mock.MagicMock(return_value=send_result)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.report_email.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns_class), \
                 unittest.mock.patch.object(r, "_send_via_resend", send_mock):
             rv = self.client.post(
@@ -1776,7 +1778,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         self.assertNotIn("Email send complete.", reports_src)
         self.assertIn(
             "Replies to this email are not monitored. Contact your instructor directly.",
-            open(os.path.join(os.path.dirname(__file__), "..", "app", "routes.py"), encoding="utf-8").read(),
+            open(os.path.join(os.path.dirname(__file__), "..", "app", "helpers", "report_email.py"), encoding="utf-8").read(),
         )
         self.assertIn("Sent ", reports_src)
         self.assertIn("Skipped ", reports_src)
@@ -2060,25 +2062,25 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         self.assertEqual(r.instructor_title("BRODY ESTES"), "Professor ESTES")
 
     def test_from_header_is_always_quoted(self):
-        from app import routes as r
+        from app.helpers.report_email import _reports_from_header
         self.assertEqual(
-            r._reports_from_header("Professor Estes", self.FROM_EMAIL),
+            _reports_from_header("Professor Estes", self.FROM_EMAIL),
             '"Professor Estes via Clarity Grader" <reports@claritygrader.net>',
         )
         self.assertEqual(
-            r._reports_from_header("Your instructor", self.FROM_EMAIL),
+            _reports_from_header("Your instructor", self.FROM_EMAIL),
             '"Your instructor via Clarity Grader" <reports@claritygrader.net>',
         )
         self.assertEqual(
-            r._reports_from_header("", self.FROM_EMAIL),
+            _reports_from_header("", self.FROM_EMAIL),
             '"Your instructor via Clarity Grader" <reports@claritygrader.net>',
         )
         self.assertEqual(
-            r._reports_from_header("Professor St. Estes", self.FROM_EMAIL),
+            _reports_from_header("Professor St. Estes", self.FROM_EMAIL),
             '"Professor St. Estes via Clarity Grader" <reports@claritygrader.net>',
         )
         self.assertEqual(
-            r._reports_from_header("Professor Estes, Jr.", self.FROM_EMAIL),
+            _reports_from_header("Professor Estes, Jr.", self.FROM_EMAIL),
             '"Professor Estes, Jr. via Clarity Grader" <reports@claritygrader.net>',
         )
 
@@ -2090,7 +2092,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
                 "RESEND_API_KEY": "test-key",
                 "REPORTS_FROM_EMAIL": self.FROM_EMAIL,
             },
-        ), unittest.mock.patch.object(r.requests, "post", post_mock):
+        ), unittest.mock.patch("app.helpers.report_email.requests.post", post_mock):
             return r._send_via_resend(
                 "student@example.edu",
                 "Your progress report",
@@ -2107,7 +2109,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
 
     def test_send_success_requires_id_and_omits_reply_to(self):
         post = MagicMock(return_value=self._response(200, {"id": "re_123"}))
-        with self.assertLogs("app.routes", level="INFO") as logs:
+        with self.assertLogs("app.helpers.report_email", level="INFO") as logs:
             ok, err = self._send(post)
         self.assertTrue(ok)
         self.assertEqual(err, "")
@@ -2141,8 +2143,8 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         self.assertEqual(err, "Email provider rejected request.")
 
     def test_send_timeout_fails(self):
-        from app import routes as r
-        post = MagicMock(side_effect=r.requests.Timeout())
+        import requests
+        post = MagicMock(side_effect=requests.Timeout())
         ok, err = self._send(post)
         self.assertFalse(ok)
         self.assertEqual(err, "Email send failed.")
@@ -2152,7 +2154,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         post = MagicMock()
         with unittest.mock.patch.dict(os.environ, {"REPORTS_FROM_EMAIL": self.FROM_EMAIL}):
             os.environ.pop("RESEND_API_KEY", None)
-            with unittest.mock.patch.object(r.requests, "post", post):
+            with unittest.mock.patch("app.helpers.report_email.requests.post", post):
                 ok, err = r._send_via_resend(
                     "student@example.edu",
                     "Subject",
@@ -2168,7 +2170,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         post = MagicMock()
         with unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "test-key"}):
             os.environ.pop("REPORTS_FROM_EMAIL", None)
-            with unittest.mock.patch.object(r.requests, "post", post):
+            with unittest.mock.patch("app.helpers.report_email.requests.post", post):
                 ok, err = r._send_via_resend(
                     "student@example.edu",
                     "Subject",
@@ -2182,7 +2184,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
     def test_html_escapes_student_name(self):
         body = "Hello <Jane> & Co,"
         post = MagicMock(return_value=self._response(200, {"id": "re_456"}))
-        with self.assertLogs("app.routes", level="INFO"):
+        with self.assertLogs("app.helpers.report_email", level="INFO"):
             ok, err = self._send(post, body=body)
         self.assertTrue(ok)
         self.assertEqual(err, "")
@@ -2192,7 +2194,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         self.assertNotIn("<Jane>", sent["html"])
 
     def test_report_body_html_paragraphs_breaks_and_footer(self):
-        from app import routes as r
+        from app.helpers.report_email import _report_body_html
         body = (
             "Hello <Jane> & Co,\n"
             "Class: Algebra\n"
@@ -2206,7 +2208,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
             "Replies to this email are not monitored. "
             "Contact your instructor directly."
         )
-        html = r._report_body_html(body, "Progress <report> & more")
+        html = _report_body_html(body, "Progress <report> & more")
         paragraphs = html.split("<p ")[1:]
         self.assertEqual(len(paragraphs), 3)
         self.assertIn("Hello &lt;Jane&gt; &amp; Co,<br>Class: Algebra", paragraphs[0])
@@ -4436,6 +4438,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["role"] = "instructor"
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.report_email.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
@@ -4475,6 +4478,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["role"] = "instructor"
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch("app.helpers.report_email.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
                 unittest.mock.patch.object(r, "_email_cap_counts", return_value=(0, {})), \
@@ -11606,6 +11610,7 @@ class TestRevisionReminders(unittest.TestCase):
 
     def test_signoff_greeting_and_from_header(self):
         from app import routes as r
+        from app.helpers.report_email import _reports_from_header
         self.assertEqual(r._revision_signoff("Lovelace, Ada"), "Ada Lovelace")
         self.assertEqual(r._revision_signoff("Ada Lovelace"), "Ada Lovelace")
         self.assertEqual(r.instructor_title("Lovelace, Ada"), "Professor Lovelace")
@@ -11614,7 +11619,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual(r.instructor_title("Estes"), "Professor Estes")
         self.assertEqual(r.instructor_title(""), "Your instructor")
         self.assertEqual(
-            r._reports_from_header("Ada Lovelace", "reports@claritygrader.net"),
+            _reports_from_header("Ada Lovelace", "reports@claritygrader.net"),
             '"Ada Lovelace via Clarity Grader" <reports@claritygrader.net>',
         )
         quiz = {
@@ -11659,6 +11664,7 @@ class TestRevisionReminders(unittest.TestCase):
 
     def test_preview_returns_one_sample_and_escapes_it(self):
         from app import routes as r
+        from app.helpers.report_email import _report_body_html
         partition = self._partition()
         partition["recipients"][0]["name"] = "Lee, <b>x</b>"
         client = self._client()
@@ -11686,7 +11692,7 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertIn("Thank you,", payload["sample_body"])
         self.assertIn("E2", payload["sample_body"])
         self.assertIn("E3", payload["sample_body"])
-        html = r._report_body_html(payload["sample_body"], payload["subject"])
+        html = _report_body_html(payload["sample_body"], payload["subject"])
         self.assertIn("&lt;b&gt;x&lt;/b&gt;", html)
         self.assertNotIn("<b>x</b>", html)
         sender.assert_not_called()
@@ -11873,8 +11879,8 @@ class TestRevisionReminders(unittest.TestCase):
         resp.json.return_value = {"message": "slow down ana@example.edu"}
         resp.text = "slow down ana@example.edu"
         with unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}), \
-                unittest.mock.patch.object(r.requests, "post", return_value=resp) as posted, \
-                self.assertLogs("app.routes", level="ERROR") as logs:
+                unittest.mock.patch("app.helpers.report_email.requests.post", return_value=resp) as posted, \
+                self.assertLogs("app.helpers.report_email", level="ERROR") as logs:
             ok, err = r._send_via_resend(
                 "ana@example.edu",
                 "Subject",
