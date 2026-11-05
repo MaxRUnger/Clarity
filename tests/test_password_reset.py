@@ -165,10 +165,10 @@ class TestPasswordRulesOnBothRoutes(unittest.TestCase):
             "password": password,
             "invite_code": "",
         }
-        with patch("app.routes.supabase", shared), patch(
+        with patch("app.routes.auth.supabase", shared), patch(
             "app.helpers.account_mail.Config.IS_PRODUCTION", False
         ), patch(
-            "app.routes.invite_code_is_valid", return_value=True
+            "app.routes.auth.invite_code_is_valid", return_value=True
         ), patch(
             "app.helpers.account_mail.Config.PUBLIC_BASE_URL",
             "https://clarity.example",
@@ -191,9 +191,9 @@ class TestPasswordRulesOnBothRoutes(unittest.TestCase):
             {"role": "instructor"}
         ]
         with patch(
-            "app.routes.verify_recovery_token", verify
-        ), patch("app.routes.supabase", shared), patch(
-            "app.routes.supabase_admin", admin
+            "app.routes.auth.verify_recovery_token", verify
+        ), patch("app.routes.auth.supabase", shared), patch(
+            "app.routes.auth.supabase_admin", admin
         ), patch(
             "app.helpers.account_mail.supabase_admin", admin
         ), patch(
@@ -255,7 +255,7 @@ class TestForgotPassword(unittest.TestCase):
         _rate_limit_events.clear()
 
     def _post(self, email, admin):
-        with patch("app.routes.supabase_admin", admin), patch(
+        with patch("app.routes.auth.supabase_admin", admin), patch(
             "app.helpers.account_mail.supabase_admin", admin
         ), patch(
             "app.helpers.account_mail.Config.PUBLIC_BASE_URL",
@@ -366,7 +366,7 @@ class TestForgotPassword(unittest.TestCase):
 
     def test_empty_public_base_sends_nothing(self):
         admin = MagicMock()
-        with patch("app.routes.supabase_admin", admin), patch(
+        with patch("app.routes.auth.supabase_admin", admin), patch(
             "app.helpers.account_mail.Config.PUBLIC_BASE_URL", "", create=True
         ):
             response = self.client.post(
@@ -484,8 +484,8 @@ class TestResetPassword(unittest.TestCase):
         verified.user.email = "ada.lovelace@school.edu"
         verify = MagicMock(return_value=verified)
         with patch(
-            "app.routes.verify_recovery_token", verify
-        ), patch("app.routes.supabase_admin", admin), patch(
+            "app.routes.auth.verify_recovery_token", verify
+        ), patch("app.routes.auth.supabase_admin", admin), patch(
             "app.helpers.account_mail.supabase_admin", admin
         ), patch(
             "app.helpers.authentication.supabase_admin", admin
@@ -642,7 +642,7 @@ class TestResetPages(unittest.TestCase):
             sess["session_token"] = "absent-token"
         empty = MagicMock()
         empty.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
-        with patch("app.routes.supabase_admin", empty):
+        with patch("app.routes.auth.supabase_admin", empty):
             forgot = self.client.get("/forgot-password")
             reset = self.client.get("/reset-password")
         self.assertEqual(forgot.status_code, 200)
@@ -689,7 +689,7 @@ class TestResetPages(unittest.TestCase):
         from app.helpers.rate_limit import _rate_limit_events
 
         _rate_limit_events.clear()
-        with patch("app.routes.supabase_admin", admin), patch(
+        with patch("app.routes.auth.supabase_admin", admin), patch(
             "app.helpers.account_mail.supabase_admin", admin
         ), patch(
             "app.helpers.account_mail.Config.PUBLIC_BASE_URL",
@@ -721,8 +721,8 @@ class TestResetPages(unittest.TestCase):
 
     def test_get_reset_does_not_call_verify_or_generate(self):
         admin = MagicMock()
-        with patch("app.routes.supabase_admin", admin), patch(
-            "app.routes.verify_recovery_token"
+        with patch("app.routes.auth.supabase_admin", admin), patch(
+            "app.routes.auth.verify_recovery_token"
         ) as verify:
             response = self.client.get("/reset-password")
         self.assertEqual(response.status_code, 200)
@@ -791,7 +791,7 @@ class TestPasswordResetCsrf(unittest.TestCase):
 
         admin = MagicMock()
         admin.auth.admin.generate_link.side_effect = RuntimeError("absent")
-        with patch("app.routes.supabase_admin", admin), patch(
+        with patch("app.routes.auth.supabase_admin", admin), patch(
             "app.helpers.account_mail.Config.PUBLIC_BASE_URL",
             "https://clarity.example",
             create=True,
@@ -812,9 +812,9 @@ class TestPasswordResetCsrf(unittest.TestCase):
             {"role": "instructor"}
         ]
         with patch(
-            "app.routes.verify_recovery_token",
+            "app.routes.auth.verify_recovery_token",
             MagicMock(return_value=verified),
-        ), patch("app.routes.supabase_admin", reset_admin), patch(
+        ), patch("app.routes.auth.supabase_admin", reset_admin), patch(
             "app.helpers.account_mail.supabase_admin", reset_admin
         ), patch(
             "app.helpers.authentication.supabase_admin", reset_admin
@@ -894,7 +894,7 @@ class TestVerifyRecoveryToken(unittest.TestCase):
         with patch(
             "app.helpers.account_mail.new_anon_client",
             side_effect=[client_one, client_two],
-        ), patch("app.routes.supabase", shared):
+        ), patch("app.routes.auth.supabase", shared):
             one = verify_recovery_token("hash123")
             two = verify_recovery_token("other-token")
         client_one.auth.verify_otp.assert_called_once_with(
@@ -931,9 +931,9 @@ class TestResetRevokeOrder(unittest.TestCase):
         verified.user.id = "instructor-1"
         verified.user.email = "ada.lovelace@school.edu"
         with patch(
-            "app.routes.verify_recovery_token",
+            "app.routes.auth.verify_recovery_token",
             MagicMock(return_value=verified),
-        ), patch("app.routes.supabase_admin", admin), patch(
+        ), patch("app.routes.auth.supabase_admin", admin), patch(
             "app.helpers.account_mail.supabase_admin", admin
         ), patch(
             "app.helpers.app_sessions.revoke_user_sessions", revoke
@@ -1035,8 +1035,8 @@ class TestResetPasswordGate(unittest.TestCase):
     def _post(self, *, password, verify, admin):
         with self.client.session_transaction() as sess:
             sess["csrf_token"] = "tok"
-        with patch("app.routes.verify_recovery_token", verify), patch(
-            "app.routes.supabase_admin", admin
+        with patch("app.routes.auth.verify_recovery_token", verify), patch(
+            "app.routes.auth.supabase_admin", admin
         ), patch(
             "app.helpers.account_mail.supabase_admin", admin
         ), patch(
@@ -1180,7 +1180,7 @@ class TestForgotPasswordHostHeader(unittest.TestCase):
             {"role": "instructor"}
         ]
         sender = MagicMock(return_value=_resend_ok())
-        with patch("app.routes.supabase_admin", admin), patch(
+        with patch("app.routes.auth.supabase_admin", admin), patch(
             "app.helpers.account_mail.supabase_admin", admin
         ), patch(
             "app.helpers.account_mail.Config.PUBLIC_BASE_URL",

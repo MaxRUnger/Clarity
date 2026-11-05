@@ -199,7 +199,7 @@ class TestFormulaImportRoundTrip(unittest.TestCase):
             self.assertEqual(rows[0]["email"], "ada@example.edu")
 
         with self.subTest("ui"):
-            from app import routes as routes_module
+            from app.routes import students as routes_module
             app = create_app()
             app.config["TESTING"] = True
             client = app.test_client()

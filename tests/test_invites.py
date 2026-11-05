@@ -50,7 +50,7 @@ class TestSignupInvites(unittest.TestCase):
             "password": "Correct-horse1!",
             "invite_code": code,
         }
-        with patch("app.routes.supabase", shared        ), patch(
+        with patch("app.routes.auth.supabase", shared        ), patch(
             "app.helpers.invites.supabase_admin", admin
         ), patch(
             "app.helpers.account_mail.Config.PUBLIC_BASE_URL",

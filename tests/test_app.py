@@ -4087,7 +4087,7 @@ class TestMaxLengthValidation(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
 
     def test_add_student_without_a_comma_rejects_before_the_database(self):
-        from app import routes as r
+        from app.routes import students as r
         self._instructor_session()
         sa = MagicMock()
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
@@ -4102,7 +4102,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         sa.table.assert_not_called()
 
     def test_add_student_stores_the_normalized_canvas_name(self):
-        from app import routes as r
+        from app.routes import students as r
         self._instructor_session()
         sa = MagicMock()
         q = MagicMock()
@@ -4136,7 +4136,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         self.assertEqual(set(profile_row), {"id", "full_name", "role", "email", "email_set_at"})
 
     def test_add_student_rejects_a_256_character_comma_name_before_the_database(self):
-        from app import routes as r
+        from app.routes import students as r
         self._instructor_session()
         sa = MagicMock()
         long_name = ("A" * 253) + ", Y"
@@ -4153,7 +4153,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         sa.table.assert_not_called()
 
     def test_api_update_student_without_a_comma_does_not_update_the_profile(self):
-        from app import routes as r
+        from app.routes import students as r
         self._instructor_session()
         sa = MagicMock()
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
@@ -4169,7 +4169,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         sa.table.assert_not_called()
 
     def test_api_update_student_writes_full_name_only(self):
-        from app import routes as r
+        from app.routes import students as r
         self._instructor_session()
         sa = MagicMock()
         q = MagicMock()
@@ -4200,7 +4200,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         self.assertEqual(set(payload), {"full_name", "email", "email_set_at"})
 
     def _post_shared_profile_update(self, enrollments, classes):
-        from app import routes as r
+        from app.routes import students as r
         updates = []
         store = {
             "classes": classes,
@@ -4580,7 +4580,7 @@ class TestStudentEmailMatch(unittest.TestCase):
         return client
 
     def _post_add(self, client, sa, body):
-        from app import routes as r
+        from app.routes import students as r
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch(
                     "app.helpers.enrollment.supabase_admin", sa
@@ -4593,7 +4593,7 @@ class TestStudentEmailMatch(unittest.TestCase):
             )
 
     def _post_edit(self, client, sa, body, student_id="stu-1"):
-        from app import routes as r
+        from app.routes import students as r
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch(
                     "app.helpers.enrollment.supabase_admin", sa
@@ -4818,7 +4818,7 @@ class TestStudentEmailMatch(unittest.TestCase):
         }])
 
     def _post_csv(self, client, sa, path, text):
-        from app import routes as r
+        from app.routes import students as r
         payload = {"file": (io.BytesIO(text.encode("utf-8")), "students.csv")}
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch(
@@ -5078,7 +5078,7 @@ class TestStudentEmailMatch(unittest.TestCase):
         self.assertEqual(enrollments.inserts, [])
 
     def _post_unenrolled(self, path, json_body=None):
-        from app import routes as r
+        from app.routes import students as r
         client = self._client()
         sa = unittest.mock.MagicMock()
         query = unittest.mock.MagicMock()
@@ -5118,7 +5118,7 @@ class TestStudentEmailMatch(unittest.TestCase):
         query.update.assert_not_called()
 
     def _post_enrolled(self, path, json_body=None):
-        from app import routes as r
+        from app.routes import students as r
         client = self._client()
         sa = unittest.mock.MagicMock()
         query = unittest.mock.MagicMock()
@@ -6196,7 +6196,7 @@ class TestClassSectionNumber(unittest.TestCase):
     def test_history_enrollment_select_includes_email_once(self):
         from flask import session
         from unittest.mock import MagicMock, patch
-        from app.routes import student_history
+        from app.routes.reports import student_history
         selects = []
 
         def select(cols):
@@ -6211,9 +6211,9 @@ class TestClassSectionNumber(unittest.TestCase):
         with app.test_request_context("/class/c1/student/s1/history"):
             session["user_id"] = "u1"
             session["role"] = "instructor"
-            with patch("app.routes._instructor_owns_class", return_value=True), \
+            with patch("app.routes.reports._instructor_owns_class", return_value=True), \
                  patch("app.models.Course.get_full_class_data", return_value={"name": "MW", "learning_objectives": []}), \
-                 patch("app.routes.supabase_admin") as sb:
+                 patch("app.routes.reports.supabase_admin") as sb:
                 sb.table.return_value.select.side_effect = select
                 result = student_history("c1", "s1")
         self.assertEqual(result.status_code, 302)
@@ -6226,7 +6226,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         import json
         from flask import session
         from unittest.mock import MagicMock, patch
-        from app.routes import student_history
+        from app.routes.reports import student_history
 
         self.grade_selects = []
         self.grade_eqs = []
@@ -6276,7 +6276,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         with app.test_request_context("/class/c1/student/s1/history"):
             session["user_id"] = "u1"
             session["role"] = "instructor"
-            with patch("app.routes._instructor_owns_class", return_value=True), \
+            with patch("app.routes.reports._instructor_owns_class", return_value=True), \
                  patch("app.models.Course.get_full_class_data", return_value={
                      "name": "Test Upload",
                      "days": "MW",
@@ -6287,10 +6287,10 @@ class TestStudentHistoryOrder(unittest.TestCase):
                          "description": "",
                      }],
                  }), \
-                 patch("app.routes.objectives_attached_to_assignments", side_effect=lambda class_id, pool: list(pool or [])), \
-                 patch("app.routes.load_assignments_for_class", return_value=assignments) as load_assignments, \
-                 patch("app.routes._report_sender_name", return_value="Estes"), \
-                 patch("app.routes.supabase_admin") as sb:
+                 patch("app.routes.reports.objectives_attached_to_assignments", side_effect=lambda class_id, pool: list(pool or [])), \
+                 patch("app.routes.reports.load_assignments_for_class", return_value=assignments) as load_assignments, \
+                 patch("app.routes.reports._report_sender_name", return_value="Estes"), \
+                 patch("app.routes.reports.supabase_admin") as sb:
                 sb.table.side_effect = table
                 html = student_history("c1", "s1")
         payload_match = re.search(
@@ -6625,7 +6625,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
     def _render_batch(self, enrollments, grades, assignments, query, objectives=None, fail=None):
         from flask import session
         from unittest.mock import patch
-        from app.routes import student_history_print
+        from app.routes.reports import student_history_print
 
         if objectives is None:
             objectives = [{
@@ -6644,7 +6644,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         with app.test_request_context(path):
             session["user_id"] = "prof-1"
             session["role"] = "instructor"
-            with patch("app.routes.supabase_admin", admin), \
+            with patch("app.routes.reports.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.helpers.history_packet.supabase_admin", admin), \
                  patch("app.helpers.class_data.supabase_admin", admin), \
@@ -6808,7 +6808,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
     def test_batch_history_requires_login_and_rejects_other_owner(self):
         from flask import session
         from unittest.mock import patch
-        from app.routes import student_history_print
+        from app.routes.reports import student_history_print
 
         app = create_app()
         client = app.test_client()
@@ -6818,7 +6818,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         with app.test_request_context("/class/c1/student-history/print"):
             session["user_id"] = "prof-1"
             session["role"] = "instructor"
-            with patch("app.routes._instructor_owns_class", return_value=False):
+            with patch("app.routes.reports._instructor_owns_class", return_value=False):
                 denied = student_history_print("c1")
         self.assertEqual(denied, ("Forbidden", 403))
 
@@ -6881,7 +6881,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
 
     def test_batch_route_does_not_read_search(self):
         import inspect
-        from app.routes import student_history_print
+        from app.routes.reports import student_history_print
 
         source = inspect.getsource(inspect.unwrap(student_history_print))
         self.assertNotIn("request.args", source)
@@ -6889,7 +6889,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
     def test_batch_and_single_pages_render_the_same_table(self):
         from flask import session
         from unittest.mock import patch
-        from app.routes import student_history, student_history_print
+        from app.routes.reports import student_history, student_history_print
 
         objectives = [
             {"id": "lo-10", "name": "Ten", "vendor_code": "AO10", "description": "Ten", "required_ms": 1},
@@ -6946,7 +6946,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         with app.test_request_context("/class/c1/student/s-adams/history"):
             session["user_id"] = "prof-1"
             session["role"] = "instructor"
-            with patch("app.routes.supabase_admin", admin), \
+            with patch("app.routes.reports.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.helpers.class_data.supabase_admin", admin), \
                  patch("app.helpers.class_access.supabase_admin", admin), \
@@ -6955,7 +6955,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
         with app.test_request_context("/class/c1/student-history/print"):
             session["user_id"] = "prof-1"
             session["role"] = "instructor"
-            with patch("app.routes.supabase_admin", admin), \
+            with patch("app.routes.reports.supabase_admin", admin), \
                  patch("app.helpers.class_progress.supabase_admin", admin), \
                  patch("app.helpers.history_packet.supabase_admin", admin), \
                  patch("app.helpers.class_data.supabase_admin", admin), \
@@ -7637,7 +7637,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         return sa
 
     def _run_removal(self, method, path, log, fail_delete=None, owns=True, enrolled=True):
-        from app import routes as r
+        from app.routes import students as r
         client = self._client()
         sa = self._removal_sa(log, fail_delete=fail_delete)
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
@@ -7754,7 +7754,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
             "enrollments": enrollments,
             "profiles": profiles,
         }[name]
-        from app import routes as r
+        from app.routes import students as r
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch(
                     "app.helpers.enrollment.supabase_admin", sa
@@ -7770,7 +7770,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
         self.assertEqual(profiles.updates, [])
 
     def test_helper_rejects_the_same_name_and_email_on_add_and_edit(self):
-        from app import routes as r
+        from app.routes import students as r
         cases = (
             ({"name": "Smith Cali", "email": "a@b.edu"}, COMMA_REQUIRED),
             ({"name": "Smith, Cali", "email": "not-an-email"}, "Invalid email format"),
@@ -9155,7 +9155,7 @@ class TestClassArchiveExport(unittest.TestCase):
 
     def test_non_owner_gets_no_zip(self):
         client = self._client()
-        with unittest.mock.patch("app.routes._instructor_owns_class", return_value=False), \
+        with unittest.mock.patch("app.routes.archives._instructor_owns_class", return_value=False), \
                 unittest.mock.patch("app.helpers.archive_export.build_class_archive_zip") as build:
             response = client.get("/class/c-archive/export-archive")
         self.assertEqual(response.status_code, 302)
@@ -9167,12 +9167,12 @@ class TestClassArchiveExport(unittest.TestCase):
         from werkzeug.utils import secure_filename
         client = self._client()
         manifest = {"class_name": "Alg II"}
-        with unittest.mock.patch("app.routes._instructor_owns_class", return_value=True), \
+        with unittest.mock.patch("app.routes.archives._instructor_owns_class", return_value=True), \
                 unittest.mock.patch(
                     "app.helpers.archive_export.build_class_archive_zip",
                     return_value=(b"PK\x03\x04archive", manifest),
                 ), \
-                unittest.mock.patch("app.routes.supabase_admin") as admin:
+                unittest.mock.patch("app.routes.archives.supabase_admin") as admin:
             admin.table.side_effect = AssertionError("export must not touch the database")
             response = client.get("/class/c-archive/export-archive")
         self.assertEqual(response.status_code, 200)
@@ -9182,7 +9182,7 @@ class TestClassArchiveExport(unittest.TestCase):
 
         empty = dict(manifest)
         empty["class_name"] = ""
-        with unittest.mock.patch("app.routes._instructor_owns_class", return_value=True), \
+        with unittest.mock.patch("app.routes.archives._instructor_owns_class", return_value=True), \
                 unittest.mock.patch(
                     "app.helpers.archive_export.build_class_archive_zip",
                     return_value=(b"PK\x03\x04archive", empty),
@@ -9327,7 +9327,7 @@ class TestClassArchiveRoute(unittest.TestCase):
         snapshot_override=None,
     ):
         from uuid import UUID
-        from app import routes as r
+        from app.routes import archives as r
         from app.helpers.rate_limit import _rate_limit_events
         import app.helpers.archive_storage as storage
 
@@ -9859,7 +9859,7 @@ class TestArchivedClasses(unittest.TestCase):
         monotonic=None,
         fail_delete=None,
     ):
-        from app import routes as r
+        from app.routes import archives as r
         from app.helpers.rate_limit import _rate_limit_events
         import app.helpers.archive_storage as storage
 
@@ -11109,7 +11109,7 @@ class TestSignupEmailRedirect(unittest.TestCase):
         supabase.auth.sign_up.reset_mock()
         with unittest.mock.patch("config.Config.IS_PRODUCTION", production), \
                 unittest.mock.patch(
-                    "app.routes.invite_code_is_valid", return_value=True
+                    "app.routes.auth.invite_code_is_valid", return_value=True
                 ), \
                 unittest.mock.patch(
                     "config.Config.PUBLIC_BASE_URL", public_base, create=True

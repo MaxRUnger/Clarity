@@ -76,7 +76,7 @@ class TestGzipCap(unittest.TestCase):
         self.fail("oversized gzip was accepted")
 
     def test_restore_rejects_a_small_patched_cap_and_leaves_the_archive(self):
-        from app import routes as r
+        from app.routes import archives as r
         blob = gzip.compress(b"z" * 400)
         archive_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         row = {
@@ -178,6 +178,7 @@ class TestCacheControl(unittest.TestCase):
 
     def test_archive_download_and_csv_export_are_no_store(self):
         from app import routes as r
+        from app.routes import archives as archive_routes
         client = self._session_client()
         archive_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         row = {
@@ -187,7 +188,7 @@ class TestCacheControl(unittest.TestCase):
         }
         logger, handler, records, previous = _messages("app.routes")
         try:
-            with unittest.mock.patch.object(r, "_owned_archive_row", return_value=row), \
+            with unittest.mock.patch.object(archive_routes, "_owned_archive_row", return_value=row), \
                     unittest.mock.patch(
                         "app.helpers.archive_storage.download_archive", return_value=b"PK"
                     ):
@@ -226,7 +227,7 @@ class TestCacheControl(unittest.TestCase):
 
 class TestArchiveZipLimit(unittest.TestCase):
     def test_export_uses_the_shared_byte_limit(self):
-        from app import routes as r
+        from app.routes import archives as r
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()
@@ -342,7 +343,7 @@ class TestSensitiveLogs(unittest.TestCase):
         self.assertNotIn("@", text)
 
     def test_roster_edit_log_names_the_actor_and_class(self):
-        from app import routes as r
+        from app.routes import students as r
         app = create_app()
         app.config["TESTING"] = True
         client = app.test_client()

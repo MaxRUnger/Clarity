@@ -17,14 +17,10 @@ variable ``MULTI_WORKER=1`` to log a one-time warning at startup (see
 ``create_app`` in ``app/__init__.py``).
 """
 
-import hashlib
 import logging
 import os
-import secrets
-import time
 from datetime import date
 from typing import Any, Dict, List, Tuple
-from urllib.parse import quote
 from flask import (  # type: ignore
     render_template,
     request,
@@ -35,14 +31,7 @@ from flask import (  # type: ignore
     Response,
 )
 from werkzeug.utils import secure_filename
-from app.helpers.authentication import supabase, supabase_admin
-from app.helpers.account_mail import (
-    _forgot_ok,
-    _profile_role,
-    _public_base_url,
-    _send_account_email,
-    verify_recovery_token,
-)
+from app.helpers.authentication import supabase_admin
 from app.helpers.report_email import (
     EMAIL_CAP_UNAVAILABLE,
     EMAIL_HOLD_MESSAGE,
@@ -53,7 +42,6 @@ from app.helpers.report_email import (
     _ADDRESS_KINDS,
     _cap_block_reason,
     _email_cap_counts,
-    _email_set_timestamp,
     _record_email_send,
     _report_footer,
     _report_sender_name,
@@ -62,10 +50,8 @@ from app.helpers.report_email import (
     email_recipient_hash,
     instructor_title,
 )
-from app.helpers.passwords import password_error
 from app.helpers.local_time import local_today
 from app.helpers.calendar_dates import clean_assignment_dates
-from app.helpers.invites import invite_code_is_valid
 from app.helpers.paging import fetch_all_rows
 from app.models import (
     Course,
@@ -77,7 +63,6 @@ from app.models import (
 from app.helpers.student_names import (
     display_name,
     name_key,
-    normalize_email,
     row_sort_key,
 )
 from app.helpers.lo_import import (
@@ -86,14 +71,6 @@ from app.helpers.lo_import import (
     _select_class_pool_learning_objectives,
     annotate_learning_objective_rows_for_preview,
     import_learning_objectives_rows,
-)
-from app.helpers.enrollment import (
-    _classify_student_csv_rows,
-    _instructor_student_email_index,
-    _profile_used_by_another_instructor,
-    _student_csv_rejection,
-    decide_student_enrollment,
-    validate_student_name_and_email,
 )
 from app.helpers.class_form import (
     CLASS_DAYS,
@@ -122,7 +99,6 @@ from app.helpers.csv_text import (
 )
 from app.helpers.form_tokens import _consume_one_time_form_token
 from app.helpers.auth_decorators import (
-    _session_expired_response,
     api_instructor_required,
     api_login_required,
     login_required,
@@ -132,10 +108,7 @@ from app.helpers.free_passes import (
     _batch_get_free_passes,
     _promote_non_counting_masteries_for_student,
 )
-from app.helpers.csv_upload import (
-    _parse_lo_csv_upload,
-    _parse_student_csv_upload,
-)
+from app.helpers.csv_upload import _parse_lo_csv_upload
 from app.helpers.gradesheet_csv import (
     _build_gradesheet_csv_text,
     _enrolled_import_name_index,
@@ -148,13 +121,10 @@ from app.helpers.class_access import (
     _class_auto_convert_m_enabled,
     _enrolled_student_ids_for_class,
     _instructor_owns_class,
-    _owned_class_row,
     _student_enrolled_in_class,
 )
 from app.helpers.class_progress import (
     _process_enrollments,
-    class_lo_lookup,
-    class_progress,
     normalize_profile,
     objectives_attached_to_assignments,
 )
@@ -170,26 +140,7 @@ from app.helpers.grade_log import (
     delete_grades_outside_linked_objectives,
     grades_outside_linked_objectives,
 )
-from app.helpers.class_removal import (
-    _filter_query,
-    class_student_removal_counts,
-    class_student_removal_filters,
-    delete_class_rows,
-)
-from app.helpers.class_archive import (
-    _ARCHIVE_ID,
-    _RESTORE_FAILED,
-    _RESTORE_TABLES,
-    _archive_size_label,
-    _delete_restore_attempt,
-    _owned_archive_row,
-    _remove_archive_object,
-    _restore_chunks,
-    _restore_class_id,
-    _restore_error_text,
-    _restore_known_message,
-    _zip_over_archive_limit,
-)
+from app.helpers.class_removal import delete_class_rows
 from app.helpers.gradesheet_lookup import _gradesheet_letter_map_for_assignment
 from app.helpers.assignment_rows import (
     _assignment_type_fields_from_payload,
@@ -199,322 +150,23 @@ from app.helpers.api_input import (
     _require_json_object,
     _safe_api_error,
 )
-from app.helpers.history_packet import (
-    _HISTORY_GRADE_COLS,
-    _HISTORY_LO_CHUNK,
-    _HISTORY_PRINT_ERROR,
-    _grades_for_this_class,
-    _history_objective_ids,
-    _history_packet_grades,
-    student_history_sheet,
-)
-from app.helpers.session_status import (
-    _session_seconds_left,
-    _session_status_response,
-)
-from app.helpers.rate_limit import rate_limited, _rate_limit, _rate_limit_bucket
+from app.helpers.rate_limit import rate_limited
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
 from app.routes.blueprint import main_bp
 
-ROUTE_MODULES = ()
-
-_INSTRUCTOR_HOME = "/instructor/dashboard"
-
+ROUTE_MODULES = (
+    "app.routes.reports",
+    "app.routes.auth",
+    "app.routes.students",
+    "app.routes.archives",
+)
 
 _HW_REQUIRED_FOR_MARK_ERROR = (
     "Enter a homework % for this student before saving a grade other than A (Absent)."
 )
-
-
-# ============================================================================
-# AUTHENTICATION ROUTES
-# ============================================================================
-
-@main_bp.route("/")
-@main_bp.route("/login")
-def login_page():
-    return render_template("auth/login.html")
-
-@main_bp.route("/signup")
-def signup_page():
-    return render_template("auth/signup.html")
-
-
-@main_bp.route("/forgot-password")
-def forgot_password_page():
-    return render_template("auth/forgot_password.html")
-
-
-@main_bp.route("/reset-password")
-def reset_password_page():
-    return render_template("auth/reset_password.html")
-
-
-@main_bp.route("/logout", methods=["POST"])
-def logout():
-    from app.helpers.app_sessions import revoke_live_session
-    reason = request.form.get("reason")
-    try:
-        revoke_live_session(session.get("session_token"), session.get("user_id"))
-    except Exception as exc:
-        logger.error(
-            "app_sessions revoke failed user_id=%s: %s",
-            session.get("user_id"),
-            exc,
-        )
-    session.clear()
-    if reason == "inactivity":
-        return redirect(url_for("main.login_page", reason="inactivity"))
-    return redirect(url_for("main.login_page"))
-
-
-@main_bp.route("/api/session-status")
-def session_status():
-    if "user_id" not in session:
-        return _session_status_response({
-            "success": False,
-            "error": "Unauthorized",
-            "code": "session_expired",
-        }, 401)
-    remaining = _session_seconds_left()
-    if remaining is None:
-        return _session_status_response({
-            "success": False,
-            "error": "Unauthorized",
-            "code": "session_expired",
-        }, 401)
-    return _session_status_response({"ok": True, "seconds_left": remaining}, 200)
-
-
-@main_bp.route("/api/session-keepalive", methods=["POST"])
-def session_keepalive():
-    if "user_id" not in session:
-        return _session_expired_response()
-    return jsonify({"ok": True})
-
-@main_bp.route("/api/set-instructor-mode", methods=["POST"])
-@api_login_required
-def set_instructor_mode():
-    data = request.get_json() or {}
-    mode = data.get('mode')
-    if mode not in ('mark', 'shelbi'):
-        return jsonify({"success": False, "error": "Invalid mode"}), 400
-    session['instructor_mode'] = mode
-    return jsonify({"success": True, "mode": mode})
-
-@main_bp.route("/api/login", methods=["POST"])
-@rate_limited("api_login", limit=20, window_sec=300)
-def login():
-    data = request.get_json()
-    try:
-        result = supabase.auth.sign_in_with_password({
-            "email": data.get("email"), "password": data.get("password")
-        })
-        if result.user:
-            user_id = result.user.id
-            try:
-                prof_resp = (
-                    supabase_admin.table("profiles")
-                    .select("role")
-                    .eq("id", user_id)
-                    .limit(1)
-                    .execute()
-                )
-            except Exception as e:
-                logger.error("profiles.role lookup failed for %s: %s", user_id, e)
-                return jsonify({"success": False, "message": "Invalid credentials"}), 401
-
-            role = ""
-            if prof_resp.data:
-                role = (prof_resp.data[0].get("role") or "").strip().lower()
-            if role != "instructor":
-                return jsonify({"success": False, "message": "Invalid credentials"}), 401
-
-            from app.helpers.app_sessions import (
-                absolute_expiry,
-                delete_stale_sessions,
-                new_session_token,
-                remember_app_session,
-            )
-            token = new_session_token()
-            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-            expires_at = absolute_expiry()
-            supabase_admin.table("app_sessions").insert({
-                "token_hash": token_hash,
-                "user_id": user_id,
-                "expires_at": expires_at.isoformat(),
-            }).execute()
-            remember_app_session(token_hash, user_id, expires_at, time.monotonic())
-            session.clear()
-            session['user_id'] = user_id
-            session['role'] = role
-            session['full_name'] = result.user.user_metadata.get('full_name', '')
-            session['csrf_token'] = secrets.token_urlsafe(32)
-            session['session_token'] = token
-            try:
-                delete_stale_sessions()
-            except Exception as exc:
-                logger.error(
-                    "app_sessions cleanup failed user_id=%s: %s",
-                    user_id,
-                    exc,
-                )
-            return jsonify({"success": True, "redirect": _INSTRUCTOR_HOME})
-        return jsonify({"success": False, "message": "Invalid credentials"})
-    except Exception as e:
-        return _safe_api_error("Invalid credentials", 401, log_detail=e)
-
-
-@main_bp.route("/api/signup", methods=["POST"])
-@rate_limited("api_signup", limit=10, window_sec=300)
-def signup():
-    data = request.get_json()
-    try:
-        submitted = (data.get("invite_code") or "").strip()
-        if not invite_code_is_valid(submitted):
-            return jsonify({"success": False, "message": "Invalid invite code."}), 403
-
-        signup_name = (data.get("name") or "").strip()
-        if len(signup_name) > 255:
-            return jsonify({"success": False, "message": "Name must be 255 characters or fewer."}), 400
-
-        login_redirect_url = _public_base_url()
-        if not login_redirect_url:
-            return jsonify({"success": False, "message": "Signup is not available."}), 403
-        problem = password_error(data.get("password"), data.get("email"))
-        if problem:
-            return jsonify({"success": False, "message": problem}), 400
-        login_redirect_url = f"{login_redirect_url}/login"
-        result = supabase.auth.sign_up({
-            "email": data.get("email"),
-            "password": data.get("password"),
-            "options": {
-                "email_redirect_to": login_redirect_url,
-                "data": {
-                    "full_name": data.get("name"),
-                    "invite_code": submitted
-                }
-            }
-        })
-
-        if result.user:
-            # Registration succeeds, but account access is blocked until email confirmation.
-            # Do not create an authenticated app session at signup time.
-            session.clear()
-            return jsonify({
-                "success": True,
-                "requires_email_confirmation": True,
-                "message": "Account created. Please confirm your email before signing in.",
-            })
-        return jsonify({"success": False, "message": "Failed to create account. Please try again."})
-
-    except Exception as e:
-        return _safe_api_error("Signup failed. Please try again.", 400, log_detail=e)
-
-
-@main_bp.route("/api/forgot-password", methods=["POST"])
-def forgot_password():
-    data, error = _require_json_object()
-    if error:
-        return error
-    if not _rate_limit("forgot_password_ip", 10, 900):
-        return jsonify({"success": False, "error": "Rate limit exceeded. Please retry shortly."}), 429
-    email = normalize_email((data or {}).get("email"))
-    if not email:
-        return jsonify({"success": False, "message": "Enter a valid email address."}), 400
-    if not _rate_limit_bucket(f"forgot_password_email:{email}", 5, 3600):
-        return jsonify({"success": False, "error": "Rate limit exceeded. Please retry shortly."}), 429
-    base = _public_base_url()
-    if not base:
-        return jsonify({"success": False, "message": "Password reset is not available."}), 403
-    try:
-        link = supabase_admin.auth.admin.generate_link({
-            "type": "recovery",
-            "email": email,
-            "options": {"redirect_to": f"{base}/reset-password"},
-        })
-    except Exception as exc:
-        logger.error("Password reset link failed: %s", type(exc).__name__)
-        return _forgot_ok()
-    user = getattr(link, "user", None)
-    user_id = getattr(user, "id", None) if user is not None else None
-    properties = getattr(link, "properties", None)
-    hashed = getattr(properties, "hashed_token", None) if properties is not None else None
-    if not user_id or not hashed:
-        return _forgot_ok()
-    if _profile_role(user_id) != "instructor":
-        return _forgot_ok()
-    if not _rate_limit_bucket(f"forgot_password_account:{user_id}", 3, 3600):
-        return _forgot_ok()
-    token = quote(str(hashed), safe="")
-    mailed = quote(email, safe="")
-    url = f"{base}/reset-password#token_hash={token}&type=recovery&email={mailed}"
-    _send_account_email(
-        email,
-        "Reset your Clarity Grader password",
-        "Use this link to choose a new Clarity Grader password. It expires in one hour.\n\n"
-        f"{url}\n\n"
-        "If you did not ask for this, you can ignore this message.\n",
-    )
-    return _forgot_ok()
-
-
-@main_bp.route("/api/reset-password", methods=["POST"])
-def reset_password():
-    data, error = _require_json_object()
-    if error:
-        return error
-    email = normalize_email((data or {}).get("email"))
-    token_hash = str((data or {}).get("token_hash") or "").strip()
-    password = (data or {}).get("password")
-    if not email or not token_hash or not isinstance(password, str):
-        return jsonify({"success": False, "message": "This reset link is invalid or expired."}), 400
-    problem = password_error(password, email)
-    if problem:
-        return jsonify({"success": False, "message": problem}), 400
-    if not _rate_limit("reset_password_ip", 10, 900):
-        return jsonify({"success": False, "error": "Rate limit exceeded. Please retry shortly."}), 429
-    try:
-        verified = verify_recovery_token(token_hash)
-    except Exception as exc:
-        logger.error("Password reset verify failed: %s", type(exc).__name__)
-        return jsonify({"success": False, "message": "This reset link is invalid or expired."}), 400
-    user = getattr(verified, "user", None)
-    user_id = getattr(user, "id", None) if user is not None else None
-    verified_email = normalize_email(
-        getattr(user, "email", None) if user is not None else None
-    )
-    if not user_id or verified_email != email or _profile_role(user_id) != "instructor":
-        return jsonify({"success": False, "message": "This reset link is invalid or expired."}), 400
-    try:
-        from app.helpers.app_sessions import revoke_user_sessions
-        revoke_user_sessions(user_id)
-    except Exception as exc:
-        logger.error("Password reset session revoke failed: %s", type(exc).__name__)
-        return jsonify({
-            "success": False,
-            "message": "We couldn't save the new password. Request a new reset link.",
-        }), 500
-    try:
-        supabase_admin.auth.admin.update_user_by_id(user_id, {"password": password})
-    except Exception as exc:
-        logger.error("Password reset update failed: %s", type(exc).__name__)
-        return jsonify({
-            "success": False,
-            "message": "We couldn't save the new password. Request a new reset link.",
-        }), 400
-    sent = _send_account_email(
-        email,
-        "Your Clarity Grader password was changed",
-        "Your Clarity Grader password was changed.\n\n"
-        "If you did not make this change, contact the site owner.\n",
-    )
-    if not sent:
-        logger.error("Password changed notice failed")
-    return jsonify({"success": True, "redirect": "/login?reset=1"})
 
 
 # ============================================================================
@@ -668,201 +320,6 @@ def class_learning_objectives_summary(class_id):
     )
 
 
-@main_bp.route("/class/<class_id>/add_student", methods=["POST"])
-@api_instructor_required
-def add_student(class_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    data = request.get_json() or {}
-    raw_email = data.get("email") or ""
-    raw_name = data.get("name") or ""
-
-    name, email, name_error = validate_student_name_and_email(raw_name, raw_email)
-    if name_error:
-        return jsonify({"success": False, "error": name_error}), 400
-
-    owner_id = session.get("user_id")
-    try:
-        index = _instructor_student_email_index(owner_id)
-        outcome, stored_name, profile_id = decide_student_enrollment(
-            index, class_id, email, name
-        )
-        if outcome == "already_in_class":
-            return jsonify({
-                "success": False,
-                "error": "A student with that email is already in this class",
-            }), 409
-        if outcome == "name_differs":
-            return jsonify({
-                "success": False,
-                "error": (
-                    f"That email belongs to {stored_name}. "
-                    f"Enter the name as {stored_name} to add them to this class."
-                ),
-            }), 409
-        if outcome == "reuse":
-            supabase_admin.table("enrollments").insert({
-                "class_id": class_id,
-                "student_id": profile_id,
-            }).execute()
-            return jsonify({
-                "success": True,
-                "full_name": stored_name,
-            })
-        student_id = str(uuid4())
-        insert_row = {
-            "id": student_id,
-            "full_name": name,
-            "role": "student",
-            "email": email,
-            "email_set_at": _email_set_timestamp(),
-        }
-        supabase_admin.table("profiles").insert(insert_row).execute()
-        supabase_admin.table("enrollments").insert({
-            "class_id": class_id,
-            "student_id": student_id
-        }).execute()
-        return jsonify({
-            "success": True,
-            "full_name": name,
-        })
-    except Exception as e:
-        return _safe_api_error("Could not add student", 500, log_detail=e)
-
-
-@main_bp.route("/class/<class_id>/students/<student_id>/delete", methods=["POST"])
-@api_instructor_required
-def delete_student_from_class(class_id, student_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    if not _student_enrolled_in_class(class_id, student_id):
-        return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
-    try:
-        filters = class_student_removal_filters(class_id, student_id)
-        grade_scope = next((scope for table, scope in filters if table == "grades"), None)
-        if grade_scope:
-            audit = (
-                supabase_admin.table("grades")
-                .select(
-                    "student_id, learning_objective_id, assignment_id, top_score, "
-                    "second_score, counts_for_mastery"
-                )
-                .order("id")
-            )
-            existing = fetch_all_rows(_filter_query(audit, grade_scope))
-            _log_grade_deletions(existing, class_id, session["user_id"])
-        for table, scope in filters:
-            _filter_query(supabase_admin.table(table).delete(), scope).execute()
-        return jsonify({"success": True})
-    except Exception as e:
-        logger.error("Error deleting student %s from class %s: %s", student_id, class_id, e)
-        return _safe_api_error("Could not delete student", 500, log_detail=e)
-
-
-@main_bp.route("/api/class/<class_id>/students/<student_id>/removal-counts", methods=["GET"])
-@api_instructor_required
-def api_student_removal_counts(class_id, student_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    if not _student_enrolled_in_class(class_id, student_id):
-        return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
-    counts = class_student_removal_counts(class_id, student_id)
-    return jsonify({
-        "success": True,
-        "grade_rows": counts["grades"],
-        "homework_scores": counts["homework_scores"],
-    })
-
-
-@main_bp.route("/api/class/<class_id>/students/<student_id>/update", methods=["POST"])
-@api_instructor_required
-def api_update_student(class_id, student_id):
-    """Update a student's name and, when an email is sent, that email.
-
-    Ownership is verified two ways:
-    1. The instructor must own the class (via _instructor_owns_class).
-    2. The student must be enrolled in that class (via _student_enrolled_in_class),
-       preventing an instructor from editing a stranger's profile using a
-       student_id they guessed.
-    Email is required, lowercased, and stored. Another profile in this
-    instructor's classes cannot already have that email.
-    """
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    if not _student_enrolled_in_class(class_id, student_id):
-        return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
-
-    data = request.get_json() or {}
-    raw_name = data.get("name") or ""
-    raw_email = data.get("email") or ""
-
-    name, email, name_error = validate_student_name_and_email(raw_name, raw_email)
-    if name_error:
-        return jsonify({"success": False, "error": name_error}), 400
-
-    owner_id = session.get("user_id")
-    try:
-        index = _instructor_student_email_index(owner_id)
-        entry = index.get(email)
-        if entry and str(entry.get("profile_id")) != str(student_id):
-            return jsonify({
-                "success": False,
-                "error": "That email already belongs to another student in your classes",
-            }), 409
-        if _profile_used_by_another_instructor(student_id, owner_id):
-            return jsonify({
-                "success": False,
-                "error": (
-                    "This student is enrolled in another instructor's class. "
-                    "Nothing was changed."
-                ),
-            }), 409
-        current = (
-            supabase_admin.table("profiles")
-            .select("email")
-            .eq("id", student_id)
-            .limit(1)
-            .execute()
-        )
-        stored_raw = ""
-        rows = getattr(current, "data", None)
-        if isinstance(rows, list) and rows and isinstance(rows[0], dict):
-            stored_raw = rows[0].get("email") or ""
-        if not isinstance(stored_raw, str):
-            stored_raw = ""
-        changes = {"full_name": name, "email": email}
-        if normalize_email(stored_raw) != email:
-            changes["email_set_at"] = _email_set_timestamp()
-        supabase_admin.table("profiles").update(changes).eq("id", student_id).execute()
-        logger.info(
-            "roster edit user_id=%s class_id=%s",
-            owner_id,
-            class_id,
-        )
-        return jsonify({"success": True})
-    except Exception as e:
-        return _safe_api_error("Could not update student", 500, log_detail=e)
-
-
-@main_bp.route("/class/<class_id>/students")
-@login_required
-def class_students(class_id):
-    if not _instructor_owns_class(class_id):
-        return redirect(url_for('main.instructor_dashboard'))
-    class_data = Course.get_full_class_data(class_id)
-    
-    if not class_data:
-        return redirect(url_for('main.instructor_dashboard'))
-
-    students, _, _ = _process_enrollments(_class_data_for_progress(class_data))
-
-    return render_template("classes/class_students.html",
-                            class_id=class_id,
-                            class_name=class_data['name'],
-                            class_days=class_data.get("days"),
-                            class_section=class_data.get("section_number"),
-                            students=students)
-
 @main_bp.route("/class/<class_id>/delete", methods=["POST"])
 @api_instructor_required
 def delete_class(class_id):
@@ -874,423 +331,6 @@ def delete_class(class_id):
     except Exception as e:
         logger.error("Error deleting class %s: %s", class_id, e)
         return _safe_api_error("Could not delete class", 500, log_detail=e)
-
-
-@main_bp.route("/class/<class_id>/archive", methods=["POST"])
-@api_instructor_required
-@rate_limited("archive_create", limit=5, window_sec=3600)
-def archive_class(class_id):
-    from app.helpers.archive_export import build_class_archive_zip, check_archive_manifest
-    from app.helpers.archive_snapshot import build_class_snapshot
-    from app.helpers.archive_storage import (
-        download_archive,
-        remove_archive,
-        upload_archive,
-        upload_snapshot,
-    )
-
-    kept_error = (
-        "The class was archived, but it was not fully removed. "
-        "The archive is saved under Archived Classes. "
-        "Delete the class to finish removing it."
-    )
-    budget_error = (
-        "The archive took too long, or the class changed. Nothing was removed. Try again."
-    )
-    instructor_id = session["user_id"]
-    class_row = _owned_class_row(class_id, instructor_id)
-    if class_row is None:
-        return jsonify({
-            "success": False,
-            "error": "This class was not found. It may already be archived.",
-        }), 404
-    if request.form.get("confirm_name") != class_row.get("name"):
-        return jsonify({
-            "success": False,
-            "error": "Type the class name exactly to archive it.",
-        }), 400
-
-    archive_id = str(uuid4())
-    path = f"{instructor_id}/{archive_id}.zip"
-    snapshot_path = f"{instructor_id}/{archive_id}.snapshot.json.gz"
-    start = time.monotonic()
-
-    def discard(message):
-        for object_path in (snapshot_path, path):
-            try:
-                remove_archive(object_path)
-            except Exception:
-                logger.error("Could not remove archive at %s", object_path)
-        return jsonify({"success": False, "error": message}), 500
-
-    try:
-        zip_bytes, manifest = build_class_archive_zip(class_id)
-        check_archive_manifest(manifest, zip_bytes)
-    except Exception as exc:
-        logger.error("Could not build archive for class %s: %s", class_id, exc)
-        return jsonify({
-            "success": False,
-            "error": "Could not build the archive. Nothing was changed.",
-        }), 500
-    too_big = _zip_over_archive_limit(zip_bytes)
-    if too_big is not None:
-        return too_big
-    try:
-        snapshot_bytes = build_class_snapshot(class_id, manifest)
-    except Exception as exc:
-        logger.error("Could not build snapshot for class %s: %s", class_id, exc)
-        return jsonify({
-            "success": False,
-            "error": "Could not build the archive. Nothing was changed.",
-        }), 500
-    if time.monotonic() - start > 200:
-        return jsonify({"success": False, "error": budget_error}), 500
-    try:
-        upload_archive(path, zip_bytes)
-    except Exception as exc:
-        logger.error("Could not upload archive %s: %s", path, exc)
-        return discard("Could not save the archive. The class was not changed.")
-    try:
-        upload_snapshot(snapshot_path, snapshot_bytes)
-    except Exception as exc:
-        logger.error("Could not upload snapshot %s: %s", snapshot_path, exc)
-        return discard("Could not save the archive. The class was not changed.")
-    try:
-        saved = download_archive(path)
-        mismatch = saved != zip_bytes
-        check_archive_manifest(manifest, saved)
-        if mismatch:
-            raise ValueError("downloaded archive bytes do not match the upload")
-        del saved
-        saved_snapshot = download_archive(snapshot_path)
-        if saved_snapshot != snapshot_bytes:
-            raise ValueError("downloaded snapshot bytes do not match the upload")
-        del saved_snapshot
-        size_bytes = len(zip_bytes)
-        del zip_bytes
-        del snapshot_bytes
-    except Exception as exc:
-        logger.error("Archive %s failed verification: %s", path, exc)
-        return discard(
-            "The saved archive did not verify and was removed. The class was not changed."
-        )
-    try:
-        again = _owned_class_row(class_id, instructor_id)
-    except Exception as exc:
-        logger.error("Could not re-check class %s before recording the archive: %s", class_id, exc)
-        return discard(budget_error)
-    if again is None or time.monotonic() - start > 200:
-        return discard(budget_error)
-    record = {
-        "id": archive_id,
-        "instructor_id": instructor_id,
-        "class_name": again.get("name"),
-        "semester": again.get("semester"),
-        "days": again.get("days"),
-        "section_number": again.get("section_number"),
-        "student_count": manifest.get("source_students"),
-        "assignment_count": manifest.get("source_assignments"),
-        "storage_path": path,
-        "snapshot_path": snapshot_path,
-        "size_bytes": size_bytes,
-    }
-    try:
-        supabase_admin.table("archived_classes").insert(record).execute()
-        logger.info(
-            "archive create user_id=%s class_id=%s",
-            instructor_id,
-            class_id,
-        )
-    except Exception as exc:
-        logger.error("Could not record archive %s: %s", archive_id, exc)
-        try:
-            supabase_admin.table("archived_classes").delete().eq("id", archive_id).execute()
-        except Exception as delete_exc:
-            logger.error("Could not delete archive row %s: %s", archive_id, delete_exc)
-        return discard("Could not record the archive. The class was not changed.")
-    try:
-        still_owned = _owned_class_row(class_id, instructor_id)
-    except Exception as exc:
-        logger.error(
-            "Could not re-check class %s after recording archive %s: %s",
-            class_id, archive_id, exc,
-        )
-        return jsonify({"success": False, "archived": True, "error": kept_error}), 500
-    if still_owned is None:
-        return jsonify({
-            "success": True,
-            "redirect": url_for("main.instructor_dashboard"),
-        })
-    try:
-        delete_class_rows(class_id, instructor_id)
-    except Exception as exc:
-        logger.error(
-            "Archive %s saved but class %s was not fully removed: %s",
-            archive_id, class_id, exc,
-        )
-        return jsonify({"success": False, "archived": True, "error": kept_error}), 500
-    return jsonify({
-        "success": True,
-        "redirect": url_for("main.instructor_dashboard"),
-    })
-
-
-@main_bp.route("/archived-classes")
-@login_required
-def archived_classes():
-    if session.get("role") != "instructor":
-        return redirect(url_for("main.login_page"))
-    instructor_id = session["user_id"]
-    rows = fetch_all_rows(
-        supabase_admin.table("archived_classes")
-        .select(
-            "id, class_name, semester, days, section_number, "
-            "student_count, assignment_count, size_bytes, archived_at, "
-            "snapshot_path, restored_at, restored_class_id"
-        )
-        .eq("instructor_id", instructor_id)
-        .order("archived_at", desc=True)
-        .order("id", desc=True)
-    )
-    archives = []
-    for row in rows:
-        parts = [row.get("semester"), row.get("days"), row.get("section_number")]
-        snapshot_path = str(row.get("snapshot_path") or "").strip()
-        restored_at = row.get("restored_at") or ""
-        restored_class_id = str(row.get("restored_class_id") or "").strip()
-        archives.append({
-            "id": row.get("id"),
-            "class_name": row.get("class_name") or "",
-            "detail": " · ".join(str(part) for part in parts if part),
-            "student_count": row.get("student_count") or 0,
-            "assignment_count": row.get("assignment_count") or 0,
-            "archived_at": row.get("archived_at") or "",
-            "size_label": _archive_size_label(row.get("size_bytes")),
-            "restored": bool(restored_at),
-            "restorable": bool(snapshot_path) and not restored_at,
-            "restored_at": restored_at,
-            "restored_class_id": restored_class_id if restored_at else "",
-        })
-    return render_template("classes/archived_classes.html", archives=archives)
-
-
-@main_bp.route("/archived-classes/<archive_id>/download")
-@login_required
-@rate_limited("archive_download", limit=30, window_sec=3600)
-def download_archived_class(archive_id):
-    if session.get("role") != "instructor":
-        return redirect(url_for("main.login_page"))
-    from app.helpers.archive_storage import download_archive
-    row = _owned_archive_row(archive_id, session["user_id"])
-    if row is None:
-        return jsonify({"success": False, "error": "This archive was not found."}), 404
-    try:
-        payload = download_archive(row.get("storage_path") or "")
-    except Exception as exc:
-        logger.error("Could not download archive %s: %s", archive_id, exc)
-        return _safe_api_error("Could not download the archive", 500, log_detail=exc)
-    filename = f"{secure_filename(str(row.get('class_name') or '')) or 'class'}_archive.zip"
-    logger.info(
-        "archive download user_id=%s archive_id=%s",
-        session.get("user_id"),
-        archive_id,
-    )
-    return Response(
-        payload,
-        mimetype="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@main_bp.route("/archived-classes/<archive_id>/delete", methods=["POST"])
-@api_instructor_required
-def delete_archived_class(archive_id):
-    if _ARCHIVE_ID.fullmatch(str(archive_id or "")) is None:
-        return jsonify({"success": False, "error": "This archive was not found."}), 404
-    instructor_id = session["user_id"]
-    row = _owned_archive_row(archive_id, instructor_id)
-    if row is None:
-        return jsonify({
-            "success": True,
-            "redirect": url_for("main.archived_classes"),
-        })
-    if request.form.get("confirm_name") != row.get("class_name"):
-        return jsonify({
-            "success": False,
-            "error": "Type the class name exactly to delete this archive.",
-        }), 400
-    try:
-        _remove_archive_object(row.get("storage_path") or "")
-        _remove_archive_object(row.get("snapshot_path") or "")
-    except Exception as exc:
-        logger.error("Could not remove archive %s: %s", archive_id, exc)
-        return jsonify({
-            "success": False,
-            "error": "Could not delete the archive file. The record was kept.",
-        }), 500
-    try:
-        supabase_admin.table("archived_classes").delete().eq("id", archive_id).eq(
-            "instructor_id", instructor_id
-        ).execute()
-    except Exception as exc:
-        logger.error(
-            "Could not delete archive row %s after the file was removed: %s",
-            archive_id, exc,
-        )
-        return jsonify({
-            "success": False,
-            "error": "The file was deleted but the record could not be removed. Try again.",
-        }), 500
-    return jsonify({
-        "success": True,
-        "redirect": url_for("main.archived_classes"),
-    })
-
-
-@main_bp.route("/archived-classes/<archive_id>/restore", methods=["POST"])
-@api_instructor_required
-@rate_limited("archive_restore", limit=5, window_sec=3600)
-def restore_archived_class(archive_id):
-    import json
-    from app.helpers.archive_snapshot import GzipTooLarge, gunzip_bounded
-    from app.helpers.archive_storage import download_archive
-
-    start = time.monotonic()
-    if _ARCHIVE_ID.fullmatch(str(archive_id or "")) is None:
-        return jsonify({"success": False, "error": "This archive was not found."}), 404
-    instructor_id = session["user_id"]
-    row = _owned_archive_row(archive_id, instructor_id)
-    if row is None:
-        return jsonify({"success": False, "error": "This archive was not found."}), 404
-    if not str(row.get("snapshot_path") or "").strip():
-        return jsonify({
-            "success": False,
-            "error": "This archive is not restorable.",
-        }), 409
-    if row.get("restored_at"):
-        return jsonify({
-            "success": False,
-            "error": "This archive has already been restored.",
-        }), 409
-
-    try:
-        blob = download_archive(row.get("snapshot_path") or "")
-        try:
-            raw = gunzip_bounded(blob)
-        finally:
-            del blob
-    except GzipTooLarge:
-        return jsonify({
-            "success": False,
-            "error": "This archive is too large to restore. Nothing was changed.",
-        }), 413
-    except Exception as exc:
-        logger.error("Could not read snapshot for archive %s: %s", archive_id, exc)
-        return jsonify({"success": False, "error": _RESTORE_FAILED}), 500
-    try:
-        document = json.loads(raw.decode("utf-8"))
-    except Exception as exc:
-        logger.error("Could not read snapshot for archive %s: %s", archive_id, exc)
-        return jsonify({"success": False, "error": _RESTORE_FAILED}), 500
-    finally:
-        del raw
-    if not isinstance(document, dict) or document.get("format_version") != 1:
-        return jsonify({
-            "success": False,
-            "error": "This archive is not restorable.",
-        }), 409
-
-    loaded = {}
-    for table_name in _RESTORE_TABLES:
-        rows = document.pop(table_name, [])
-        if rows is None:
-            rows = []
-        if not isinstance(rows, list):
-            return jsonify({
-                "success": False,
-                "error": "This archive is not restorable.",
-            }), 409
-        loaded[table_name] = rows
-    del document
-
-    attempt_id = str(uuid4())
-    staged = False
-    counts = {}
-    try:
-        for table_name in _RESTORE_TABLES:
-            rows = loaded.pop(table_name)
-            records = [
-                {
-                    "attempt_id": attempt_id,
-                    "table_name": table_name,
-                    "seq": index,
-                    "row_data": item,
-                }
-                for index, item in enumerate(rows, start=1)
-            ]
-            counts[table_name] = len(records)
-            del rows
-            for chunk in _restore_chunks(records):
-                if time.monotonic() - start > 240:
-                    _delete_restore_attempt(attempt_id)
-                    return jsonify({
-                        "success": False,
-                        "error": "The restore took too long. Nothing was changed.",
-                    }), 500
-                staged = True
-                supabase_admin.table("archive_restore_stage").insert(chunk).execute()
-            del records
-        if time.monotonic() - start > 240:
-            _delete_restore_attempt(attempt_id)
-            return jsonify({
-                "success": False,
-                "error": "The restore took too long. Nothing was changed.",
-            }), 500
-        result = supabase_admin.rpc(
-            "restore_archived_class",
-            {
-                "p_archive_id": archive_id,
-                "p_instructor_id": instructor_id,
-                "p_attempt_id": attempt_id,
-                "p_expected": counts,
-            },
-        ).execute()
-        class_id = _restore_class_id(result.data)
-        if class_id is None:
-            logger.error(
-                "Restore of archive %s returned no class id: %s",
-                archive_id,
-                result.data,
-            )
-            return jsonify({
-                "success": True,
-                "redirect": url_for("main.instructor_dashboard"),
-            })
-    except Exception as exc:
-        if staged:
-            _delete_restore_attempt(attempt_id)
-        known = _restore_known_message(_restore_error_text(exc))
-        if known:
-            return jsonify({"success": False, "error": known}), 409
-        logger.error("Could not restore archive %s: %s", archive_id, exc)
-        return jsonify({"success": False, "error": _RESTORE_FAILED}), 500
-    try:
-        _remove_archive_object(row.get("snapshot_path") or "")
-        _remove_archive_object(row.get("storage_path") or "")
-        supabase_admin.table("archived_classes").delete().eq(
-            "id", archive_id
-        ).eq("instructor_id", instructor_id).execute()
-    except Exception as exc:
-        logger.error("Could not remove restored archive %s: %s", archive_id, exc)
-    logger.info(
-        "archive restore user_id=%s class_id=%s",
-        instructor_id,
-        class_id,
-    )
-    return jsonify({
-        "success": True,
-        "redirect": url_for("main.class_detail", class_id=class_id),
-    })
 
 
 @main_bp.route("/class/<class_id>/update", methods=["POST"])
@@ -1411,61 +451,6 @@ def copy_class(class_id):
         logger.error("Error copying class %s: %s", class_id, e)
         return "Failed to copy class.", 500
 
-
-@main_bp.route("/class/<class_id>/students/<student_id>")
-@login_required
-def class_student_detail(class_id, student_id):
-    if not _instructor_owns_class(class_id):
-        return redirect(url_for('main.instructor_dashboard'))
-    class_data = Course.get_full_class_data(class_id)
-    if not class_data:
-        return redirect(url_for('main.instructor_dashboard'))
-
-    pool = objectives_attached_to_assignments(
-        class_id, class_data.get("learning_objectives") or []
-    )
-    lo_lookup = class_lo_lookup(pool)
-
-    student = None
-    for e in class_data.get('enrollments', []):
-        if e.get('muted', False):
-            continue
-        prof = normalize_profile(e)
-        if str(prof.get('id') or '') != str(student_id):
-            continue
-        prof["learning_objectives"], prof["objective_total"] = class_progress(
-            prof.get("grades"), lo_lookup
-        )
-        prof['name'] = display_name(prof.get("full_name") or "")
-        prof['email'] = (prof.get('email') or '').strip()
-        student = prof
-        break
-
-    if student and not (student.get('email') or '').strip():
-        try:
-            pe = (
-                supabase_admin.table("profiles")
-                .select("email")
-                .eq("id", student_id)
-                .limit(1)
-                .execute()
-            )
-            if pe.data:
-                student['email'] = (pe.data[0].get('email') or '').strip()
-        except Exception:
-            pass
-
-    if not student:
-        return redirect(url_for('main.class_students', class_id=class_id))
-
-    return render_template(
-        "classes/class_student_detail.html",
-        class_id=class_id,
-        class_name=class_data.get("name"),
-        class_days=class_data.get("days"),
-        class_section=class_data.get("section_number"),
-        student=student,
-    )
 
 @main_bp.route("/class/<class_id>/assignments")
 @login_required
@@ -1792,35 +777,6 @@ def export_assignment_csv(class_id, assignment_id):
     )
 
 
-@main_bp.route("/class/<class_id>/export-archive")
-@login_required
-@rate_limited("archive_export", limit=5, window_sec=3600)
-def export_class_archive(class_id):
-    """Download a class archive zip. Does not delete the class or write a row."""
-    if not _instructor_owns_class(class_id):
-        return redirect(url_for("main.instructor_dashboard"))
-    from app.helpers.archive_export import (
-        ArchiveClassNotFound,
-        ArchiveManifestError,
-        build_class_archive_zip,
-    )
-    try:
-        zip_bytes, manifest = build_class_archive_zip(class_id)
-    except ArchiveClassNotFound:
-        return redirect(url_for("main.instructor_dashboard"))
-    except ArchiveManifestError as exc:
-        return _safe_api_error("Could not export archive", 500, log_detail=exc)
-    too_big = _zip_over_archive_limit(zip_bytes)
-    if too_big is not None:
-        return too_big
-    filename = f"{secure_filename(str(manifest.get('class_name') or '')) or 'class'}_archive.zip"
-    return Response(
-        zip_bytes,
-        mimetype="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
 @main_bp.route("/class/<class_id>/delete_lo/<lo_id>", methods=["POST"])
 @api_instructor_required
 def delete_lo(class_id, lo_id):
@@ -1999,35 +955,6 @@ def api_import_learning_objectives(class_id):
             "skipped": skipped,
             "errors": errors,
         }
-    )
-
-
-@main_bp.route("/class/<class_id>/reports")
-@login_required
-def class_reports(class_id):
-    if not _instructor_owns_class(class_id):
-        return redirect(url_for('main.instructor_dashboard'))
-    class_data = Course.get_full_class_data(class_id)
-    
-    if not class_data:
-        return redirect(url_for('main.instructor_dashboard'))
-
-    progress_data = _class_data_for_progress(class_data)
-    students, _, _ = _process_enrollments(progress_data)
-    learning_objectives = progress_data.get("learning_objectives") or []
-
-    # Load assignments with their linked LOs and dates
-    assignments = load_assignments_for_class(class_id, desc=False)
-
-    return render_template(
-        "classes/class_reports.html",
-        class_id=class_id,
-        class_name=class_data["name"],
-        class_days=class_data.get("days"),
-        class_section=class_data.get("section_number"),
-        students=students,
-        learning_objectives=learning_objectives,
-        assignments=assignments,
     )
 
 
@@ -2345,152 +1272,6 @@ def api_send_revision_reminders(class_id):
         "message": message,
         "warning": warning,
     })
-
-
-@main_bp.route("/class/<class_id>/student/<student_id>/history")
-@login_required
-def student_history(class_id, student_id):
-    if not _instructor_owns_class(class_id):
-        return redirect(url_for('main.instructor_dashboard'))
-    class_data = Course.get_full_class_data(class_id)
-    if not class_data:
-        return redirect(url_for('main.instructor_dashboard'))
-
-    # Get student enrollment and profile info
-    enrollment_data = None
-    try:
-        enrollment = supabase_admin.table("enrollments").select(
-            "student_id, profiles(id, full_name, email)"
-        ).eq("class_id", class_id).eq("student_id", student_id).single().execute()
-        enrollment_data = enrollment.data
-    except Exception as e:
-        logger.error("Error loading student enrollment: %s", e)
-        return redirect(url_for('main.class_reports', class_id=class_id))
-
-    if not enrollment_data:
-        return redirect(url_for('main.class_reports', class_id=class_id))
-
-    profile = normalize_profile({'profiles': enrollment_data.get('profiles')})
-    student_name = display_name(profile.get("full_name") or "")
-    student_email = (profile.get("email") or "").strip()
-    profile_id = profile.get('id')
-
-    assignments = load_assignments_for_class(class_id)
-    learning_objectives = objectives_attached_to_assignments(
-        class_id, class_data.get("learning_objectives") or []
-    )
-    lo_ids = _history_objective_ids(learning_objectives)
-    all_grades: List[Dict[str, Any]] = []
-    try:
-        for start in range(0, len(lo_ids), _HISTORY_LO_CHUNK):
-            chunk = lo_ids[start:start + _HISTORY_LO_CHUNK]
-            all_grades.extend(fetch_all_rows(
-                supabase_admin.table("grades")
-                .select(_HISTORY_GRADE_COLS)
-                .eq("student_id", profile_id)
-                .in_("learning_objective_id", chunk)
-                .order("id")
-            ))
-    except Exception as e:
-        logger.error("Error loading grades: %s", e)
-        all_grades = []
-    all_grades = _grades_for_this_class(all_grades, assignments)
-    lo_grade_data, history_assignments = student_history_sheet(
-        learning_objectives, assignments, all_grades
-    )
-
-    return render_template(
-        "classes/student_history.html",
-        class_id=class_id,
-        class_name=class_data['name'],
-        class_days=class_data.get("days"),
-        class_section=class_data.get("section_number"),
-        student_id=student_id,
-        student_name=student_name,
-        student_email=student_email,
-        instructor_title=instructor_title(_report_sender_name()),
-        learning_objectives=lo_grade_data,
-        history_assignments=history_assignments,
-    )
-
-@main_bp.route("/class/<class_id>/student-history/print")
-@login_required
-def student_history_print(class_id):
-    if not _instructor_owns_class(class_id):
-        return "Forbidden", 403
-    try:
-        class_resp = (
-            supabase_admin.table("classes")
-            .select("id, name, days, section_number")
-            .eq("id", class_id)
-            .limit(1)
-            .execute()
-        )
-        class_row = (class_resp.data or [None])[0]
-        if not class_row:
-            return redirect(url_for("main.instructor_dashboard"))
-        objectives = Course.get_learning_objectives(class_id) or []
-        enrollments = fetch_all_rows(
-            supabase_admin.table("enrollments")
-            .select(
-                "id, class_id, student_id, muted, "
-                "profiles(id, full_name, role, email)"
-            )
-            .eq("class_id", class_id)
-            .order("id")
-        )
-        class_data = {
-            "id": class_row.get("id") or class_id,
-            "name": class_row.get("name"),
-            "days": class_row.get("days"),
-            "section_number": class_row.get("section_number"),
-            "learning_objectives": objectives,
-            "enrollments": enrollments,
-        }
-        progress = _class_data_for_progress(class_data)
-        students, _, _ = _process_enrollments(progress or class_data)
-        learning_objectives = (progress or class_data).get("learning_objectives") or []
-        assignments = load_assignments_for_class(class_id)
-        packet = _grades_for_this_class(
-            _history_packet_grades(
-                [lo.get("id") for lo in learning_objectives if lo.get("id")]
-            ),
-            assignments,
-        )
-    except Exception as e:
-        logger.error("student history print load failed: %s", type(e).__name__)
-        return _HISTORY_PRINT_ERROR, 500
-
-    active_ids = {
-        str(student.get("id")) for student in students if student.get("id")
-    }
-    grades_by_student: Dict[str, List[Dict[str, Any]]] = {}
-    for grade in packet:
-        student_id = str(grade.get("student_id") or "")
-        if student_id not in active_ids:
-            continue
-        grades_by_student.setdefault(student_id, []).append(grade)
-
-    sheets = []
-    for student in students:
-        student_id = str(student.get("id") or "")
-        lo_grade_data, history_assignments = student_history_sheet(
-            learning_objectives,
-            assignments,
-            grades_by_student.get(student_id, []),
-        )
-        sheets.append({
-            "student_name": student.get("name") or "",
-            "learning_objectives": lo_grade_data,
-            "history_assignments": history_assignments,
-        })
-
-    return render_template(
-        "classes/student_history_print.html",
-        class_id=class_id,
-        class_name=class_data["name"],
-        sheets=sheets,
-    )
 
 
 @main_bp.route("/class/<class_id>/speed_grader", endpoint='class_speed_grader')
@@ -3064,133 +1845,6 @@ def return_free_pass(class_id):
     except Exception as e:
         logger.error("return pass failed: %s", e)
         return _safe_api_error("Could not return free pass", 500, log_detail=e)
-
-
-@main_bp.route("/api/class/<class_id>/upload_students", methods=["POST"])
-@api_instructor_required
-@rate_limited("upload_students", limit=20, window_sec=900)
-def api_upload_students_to_class(class_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    err, rows, parse_errors = _parse_student_csv_upload()
-    if err:
-        return jsonify({
-            "success": False,
-            "error": err,
-            "errors": parse_errors,
-        }), 400
-
-    try:
-        errors, actions = _classify_student_csv_rows(
-            class_id, session.get("user_id"), rows or [], parse_errors
-        )
-        if errors:
-            return _student_csv_rejection(errors)
-        created = 0
-        enrolled = 0
-        for action in actions:
-            if action["outcome"] == "reuse":
-                supabase_admin.table("enrollments").insert({
-                    "class_id": class_id,
-                    "student_id": action["profile_id"],
-                }).execute()
-                enrolled += 1
-                continue
-            student_id = str(uuid4())
-            supabase_admin.table("profiles").insert({
-                "id": student_id,
-                "full_name": action["full_name"],
-                "role": "student",
-                "email": action["email"],
-                "email_set_at": _email_set_timestamp(),
-            }).execute()
-            supabase_admin.table("enrollments").insert({
-                "class_id": class_id,
-                "student_id": student_id,
-            }).execute()
-            created += 1
-        return jsonify({
-            "success": True,
-            "message": "Student upload complete",
-            "stats": {
-                "created_profiles": created,
-                "enrolled_existing_profiles": enrolled,
-            },
-            "total_rows": len(actions),
-        })
-    except Exception as e:
-        logger.error("Error uploading students for class %s: %s", class_id, e)
-        return _safe_api_error("Could not upload students", 500, log_detail=e)
-
-
-@main_bp.route("/api/class/<class_id>/preview-upload-students", methods=["POST"])
-@api_instructor_required
-@rate_limited("preview_upload_students", limit=30, window_sec=900)
-def api_preview_upload_students(class_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    err, rows, parse_errors = _parse_student_csv_upload()
-    if err:
-        return jsonify({
-            "success": False,
-            "error": err,
-            "errors": parse_errors,
-        }), 400
-
-    try:
-        errors, actions = _classify_student_csv_rows(
-            class_id, session.get("user_id"), rows or [], parse_errors
-        )
-        if errors:
-            return _student_csv_rejection(errors)
-        preview_rows = []
-        will_create = 0
-        will_enroll = 0
-        for action in actions:
-            if action["outcome"] == "reuse":
-                status = "Will enroll"
-                will_enroll += 1
-            else:
-                status = "Will create and enroll"
-                will_create += 1
-            preview_rows.append({
-                "full_name": action["full_name"],
-                "email": action["email"],
-                "action": action["outcome"],
-                "status": status,
-            })
-        return jsonify({
-            "success": True,
-            "rows": preview_rows,
-            "stats": {
-                "will_create": will_create,
-                "will_enroll_existing": will_enroll,
-            },
-            "count": len(preview_rows),
-        })
-    except Exception as e:
-        logger.error("Error previewing student upload for class %s: %s", class_id, e)
-        return _safe_api_error("Could not preview student upload", 500, log_detail=e)
-
-
-@main_bp.route("/api/class/<class_id>/toggle_mute", methods=["POST"])
-@api_instructor_required
-def api_toggle_mute(class_id):
-    if not _instructor_owns_class(class_id):
-        return jsonify({"success": False, "error": "Forbidden"}), 403
-    try:
-        data = request.get_json()
-        student_id = data.get('student_id')
-        muted = bool(data.get('muted', False))
-        if not student_id:
-            return jsonify({"success": False, "error": "student_id is required"}), 400
-        if not _student_enrolled_in_class(class_id, student_id):
-            return jsonify({"success": False, "error": "Student not enrolled in this class"}), 403
-        supabase_admin.table("enrollments").update({"muted": muted}) \
-            .eq("class_id", class_id).eq("student_id", student_id).execute()
-        return jsonify({"success": True, "muted": muted}), 200
-    except Exception as e:
-        return _safe_api_error("Could not update mute state", 500, log_detail=e)
 
 
 @main_bp.route("/api/import-grades", methods=["POST"])

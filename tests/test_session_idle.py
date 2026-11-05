@@ -71,8 +71,8 @@ class TestIdleSession(unittest.TestCase):
         result.user = user
         profile = MagicMock()
         profile.data = [{"role": "instructor"}]
-        with patch("app.routes.supabase") as sb, \
-             patch("app.routes.supabase_admin") as admin:
+        with patch("app.routes.auth.supabase") as sb, \
+             patch("app.routes.auth.supabase_admin") as admin:
             sb.auth.sign_in_with_password.return_value = result
             (
                 admin.table.return_value

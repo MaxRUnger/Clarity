@@ -425,8 +425,8 @@ class TestLoginSessionRow(unittest.TestCase):
         auth = MagicMock()
         auth.auth.sign_in_with_password.return_value = MagicMock(user=user)
         admin = _admin(db)
-        with patch("app.routes.supabase", auth), \
-             patch("app.routes.supabase_admin", admin), \
+        with patch("app.routes.auth.supabase", auth), \
+             patch("app.routes.auth.supabase_admin", admin), \
              patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.post(
                 "/api/login",
@@ -500,8 +500,8 @@ class TestLoginSessionRow(unittest.TestCase):
         auth = MagicMock()
         auth.auth.sign_in_with_password.return_value = MagicMock(user=user)
         admin = _admin(db)
-        with patch("app.routes.supabase", auth), \
-             patch("app.routes.supabase_admin", admin), \
+        with patch("app.routes.auth.supabase", auth), \
+             patch("app.routes.auth.supabase_admin", admin), \
              patch("app.helpers.authentication.supabase_admin", admin):
             response = self.client.post(
                 "/api/login",
