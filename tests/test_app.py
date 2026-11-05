@@ -25,6 +25,7 @@ sys.modules.setdefault('app.helpers.authentication', MagicMock(
 ))
 
 from app.models import (
+    Course,
     Grade,
     Homework,
     MASTERY_GRADES,
@@ -45,13 +46,30 @@ from app.helpers.gradesheet_csv import (
     _gradesheet_letter_map_from_rows,
     _lookup_enrolled_import_student_id,
 )
-from app.helpers.class_progress import (
-    _aggregate_lo_grades,
-    normalize_profile,
+from app.helpers.class_access import (
+    _assignment_belongs_to_class,
+    _instructor_owns_class,
 )
-from app.routes import (
+from app.helpers.class_data import (
+    _gradesheet_export_bundle,
     organize_by_learning_objectives,
 )
+from app.helpers.class_progress import (
+    _aggregate_lo_grades,
+    _process_enrollments,
+    normalize_profile,
+    objectives_attached_to_assignments,
+)
+from app.helpers.class_removal import delete_class_rows
+from app.helpers.free_passes import _promote_non_counting_masteries_for_student
+from app.helpers.grade_log import _log_grade_deletions
+from app.helpers.lo_import import _insert_learning_objectives
+from app.helpers.report_email import (
+    _report_footer,
+    _send_via_resend,
+    instructor_title,
+)
+from app.helpers.revision_mail import revision_reminder_partition
 from app import create_app
 from app.helpers.student_names import COMMA_REQUIRED, display_name, row_sort_key
 from tests.test_student_names import CANVAS_ORDER
@@ -831,7 +849,6 @@ class TestRequestCacheMemoization(unittest.TestCase):
                 self.assertEqual(calls["total"], 1)
 
     def test_class_instructor_id_non_string_is_not_owner(self):
-        from app import routes as r
         from flask import session
 
         for raw in (7, None):
@@ -843,17 +860,16 @@ class TestRequestCacheMemoization(unittest.TestCase):
                 with unittest.mock.patch("app.helpers.class_access.supabase_admin", sa):
                     session["user_id"] = "u1"
                     self.assertIsNone(class_access._class_instructor_id("c1"))
-                    self.assertFalse(r._instructor_owns_class("c1"))
+                    self.assertFalse(_instructor_owns_class("c1"))
 
     def test_assignment_belongs_to_class_memoized(self):
-        from app import routes as r
         sa, calls = self._patch_supabase_admin({
             "assignments": [{"id": "a1"}],
         })
         with self.app.test_request_context("/"):
             with unittest.mock.patch("app.helpers.class_access.supabase_admin", sa):
-                self.assertTrue(r._assignment_belongs_to_class("c1", "a1"))
-                self.assertTrue(r._assignment_belongs_to_class("c1", "a1"))
+                self.assertTrue(_assignment_belongs_to_class("c1", "a1"))
+                self.assertTrue(_assignment_belongs_to_class("c1", "a1"))
                 self.assertEqual(calls["total"], 1)
 
 
@@ -1040,9 +1056,9 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
                 unittest.mock.patch.object(
                     r, "_enrolled_student_ids_for_class", return_value={"stu-1"}
                 ), \
-                unittest.mock.patch.object(r.Course, "get_assignment_lo_ids", return_value=["lo-x"]), \
+                unittest.mock.patch.object(Course, "get_assignment_lo_ids", return_value=["lo-x"]), \
                 unittest.mock.patch.object(
-                    r.Homework,
+                    Homework,
                     "get_hw_scores_map_for_assignment",
                     return_value=hw_map,
                 ):
@@ -1089,8 +1105,7 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
         self.assertEqual(captured_rows[0]["counts_for_mastery"], True)
 
     def test_auto_convert_does_not_read_previous_hw(self):
-        from app import routes as r
-        with unittest.mock.patch.object(r.Homework, "decide_hw_score_update") as decide:
+        with unittest.mock.patch.object(Homework, "decide_hw_score_update") as decide:
             rv_low, rows_low = self._patched_save_grades_call(hw_map={"stu-1": 64})
             rv_high, rows_high = self._patched_save_grades_call(hw_map={"stu-1": 80})
         decide.assert_not_called()
@@ -1120,7 +1135,7 @@ class TestAssignmentHomeworkGroupRequired(unittest.TestCase):
         headers = self._session()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Homework, "canonicalize_homework_group_for_class", return_value=None
+                    Homework, "canonicalize_homework_group_for_class", return_value=None
                 ):
             rv = self.client.post(
                 "/class/class-1/create_assignment",
@@ -1138,7 +1153,7 @@ class TestAssignmentHomeworkGroupRequired(unittest.TestCase):
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Homework, "canonicalize_homework_group_for_class", return_value=None
+                    Homework, "canonicalize_homework_group_for_class", return_value=None
                 ):
             rv = self.client.post(
                 "/class/class-1/assignments/asg-1/update",
@@ -1204,12 +1219,12 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
                     r, "_student_enrolled_in_class", return_value=True
                 ), \
                 unittest.mock.patch.object(
-                    r.Homework,
+                    Homework,
                     "resolve_hw_group_storage_key",
                     return_value="hw-g1",
                 ), \
                 unittest.mock.patch.object(
-                    r.Course,
+                    Course,
                     "get_all_lo_ids_for_class",
                     return_value=["lo-x"],
                 ):
@@ -1260,11 +1275,11 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
                     r, "_assignment_belongs_to_class", return_value=True
                 ), \
                 unittest.mock.patch.object(
-                    r.Homework,
+                    Homework,
                     "resolve_hw_group_storage_key",
                     return_value="hw-g1",
                 ), \
-                unittest.mock.patch.object(r.Homework, "decide_hw_score_update") as decide:
+                unittest.mock.patch.object(Homework, "decide_hw_score_update") as decide:
             rv = self.client.post(
                 "/api/class/class-1/save-hw-percentage",
                 json={
@@ -1512,10 +1527,10 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
             unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns_class),
             unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=belongs),
             unittest.mock.patch.object(
-                r.Homework, "get_hw_scores_map_for_assignment", return_value={}
+                Homework, "get_hw_scores_map_for_assignment", return_value={}
             ),
             unittest.mock.patch.object(
-                r.Homework, "get_hw_prev_scores_map_for_assignment", return_value={}
+                Homework, "get_hw_prev_scores_map_for_assignment", return_value={}
             ),
         )
 
@@ -1658,7 +1673,6 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
             "Algebra 1", "Test Project", STU_ALEX_NAME, rows
         )
         subject = "Your progress report — Algebra 1"
-        from app import routes as r
         self.assertIn("D1  |  Not graded", body)
         self.assertIn("D2  |  Not graded", body)
         self.assertNotIn("D1  |  M", body)
@@ -1667,7 +1681,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         rv, send_mock = self._post_single_email({"subject": subject, "body": body})
         self.assertEqual(rv.status_code, 200)
         self.assertEqual(rv.get_json(), {"success": True, "to": STU_ALEX_EMAIL})
-        sent_body = body + r._report_footer("Your instructor", "Algebra 1")
+        sent_body = body + _report_footer("Your instructor", "Algebra 1")
         send_mock.assert_called_once_with(
             STU_ALEX_EMAIL, subject, sent_body, sender_name="Your instructor"
         )
@@ -1697,8 +1711,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         payload = rv.get_json()
         self.assertTrue(payload.get("success"))
         self.assertEqual(payload.get("sent"), 1)
-        from app import routes as r
-        sent_body = body + r._report_footer("Your instructor", "Algebra 1")
+        sent_body = body + _report_footer("Your instructor", "Algebra 1")
         send_mock.assert_called_once_with(
             STU_ALEX_EMAIL, subject, sent_body, sender_name="Your instructor"
         )
@@ -2053,15 +2066,14 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
     FROM_EMAIL = "reports@claritygrader.net"
 
     def test_instructor_title(self):
-        from app import routes as r
-        self.assertEqual(r.instructor_title("Estes, Brody"), "Professor Estes")
-        self.assertEqual(r.instructor_title("Brody Estes"), "Professor Estes")
-        self.assertEqual(r.instructor_title(""), "Your instructor")
-        self.assertEqual(r.instructor_title(None), "Your instructor")
-        self.assertEqual(r.instructor_title("  Estes ,   Brody  "), "Professor Estes")
-        self.assertEqual(r.instructor_title("  Brody    Estes  "), "Professor Estes")
-        self.assertEqual(r.instructor_title("brody estes"), "Professor Estes")
-        self.assertEqual(r.instructor_title("BRODY ESTES"), "Professor ESTES")
+        self.assertEqual(instructor_title("Estes, Brody"), "Professor Estes")
+        self.assertEqual(instructor_title("Brody Estes"), "Professor Estes")
+        self.assertEqual(instructor_title(""), "Your instructor")
+        self.assertEqual(instructor_title(None), "Your instructor")
+        self.assertEqual(instructor_title("  Estes ,   Brody  "), "Professor Estes")
+        self.assertEqual(instructor_title("  Brody    Estes  "), "Professor Estes")
+        self.assertEqual(instructor_title("brody estes"), "Professor Estes")
+        self.assertEqual(instructor_title("BRODY ESTES"), "Professor ESTES")
 
     def test_from_header_is_always_quoted(self):
         from app.helpers.report_email import _reports_from_header
@@ -2087,7 +2099,6 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         )
 
     def _send(self, post_mock, *, sender_name="Professor Estes", body="Hello Jane,"):
-        from app import routes as r
         with unittest.mock.patch.dict(
             os.environ,
             {
@@ -2095,7 +2106,7 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
                 "REPORTS_FROM_EMAIL": self.FROM_EMAIL,
             },
         ), unittest.mock.patch("app.helpers.report_email.requests.post", post_mock):
-            return r._send_via_resend(
+            return _send_via_resend(
                 "student@example.edu",
                 "Your progress report",
                 body,
@@ -2152,12 +2163,11 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         self.assertEqual(err, "Email send failed.")
 
     def test_send_missing_key_does_not_post(self):
-        from app import routes as r
         post = MagicMock()
         with unittest.mock.patch.dict(os.environ, {"REPORTS_FROM_EMAIL": self.FROM_EMAIL}):
             os.environ.pop("RESEND_API_KEY", None)
             with unittest.mock.patch("app.helpers.report_email.requests.post", post):
-                ok, err = r._send_via_resend(
+                ok, err = _send_via_resend(
                     "student@example.edu",
                     "Subject",
                     "Hello Jane,",
@@ -2168,12 +2178,11 @@ class TestInstructorTitleAndReportEmail(unittest.TestCase):
         post.assert_not_called()
 
     def test_send_missing_from_address_does_not_post(self):
-        from app import routes as r
         post = MagicMock()
         with unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "test-key"}):
             os.environ.pop("REPORTS_FROM_EMAIL", None)
             with unittest.mock.patch("app.helpers.report_email.requests.post", post):
-                ok, err = r._send_via_resend(
+                ok, err = _send_via_resend(
                     "student@example.edu",
                     "Subject",
                     "Hello Jane,",
@@ -2543,7 +2552,6 @@ class TestGradesheetExportPrefill(unittest.TestCase):
             self.assertNotIn("HW prev", payload["learning_objectives"])
 
     def test_csv_columns_only_los_linked_to_assignment(self):
-        from app import routes as r
 
         pool = [
             {"id": "lo-1", "vendor_code": "A1"},
@@ -2561,23 +2569,23 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         )
         with unittest.mock.patch("app.helpers.class_data.supabase_admin") as sa, \
                 unittest.mock.patch.object(
-                    r.Course, "get_full_class_data", return_value={"name": "C"}
+                    Course, "get_full_class_data", return_value={"name": "C"}
                 ), \
                 unittest.mock.patch(
                     "app.helpers.class_data._process_enrollments",
                     return_value=([{"id": "stu-1", "full_name": "Doe, Jane"}], [], {}),
                 ), \
                 unittest.mock.patch.object(
-                    r.Course, "get_learning_objectives", return_value=pool
+                    Course, "get_learning_objectives", return_value=pool
                 ), \
                 unittest.mock.patch.object(
-                    r.Course, "get_assignment_lo_ids", return_value=["lo-2", "lo-4"]
+                    Course, "get_assignment_lo_ids", return_value=["lo-2", "lo-4"]
                 ), \
                 unittest.mock.patch.object(
-                    r.Homework, "get_hw_scores_map_for_assignment", return_value={"stu-1": 80}
+                    Homework, "get_hw_scores_map_for_assignment", return_value={"stu-1": 80}
                 ):
             sa.table.return_value = q
-            bundle = r._gradesheet_export_bundle("class-1", "asg-1")
+            bundle = _gradesheet_export_bundle("class-1", "asg-1")
 
         assignment, students, learning_objectives, hw_map = bundle
         self.assertEqual(
@@ -2830,10 +2838,10 @@ class TestImportRosterNameMatch(unittest.TestCase):
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Homework, "resolve_hw_group_storage_key", return_value="quiz-1"
+                    Homework, "resolve_hw_group_storage_key", return_value="quiz-1"
                 ), \
                 unittest.mock.patch.object(
-                    r.Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
+                    Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
                 ), \
                 unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.lo_import.supabase_admin", sa):
@@ -3160,10 +3168,10 @@ class TestUpdateGradeRoster(unittest.TestCase):
             sess["user_id"] = "inst1"
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Course, "load_class_record", return_value={"name": "Algebra"},
+                    Course, "load_class_record", return_value={"name": "Algebra"},
                 ), \
                 unittest.mock.patch.object(
-                    r.Course, "load_enrollments", return_value=class_data["enrollments"],
+                    Course, "load_enrollments", return_value=class_data["enrollments"],
                 ), \
                 unittest.mock.patch.object(r, "load_assignments_for_class", return_value=[]), \
                 unittest.mock.patch.object(r, "render_template", side_effect=fake_render):
@@ -3398,7 +3406,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
+                    Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
                 ):
             rv = self.client.post(
                 "/api/class/c1/parse-grade-csv",
@@ -3439,7 +3447,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
+                    Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
                 ):
             rv = self.client.post(
                 "/api/class/c1/parse-grade-csv",
@@ -3469,7 +3477,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
             sess["csrf_token"] = "test-csrf"
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
+                    Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
                 ):
             rv = self.client.post(
                 "/api/class/c1/parse-grade-csv",
@@ -3494,7 +3502,7 @@ class TestParseGradeCsvRoute(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
                 unittest.mock.patch.object(
-                    r.Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
+                    Course, "get_learning_objectives", return_value=[{"vendor_code": "D1"}]
                 ):
             return self.client.post(
                 "/api/class/c1/parse-grade-csv",
@@ -3626,10 +3634,10 @@ class TestAllowedLoIdsAssignmentScoping(unittest.TestCase):
                     r, "_enrolled_student_ids_for_class", return_value={"stu-1"}
                 ), \
                 unittest.mock.patch.object(
-                    r.Course, "get_assignment_lo_ids", return_value=linked_lo_ids
+                    Course, "get_assignment_lo_ids", return_value=linked_lo_ids
                 ), \
                 unittest.mock.patch.object(
-                    r.Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
+                    Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
                 ):
             rv = self.client.post(
                 "/api/class/class-1/save-grades",
@@ -3681,7 +3689,7 @@ class TestAllowedLoIdsAssignmentScoping(unittest.TestCase):
                     r, "_enrolled_student_ids_for_class", return_value={"stu-1"}
                 ), \
                 unittest.mock.patch.object(
-                    r.Course, "get_lo_ids_for_class", return_value=["lo-any"]
+                    Course, "get_lo_ids_for_class", return_value=["lo-any"]
                 ):
             rv = self.client.post(
                 "/api/class/class-1/save-grades",
@@ -3811,9 +3819,9 @@ class TestGradeChangeLog(unittest.TestCase):
             unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True),
             unittest.mock.patch.object(r, "_class_auto_convert_m_enabled", return_value=False),
             unittest.mock.patch.object(r, "_enrolled_student_ids_for_class", return_value={"stu-1"}),
-            unittest.mock.patch.object(r.Course, "get_assignment_lo_ids", return_value=["lo-x"]),
+            unittest.mock.patch.object(Course, "get_assignment_lo_ids", return_value=["lo-x"]),
             unittest.mock.patch.object(
-                r.Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
+                Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
             ),
         )
 
@@ -3879,7 +3887,6 @@ class TestGradeChangeLog(unittest.TestCase):
         self.assertEqual(len(upsert_calls), 1)
 
     def test_promoter_does_not_insert_grade_change_log(self):
-        from app import routes as r
         sa, grade_rows, log_rows = self._make_sa_mock(existing_grades=[{
             "student_id": "stu-1",
             "learning_objective_id": "lo-x",
@@ -3888,14 +3895,13 @@ class TestGradeChangeLog(unittest.TestCase):
             "counts_for_mastery": False,
         }])
         with unittest.mock.patch("app.helpers.free_passes.supabase_admin", sa), \
-                unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=["lo-x"]):
-            n = r._promote_non_counting_masteries_for_student("class-1", "stu-1", changed_by="inst1")
+                unittest.mock.patch.object(Course, "get_all_lo_ids_for_class", return_value=["lo-x"]):
+            n = _promote_non_counting_masteries_for_student("class-1", "stu-1", changed_by="inst1")
         self.assertEqual(n, 1)
         self.assertEqual(grade_rows[0]["last_modified_by"], "inst1")
         self.assertEqual(log_rows, [])
 
     def test_allowed_operations_and_python_writer(self):
-        from app import routes as r
         from app.helpers import grade_log
         self.assertEqual(
             grade_log.GRADE_LOG_OPERATIONS,
@@ -3904,7 +3910,7 @@ class TestGradeChangeLog(unittest.TestCase):
         self.assertEqual(grade_log.GRADE_LOG_OPERATIONS, ("INSERT", "UPDATE", "DELETE"))
         sa, _grade_rows, log_rows = self._make_sa_mock()
         with unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa):
-            r._log_grade_deletions(
+            _log_grade_deletions(
                 [{
                     "student_id": "stu-1",
                     "learning_objective_id": "lo-x",
@@ -3939,7 +3945,7 @@ class TestGradeChangeLog(unittest.TestCase):
                 unittest.mock.patch.object(grade_log.logger, "warning") as warn, \
                 unittest.mock.patch.object(r.logger, "error") as routes_err, \
                 unittest.mock.patch.object(r.logger, "warning") as routes_warn:
-            r._log_grade_deletions(
+            _log_grade_deletions(
                 [{
                     "student_id": "stu-1",
                     "learning_objective_id": "lo-x",
@@ -3973,7 +3979,7 @@ class TestGradeChangeLog(unittest.TestCase):
                 unittest.mock.patch.object(grade_log.logger, "warning") as warn, \
                 unittest.mock.patch.object(r.logger, "error") as routes_err, \
                 unittest.mock.patch.object(r.logger, "warning") as routes_warn:
-            r._log_grade_deletions(
+            _log_grade_deletions(
                 [{
                     "student_id": "stu-1",
                     "learning_objective_id": "lo-x",
@@ -4019,9 +4025,9 @@ class TestMaxLengthValidation(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Homework, "canonicalize_homework_group_for_class", return_value="hw1"
+                    Homework, "canonicalize_homework_group_for_class", return_value="hw1"
                 ), \
-                unittest.mock.patch.object(r.Course, "get_lo_ids_for_class", return_value=[]):
+                unittest.mock.patch.object(Course, "get_lo_ids_for_class", return_value=[]):
             rv = self.client.post(
                 "/class/c1/create_assignment",
                 json={"name": "A" * 255, "homework_group": "hw1"},
@@ -4040,7 +4046,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Homework, "canonicalize_homework_group_for_class", return_value="hw1"
+                    Homework, "canonicalize_homework_group_for_class", return_value="hw1"
                 ):
             rv = self.client.post(
                 "/class/c1/create_assignment",
@@ -4062,7 +4068,7 @@ class TestMaxLengthValidation(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
                 unittest.mock.patch.object(
-                    r.Homework, "canonicalize_homework_group_for_class",
+                    Homework, "canonicalize_homework_group_for_class",
                     return_value="H" * 101,
                 ):
             rv = self.client.post(
@@ -5127,7 +5133,7 @@ class TestStudentEmailMatch(unittest.TestCase):
         with unittest.mock.patch.object(r, "supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.class_access.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=[]):
+                unittest.mock.patch.object(Course, "get_all_lo_ids_for_class", return_value=[]):
             if json_body is None:
                 rv = client.post(path, headers={"X-CSRF-Token": "test-csrf"})
             else:
@@ -5462,7 +5468,6 @@ class TestFullClassSelect(unittest.TestCase):
 
 class TestInsertLearningObjectives(unittest.TestCase):
     def _insert(self, payload, execute_error=None):
-        from app import routes as r
         inserted = []
 
         class _Query:
@@ -5482,7 +5487,7 @@ class TestInsertLearningObjectives(unittest.TestCase):
         with unittest.mock.patch(
             "app.helpers.lo_import.supabase_admin", _Client()
         ):
-            result = r._insert_learning_objectives(payload)
+            result = _insert_learning_objectives(payload)
         return inserted, result
 
     def test_missing_name_uses_vendor_code_on_the_only_insert(self):
@@ -5507,7 +5512,6 @@ class TestInsertLearningObjectives(unittest.TestCase):
         self.assertEqual(inserted[0]["vendor_code"], "D1")
 
     def test_failed_insert_is_not_retried(self):
-        from app import routes as r
         inserted = []
 
         class _Query:
@@ -5526,7 +5530,7 @@ class TestInsertLearningObjectives(unittest.TestCase):
             "app.helpers.lo_import.supabase_admin", _Client()
         ):
             with self.assertRaises(RuntimeError):
-                r._insert_learning_objectives({
+                _insert_learning_objectives({
                     "class_id": "c1",
                     "vendor_code": "D1",
                 })
@@ -5796,7 +5800,7 @@ class TestLearningObjectivesProgressColumn(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             with patch("app.routes._instructor_owns_class", return_value=True), \
-                 patch("app.routes.Course.get_full_class_data", return_value=self._class_data(pool, grades)):
+                 patch("app.models.Course.get_full_class_data", return_value=self._class_data(pool, grades)):
                 return class_learning_objectives_summary("c1")
 
     def _row_cell_count(self, html, tag):
@@ -5880,7 +5884,7 @@ class TestLoCellStatus(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             with patch("app.routes._instructor_owns_class", return_value=True), \
-                 patch("app.routes.Course.get_full_class_data", return_value=class_data):
+                 patch("app.models.Course.get_full_class_data", return_value=class_data):
                 html = class_learning_objectives_summary("c1")
         self.assertIn(">passed</span>", html)
         self.assertRegex(html, r"text-yellow-700[^>]*>\s*2/3")
@@ -5924,7 +5928,7 @@ class TestLoCellStatus(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             with patch("app.routes._instructor_owns_class", return_value=True), \
-                 patch("app.routes.Course.get_full_class_data", return_value=class_data):
+                 patch("app.models.Course.get_full_class_data", return_value=class_data):
                 html = class_learning_objectives_summary("c1")
         self.assertEqual(learning_objective_cell_text(2, 2), "✓")
         self.assertEqual(learning_objective_cell_text(2, 3), "2/3")
@@ -6208,7 +6212,7 @@ class TestClassSectionNumber(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             with patch("app.routes._instructor_owns_class", return_value=True), \
-                 patch("app.routes.Course.get_full_class_data", return_value={"name": "MW", "learning_objectives": []}), \
+                 patch("app.models.Course.get_full_class_data", return_value={"name": "MW", "learning_objectives": []}), \
                  patch("app.routes.supabase_admin") as sb:
                 sb.table.return_value.select.side_effect = select
                 result = student_history("c1", "s1")
@@ -6273,7 +6277,7 @@ class TestStudentHistoryOrder(unittest.TestCase):
             session["user_id"] = "u1"
             session["role"] = "instructor"
             with patch("app.routes._instructor_owns_class", return_value=True), \
-                 patch("app.routes.Course.get_full_class_data", return_value={
+                 patch("app.models.Course.get_full_class_data", return_value={
                      "name": "Test Upload",
                      "days": "MW",
                      "section_number": "F26",
@@ -7641,7 +7645,7 @@ class TestManageStudentDeleteAndEdit(unittest.TestCase):
                 unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
                 unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=enrolled), \
-                unittest.mock.patch.object(r.Course, "get_all_lo_ids_for_class", return_value=["lo-this"]):
+                unittest.mock.patch.object(Course, "get_all_lo_ids_for_class", return_value=["lo-this"]):
             if method == "GET":
                 return client.get(path)
             return client.post(path, headers={"X-CSRF-Token": "test-csrf"})
@@ -7952,7 +7956,6 @@ class TestClassDeleteRoutes(unittest.TestCase):
         return rv, log
 
     def _run_rows(self, rows_for, fail_delete=None, fail_select=None):
-        from app import routes as r
         log = []
         self._log = log
 
@@ -7965,7 +7968,7 @@ class TestClassDeleteRoutes(unittest.TestCase):
         sa.table.side_effect = table
         with unittest.mock.patch("app.helpers.class_removal.supabase_admin", sa), \
                 unittest.mock.patch("app.helpers.grade_log.supabase_admin", sa):
-            r.delete_class_rows("c1", "inst1")
+            delete_class_rows("c1", "inst1")
         return log
 
     def test_delete_class_rejects_a_non_owner_before_any_delete(self):
@@ -8186,7 +8189,6 @@ class TestAttachedObjectives(unittest.TestCase):
         ]
 
     def _run(self, class_id, pool, grades, link_rows, students=1):
-        from app import routes as r
         calls = []
 
         class _Query:
@@ -8232,8 +8234,8 @@ class TestAttachedObjectives(unittest.TestCase):
         try:
             with unittest.mock.patch("app.helpers.class_progress.supabase_admin") as sa:
                 sa.table.side_effect = lambda name: _Query(name)
-                active, _, _ = r._process_enrollments(class_data)
-                attached = r.objectives_attached_to_assignments(class_id, pool)
+                active, _, _ = _process_enrollments(class_data)
+                attached = objectives_attached_to_assignments(class_id, pool)
         finally:
             self._clear_cache()
         ao_calls = [row for row in calls if row["table"] == "assignment_objectives"]
@@ -8394,7 +8396,7 @@ class TestUpdateAssignmentDetach(unittest.TestCase):
                 unittest.mock.patch("app.helpers.class_access.supabase_admin", sa), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=owns), \
                 unittest.mock.patch.object(
-                    r.Course, "get_lo_ids_for_class", return_value=["lo-1", "lo-2"]
+                    Course, "get_lo_ids_for_class", return_value=["lo-1", "lo-2"]
                 ):
             sa.table.side_effect = table
             headers = {"X-CSRF-Token": "test-csrf"}
@@ -11588,11 +11590,10 @@ class TestRevisionReminders(unittest.TestCase):
 
     def test_partition_keeps_only_unsent_items_due_in_three_days(self):
         from datetime import date
-        from app import routes as r
         from app.helpers.revision_text import _revision_message
         sent = {("stu-1", "a1", "lo-1"), ("stu-4", "a1", "lo-1")}
         with unittest.mock.patch("app.helpers.revision_mail._load_sent_reminder_keys", return_value=sent):
-            part = r.revision_reminder_partition(
+            part = revision_reminder_partition(
                 "c1",
                 date(2026, 10, 21),
                 named_rows=self._rows(),
@@ -11614,16 +11615,15 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual(part["due"], "2026-10-24")
 
     def test_signoff_greeting_and_from_header(self):
-        from app import routes as r
         from app.helpers.report_email import _reports_from_header
         from app.helpers.revision_text import _revision_message, _revision_signoff
         self.assertEqual(_revision_signoff("Lovelace, Ada"), "Ada Lovelace")
         self.assertEqual(_revision_signoff("Ada Lovelace"), "Ada Lovelace")
-        self.assertEqual(r.instructor_title("Lovelace, Ada"), "Professor Lovelace")
-        self.assertEqual(r.instructor_title("Ada Lovelace"), "Professor Lovelace")
-        self.assertEqual(r.instructor_title("brody estes"), "Professor Estes")
-        self.assertEqual(r.instructor_title("Estes"), "Professor Estes")
-        self.assertEqual(r.instructor_title(""), "Your instructor")
+        self.assertEqual(instructor_title("Lovelace, Ada"), "Professor Lovelace")
+        self.assertEqual(instructor_title("Ada Lovelace"), "Professor Lovelace")
+        self.assertEqual(instructor_title("brody estes"), "Professor Estes")
+        self.assertEqual(instructor_title("Estes"), "Professor Estes")
+        self.assertEqual(instructor_title(""), "Your instructor")
         self.assertEqual(
             _reports_from_header("Ada Lovelace", "reports@claritygrader.net"),
             '"Ada Lovelace via Clarity Grader" <reports@claritygrader.net>',
@@ -11881,7 +11881,6 @@ class TestRevisionReminders(unittest.TestCase):
             _insert_reminder_rows("c1", broken, "2026-10-24", "inst-1")
 
     def test_provider_429_is_failed_and_logs_no_address(self):
-        from app import routes as r
         resp = MagicMock()
         resp.status_code = 429
         resp.json.return_value = {"message": "slow down ana@example.edu"}
@@ -11889,7 +11888,7 @@ class TestRevisionReminders(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "a@b.c"}), \
                 unittest.mock.patch("app.helpers.report_email.requests.post", return_value=resp) as posted, \
                 self.assertLogs("app.helpers.report_email", level="ERROR") as logs:
-            ok, err = r._send_via_resend(
+            ok, err = _send_via_resend(
                 "ana@example.edu",
                 "Subject",
                 "Hello",
@@ -11968,12 +11967,12 @@ class TestRevisionReminders(unittest.TestCase):
         client = self._client()
         admin = MagicMock()
         with unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r.Course, "get_full_class_data", return_value=class_data), \
-                unittest.mock.patch.object(r.Course, "get_learning_objectives", return_value=[]), \
+                unittest.mock.patch.object(Course, "get_full_class_data", return_value=class_data), \
+                unittest.mock.patch.object(Course, "get_learning_objectives", return_value=[]), \
                 unittest.mock.patch("app.helpers.class_progress._attached_objective_ids", return_value=set()), \
                 unittest.mock.patch.object(r, "load_assignments_for_class", return_value=[]), \
                 unittest.mock.patch.object(r, "_process_enrollments", return_value=(ready, ready, {})), \
-                unittest.mock.patch.object(r.Grade, "get_revision_candidates", return_value=rows), \
+                unittest.mock.patch.object(Grade, "get_revision_candidates", return_value=rows), \
                 unittest.mock.patch.object(r, "local_today", return_value=date(2026, 10, 21)), \
                 unittest.mock.patch.object(r, "supabase_admin", admin), \
                 unittest.mock.patch("app.helpers.revision_mail.supabase_admin", admin):

@@ -327,7 +327,7 @@ class TestEmailRelay(unittest.TestCase):
         sender.assert_not_called()
 
     def test_payload_has_no_reply_to_and_from_is_unchanged(self):
-        from app import routes as r
+        from app.helpers.report_email import _send_via_resend
         posted = unittest.mock.MagicMock()
         posted.return_value.status_code = 200
         posted.return_value.json.return_value = {"id": "re_1"}
@@ -335,7 +335,7 @@ class TestEmailRelay(unittest.TestCase):
             "RESEND_API_KEY": "k",
             "REPORTS_FROM_EMAIL": "reports@claritygrader.net",
         }), unittest.mock.patch("app.helpers.report_email.requests.post", posted):
-            ok, err = r._send_via_resend(
+            ok, err = _send_via_resend(
                 "ada@school.edu",
                 "Progress",
                 "Hello",
@@ -457,10 +457,10 @@ class TestEmailRelay(unittest.TestCase):
         self.assertNotIn("D1  |  M", paragraphs[1])
 
     def test_footer_with_no_trailing_newline_and_with_internal_blank_lines(self):
-        from app import routes as r
+        from app.helpers.report_email import _report_footer
         from app.helpers.report_email import _report_body_html
-        bare = "Hello Ana,\nD1  |  M" + r._report_footer("Professor Estes", "Algebra")
-        spaced = "Hello Ana,\n\n\nD1  |  M\nD2  |  R" + r._report_footer(
+        bare = "Hello Ana,\nD1  |  M" + _report_footer("Professor Estes", "Algebra")
+        spaced = "Hello Ana,\n\n\nD1  |  M\nD2  |  R" + _report_footer(
             "Professor Estes", "Algebra"
         )
         for text, grades in (
@@ -560,7 +560,7 @@ class TestEmailRelay(unittest.TestCase):
         self.assertEqual(db["email_sends_reads"], 2)
 
     def test_one_hundred_twenty_hashes_use_three_recipient_reads(self):
-        from app import routes as r
+        from app.helpers.report_email import _email_cap_counts
         hashes = ["h%03d" % index for index in range(120)]
         db = self._db()
         db["hash_counts"][hashes[0]] = 4
@@ -569,7 +569,7 @@ class TestEmailRelay(unittest.TestCase):
         admin, _calls = self._count_tables(db)
         with self.app.app_context():
             with unittest.mock.patch("app.helpers.report_email.supabase_admin", admin):
-                instructor_count, per_hash = r._email_cap_counts("inst1", hashes)
+                instructor_count, per_hash = _email_cap_counts("inst1", hashes)
         self.assertEqual(instructor_count, 0)
         self.assertEqual(db["recipient_reads"], 3)
         self.assertEqual(per_hash[hashes[0]], 4)

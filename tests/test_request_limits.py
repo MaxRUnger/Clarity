@@ -7,6 +7,7 @@ import unittest
 import unittest.mock
 
 from app import create_app
+from app.models import Course, Homework
 from app.helpers.archive_snapshot import check_snapshot_archive
 
 
@@ -210,7 +211,7 @@ class TestCacheControl(unittest.TestCase):
                 unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
                 unittest.mock.patch.object(r, "_gradesheet_export_bundle", return_value=bundle), \
                 unittest.mock.patch.object(
-                    r.Homework, "get_hw_prev_scores_map_for_assignment", return_value={}
+                    Homework, "get_hw_prev_scores_map_for_assignment", return_value={}
                 ):
             exported = client.get("/class/c1/assignments/a1/export-csv")
         self.assertEqual(exported.status_code, 200)
@@ -249,7 +250,7 @@ class TestArchiveZipLimit(unittest.TestCase):
 
 class TestSensitiveLogs(unittest.TestCase):
     def test_provider_failure_log_has_no_address_or_body(self):
-        from app import routes as r
+        from app.helpers.report_email import _send_via_resend
         resp = unittest.mock.MagicMock()
         resp.status_code = 400
         resp.text = "rejected student@school.edu BODYTEXT"
@@ -261,7 +262,7 @@ class TestSensitiveLogs(unittest.TestCase):
                 os.environ,
                 {"RESEND_API_KEY": "k", "REPORTS_FROM_EMAIL": "reports@school.edu"},
             ), unittest.mock.patch("app.helpers.report_email.requests.post", return_value=resp):
-                ok, _err = r._send_via_resend(
+                ok, _err = _send_via_resend(
                     "student@school.edu",
                     "Subject",
                     "Hello",
@@ -322,10 +323,10 @@ class TestSensitiveLogs(unittest.TestCase):
                         r, "_enrolled_student_ids_for_class", return_value={"stu-1"}
                     ), \
                     unittest.mock.patch.object(
-                        r.Course, "get_assignment_lo_ids", return_value=["lo-1"]
+                        Course, "get_assignment_lo_ids", return_value=["lo-1"]
                     ), \
                     unittest.mock.patch.object(
-                        r.Homework, "get_hw_scores_map_for_assignment", return_value={"stu-1": 80}
+                        Homework, "get_hw_scores_map_for_assignment", return_value={"stu-1": 80}
                     ):
                 response = client.post(
                     "/api/class/c1/save-grades",

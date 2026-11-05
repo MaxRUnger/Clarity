@@ -94,13 +94,6 @@ def _admin(db):
     return admin
 
 
-def _patch_admins(admin):
-    return patch.multiple(
-        "app.routes",
-        supabase_admin=admin,
-    )
-
-
 class TestAppSessionOrder(unittest.TestCase):
     def test_validation_is_registered_before_slide_and_csrf(self):
         app = create_app()

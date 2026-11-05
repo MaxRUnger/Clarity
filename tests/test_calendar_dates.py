@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app import create_app
+from app.models import Course, Homework
 
 DATE_MESSAGE = "Enter a date as YYYY-MM-DD."
 _ARABIC_INDIC = "\u0662\u0660\u0662\u0666-\u0660\u0668-\u0662\u0660"
@@ -99,12 +100,12 @@ class TestAssignmentCalendarDates(unittest.TestCase):
                 routes_module, "_instructor_owns_class", return_value=True
             ),
             patch.object(
-                routes_module.Homework,
+                Homework,
                 "canonicalize_homework_group_for_class",
                 return_value="hw1",
             ),
             patch.object(
-                routes_module.Course, "get_lo_ids_for_class", return_value=[]
+                Course, "get_lo_ids_for_class", return_value=[]
             ),
         ]
         if kind == "update":
