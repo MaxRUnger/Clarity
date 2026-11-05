@@ -380,16 +380,16 @@ function runLOComparison() {
     html += '<div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-1">';
     html += '<p class="text-xs font-medium text-slate-500 dark:text-slate-400">Extra (in the file but not in the assignment)</p>';
     html += '<div class="flex items-center gap-2 shrink-0 text-xs">';
-    html += '<button type="button" class="font-medium text-amber-600 dark:text-amber-400 hover:underline" onclick="setAllExtraLOs(true)">Select all</button>';
+    html += '<button type="button" class="font-medium text-amber-600 dark:text-amber-400 hover:underline" data-set-all-extra="true">Select all</button>';
     html += '<span class="text-slate-400" aria-hidden="true">|</span>';
-    html += '<button type="button" class="font-medium text-slate-500 dark:text-slate-400 hover:underline" onclick="setAllExtraLOs(false)">Deselect all</button>';
+    html += '<button type="button" class="font-medium text-slate-500 dark:text-slate-400 hover:underline" data-set-all-extra="false">Deselect all</button>';
     html += '</div></div>';
     html += '<div class="flex flex-wrap gap-2 mb-3">';
     extra.forEach(lo => {
       const checked = approvedExtraLOs.has(lo) ? 'checked' : '';
       const safe = escapeHTML(lo);
       html += `<label class="lo-extra px-2.5 py-1 rounded-full text-xs font-semibold cursor-pointer flex items-center gap-1.5">
-        <input type="checkbox" class="accent-amber-600" ${checked} onchange='toggleExtraLO(${JSON.stringify(lo)}, this.checked)'>
+        <input type="checkbox" class="accent-amber-600 extra-lo-toggle" data-extra-lo="${escapeHTML(lo)}" ${checked}>
         ${safe}
       </label>`;
     });
@@ -666,14 +666,14 @@ function displayExtractedData(data) {
       : '';
     html += `<tr>
       <td class="border border-slate-300 dark:border-slate-600 px-2 py-1">
-        <input type="text" class="name-input" value="${escapeHTML(name)}" data-row="${rowIdx}" oninput="updateExtractedStudentName(${rowIdx}, this.value)">
+        <input type="text" class="name-input" value="${escapeHTML(name)}" data-row="${rowIdx}">
         <div class="name-match-slot" data-row="${rowIdx}"></div>
       </td>`;
 
     if (showHomework) {
       const hwAttrs = 'min="0" max="100" step="0.1"';
       html += `<td class="border border-slate-300 dark:border-slate-600 px-1 py-1 text-center">
-        <input type="number" class="grade-input-hw w-full max-w-[5rem] mx-auto text-center border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white" ${hwAttrs} value="${escapeHTML(rawHw)}" placeholder="\u2014" data-row="${rowIdx}" data-col="0" title="0 to 100; same stored value as the speed grader. Re-import updates it." oninput="updateExtractedHomeworkPct(${rowIdx}, this.value)">
+        <input type="number" class="grade-input-hw w-full max-w-[5rem] mx-auto text-center border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white" ${hwAttrs} value="${escapeHTML(rawHw)}" placeholder="\u2014" data-row="${rowIdx}" data-col="0" title="0 to 100; same stored value as the speed grader. Re-import updates it.">
       </td>`;
     }
 
@@ -1278,3 +1278,24 @@ async function handleFormSubmit(e) {
     restoreImportButton();
   }
 }
+document.addEventListener('click', function (event) {
+  var btn = event.target && event.target.closest ? event.target.closest('[data-set-all-extra]') : null;
+  if (!btn) return;
+  setAllExtraLOs(btn.getAttribute('data-set-all-extra') === 'true');
+});
+document.addEventListener('change', function (event) {
+  var input = event.target;
+  if (!input || !input.classList || !input.classList.contains('extra-lo-toggle')) return;
+  toggleExtraLO(input.getAttribute('data-extra-lo'), input.checked);
+});
+document.addEventListener('input', function (event) {
+  var el = event.target;
+  if (!el || !el.classList) return;
+  if (el.classList.contains('name-input')) {
+    updateExtractedStudentName(Number(el.getAttribute('data-row')), el.value);
+    return;
+  }
+  if (el.classList.contains('grade-input-hw')) {
+    updateExtractedHomeworkPct(Number(el.getAttribute('data-row')), el.value);
+  }
+});

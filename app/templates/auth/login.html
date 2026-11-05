@@ -19,7 +19,7 @@
       <p id="passwordResetNotice" class="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-100">Your password was updated. Sign in with the new password.</p>
       {% endif %}
 
-      <form onsubmit="submitLogin(event)" class="space-y-5">
+      <form id="loginForm" class="space-y-5">
 
         <!-- Email -->
         <div>
@@ -63,38 +63,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-function submitLogin(event) {
-  event.preventDefault();
-  const btn = event.target.querySelector('button[type=submit]');
-  const orig = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = `<svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Signing in...`;
-
-  fetch('/api/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: document.getElementById('email').value,
-      password: document.getElementById('password').value
-    })
-  })
-  .then(r => r.json())
-  .then(res => {
-    if (res.success) {
-      btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> Refreshing...`;
-      window.location.href = res.redirect;
-    } else {
-      btn.disabled = false;
-      btn.innerHTML = orig;
-      alert(res.message || 'Login failed');
-    }
-  })
-  .catch(() => {
-    btn.disabled = false;
-    btn.innerHTML = orig;
-    alert('Connection error. Please try again.');
-  });
-}
-</script>
+<script src="{{ url_for('static', filename='js/login.js') }}?v=1"></script>
 {% endblock %}

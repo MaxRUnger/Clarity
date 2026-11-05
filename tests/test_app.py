@@ -3725,6 +3725,12 @@ class TestPrintClassSheet(unittest.TestCase):
 
     def test_summary_auto_print_is_only_for_print_param(self):
         src = self._template("class_learning_objectives_summary.html")
+        script_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js",
+            "class_learning_objectives_summary.js",
+        )
+        with open(script_path, encoding="utf-8") as fh:
+            src = fh.read() + "\n" + src
         self.assertIn('params.get("print") !== "1"', src)
         gate = src.find('params.get("print") !== "1"')
         load = src.find('addEventListener("load"', gate)

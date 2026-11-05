@@ -10,7 +10,7 @@
       <p class="text-slate-500 dark:text-slate-400 mt-1">{{ class_display_title(class_name, class_days, class_section) }} · View individual student progress</p>
     </div>
     <div class="flex items-center gap-2 print:hidden">
-      <button type="button" onclick="window.print()"
+      <button type="button" id="printStudentSheetsBtn"
         class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
@@ -39,7 +39,7 @@
     <div class="p-6 border-b border-slate-100 dark:border-slate-700 print:hidden">
       <div class="relative">
         <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-        <input type="text" id="searchInput" placeholder="Search by name or email..." oninput="handleSearch()" class="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-700 border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-slate-900 dark:text-white dark:placeholder-slate-400">
+        <input type="text" id="searchInput" placeholder="Search by name or email..." class="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-700 border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-slate-900 dark:text-white dark:placeholder-slate-400">
       </div>
     </div>
     <div class="student-roster-list divide-y divide-slate-50 dark:divide-slate-700">
@@ -47,9 +47,7 @@
       <div role="link" tabindex="0"
         class="student-row block px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer relative"
         data-name="{{ student.name|lower }} {{ (student.email or '')|lower }}"
-        data-student-href="{{ url_for('main.class_student_detail', class_id=class_id, student_id=student.id) }}"
-        onclick="if (!event.target.closest('button, [data-copy-email-btn]')) { window.location.href = this.dataset.studentHref; }"
-        onkeydown="if ((event.key==='Enter'||event.key===' ') && !event.target.closest('button,[data-copy-email-btn]')) { event.preventDefault(); window.location.href = this.dataset.studentHref; }">
+        data-student-href="{{ url_for('main.class_student_detail', class_id=class_id, student_id=student.id) }}">
         <div class="flex items-center justify-between">
           <div class="flex-1 min-w-0">
             <div class="mb-1">
@@ -92,39 +90,7 @@
 </div>
 </div>
 
-<script>
-// `ClarityUI.debounce` lives in ui_helpers.js; fall back to identity so this
-// page still works if that script load is blocked.
-const __clarityDebounce =
-  (window.ClarityUI && typeof window.ClarityUI.debounce === 'function')
-    ? window.ClarityUI.debounce
-    : function (fn) { return fn; };
-
-// Node list cached after first call. Page reloads on add/remove of students,
-// so the cache is rebuilt naturally and never has to be invalidated here.
-let __cachedStudentRows = null;
-function _studentRows() {
-  if (!__cachedStudentRows) {
-    __cachedStudentRows = Array.from(document.querySelectorAll('.student-row'));
-  }
-  return __cachedStudentRows;
-}
-
-const _runHandleSearch = __clarityDebounce(function () {
-  const q = (document.getElementById('searchInput').value || '').toLowerCase();
-  const rows = _studentRows();
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const name = row.dataset.name || '';
-    const want = (!q || name.includes(q)) ? '' : 'none';
-    if (row.style.display !== want) row.style.display = want;
-  }
-}, 80);
-
-function handleSearch() {
-  _runHandleSearch();
-}
-</script>
+<script src="{{ url_for('static', filename='js/class_students.js') }}?v=1"></script>
 {{ mastery_badge_styles() }}
 {{ student_progress_print_styles() }}
 <style>

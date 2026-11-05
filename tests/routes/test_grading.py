@@ -1021,7 +1021,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
             src,
         )
-        self.assertIn("csv_wizard.js') }}?v=20", src)
+        self.assertIn("csv_wizard.js') }}?v=21", src)
 
     def test_speed_grader_autosave_runs_when_the_tab_hides(self):
         path = os.path.join(
@@ -1117,7 +1117,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             template = fh.read()
         with open(os.path.join(root, "static", "js", "csv_wizard.js"), encoding="utf-8") as fh:
             script = fh.read()
-        self.assertIn("js/csv_wizard.js') }}?v=20", template)
+        self.assertIn("js/csv_wizard.js') }}?v=21", template)
         self.assertFalse(os.path.exists(os.path.join(root, "static", "js", "pdf_analyzer.js")))
         for src in (template, script):
             self.assertNotIn("pdfInput", src)
@@ -2065,10 +2065,8 @@ class TestUploadPageReads(unittest.TestCase):
 
     def _assignments_json(self, page):
         import json
-        marker = "window.ASSIGNMENTS_DATA = JSON.parse('"
-        start = page.find(marker) + len(marker)
-        end = page.find("');", start)
-        return json.loads(page[start:end])
+        raw = page.split('id="assignmentsJson">', 1)[1].split("</script>", 1)[0]
+        return json.loads(raw)
 
     def _assignment_fields(self, assignment):
         return {

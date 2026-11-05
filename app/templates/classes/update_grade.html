@@ -181,7 +181,7 @@
               </svg>
               <p class="font-medium text-slate-700 dark:text-slate-300 mb-1">Click to upload or drag and drop</p>
               <p class="text-sm text-slate-400 dark:text-slate-500">CSV up to 10MB</p>
-              <input type="file" id="csvInput" accept=".csv" class="hidden" onchange="handleFileSelect(this)">
+              <input type="file" id="csvInput" accept=".csv" class="hidden">
             </div>
           </label>
           <p id="selectedFileName" class="text-sm text-slate-500 dark:text-slate-400 mt-3 hidden"></p>
@@ -189,7 +189,7 @@
         </div>
       </div>
 
-      <button type="button" id="nextBtn1" onclick="goToStep(2)" disabled
+      <button type="button" id="nextBtn1" disabled
         class="mt-8 w-full max-w-lg mx-auto block px-6 py-3 bg-blue-600 text-white rounded-lg font-medium transition-all opacity-50 cursor-not-allowed flex items-center justify-center gap-2">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         Continue to Map Assignment
@@ -205,7 +205,7 @@
 
       <div class="border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6 text-sm space-y-4">
         <label for="assignmentSelect" class="block font-medium text-slate-900 dark:text-white">Assignment</label>
-        <select id="assignmentSelect" onchange="onAssignmentSelected()" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white">
+        <select id="assignmentSelect" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white">
           <option value="" disabled selected>Select assignment</option>
           {% for assignment in assignments %}
             <option value="{{ assignment.id }}">{{ assignment.name }}</option>
@@ -222,10 +222,10 @@
       </div>
 
       <div class="flex gap-3">
-        <button type="button" onclick="goToStep(1)" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white transition-colors text-sm">
+        <button type="button" id="mapBackBtn" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white transition-colors text-sm">
           &larr; Back
         </button>
-        <button type="button" id="nextBtn2" onclick="continueFromMapStep()" class="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center justify-center gap-2">
+        <button type="button" id="nextBtn2" class="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center justify-center gap-2">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           Continue to Review &amp; Edit
         </button>
@@ -289,10 +289,10 @@
       </div>
 
       <div class="flex gap-3 items-center">
-        <button type="button" onclick="goToStep(2)" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white transition-colors text-sm">
+        <button type="button" id="reviewBackBtn" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white transition-colors text-sm">
           &larr; Back
         </button>
-        <button type="button" id="reviewContinueBtn" onclick="continueFromReviewStep()" class="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center justify-center gap-2">
+        <button type="button" id="reviewContinueBtn" class="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center justify-center gap-2">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           Continue to Confirm
         </button>
@@ -332,7 +332,7 @@
       </div>
 
       <div class="flex gap-3">
-        <button type="button" onclick="goToStep(3)" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white transition-colors text-sm">
+        <button type="button" id="confirmBackBtn" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg font-medium text-slate-900 dark:text-white transition-colors text-sm">
           &larr; Back
         </button>
         <button type="submit" id="importBtn" class="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20">
@@ -346,11 +346,9 @@
 </form>
 
 <script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>
-<script>
-  window.CLASS_ID = "{{ class_id }}";
-  // Pass assignment LO data from server to JS
-  window.ASSIGNMENTS_DATA = JSON.parse('{{ assignments | tojson }}');
-</script>
-<script src="{{ url_for('static', filename='js/csv_wizard.js') }}?v=20"></script>
+<script type="application/json" id="classIdJson">{{ class_id | tojson }}</script>
+<script type="application/json" id="assignmentsJson">{{ assignments | tojson }}</script>
+<script src="{{ url_for('static', filename='js/update_grade.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='js/csv_wizard.js') }}?v=21"></script>
 {% endif %}
 {% endblock %}

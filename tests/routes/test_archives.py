@@ -648,6 +648,8 @@ class TestArchivedClasses(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         page = response.get_data(as_text=True)
+        from pathlib import Path
+        page_script = Path("app/static/js/archived_classes.js").read_text(encoding="utf-8")
         self.assertIn("snapshot_path", seen["columns"])
         self.assertIn("restored_at", seen["columns"])
         self.assertIn("restored_class_id", seen["columns"])
@@ -685,27 +687,27 @@ class TestArchivedClasses(unittest.TestCase):
         self.assertNotIn("Open class", plain_card)
         self.assertEqual(page.count('class="delete-archive-btn'), 4)
         self.assertEqual(page.count(">Download<"), 4)
-        self.assertIn('restoreArchiveTitle.textContent = "Restore " + className + "?"', page)
-        self.assertNotIn("restoreArchiveTitle.innerHTML", page)
-        self.assertIn("if (restoreArchiveBusy || !restoreArchiveModal) return;", page)
-        self.assertIn("if (restoreArchiveBusy || !restoreArchiveId || !restoreArchiveSubmit) return;", page)
-        self.assertIn("restoreArchiveSubmit.disabled = true;", page)
+        self.assertIn('restoreArchiveTitle.textContent = "Restore " + className + "?"', page_script)
+        self.assertNotIn("restoreArchiveTitle.innerHTML", page_script)
+        self.assertIn("if (restoreArchiveBusy || !restoreArchiveModal) return;", page_script)
+        self.assertIn("if (restoreArchiveBusy || !restoreArchiveId || !restoreArchiveSubmit) return;", page_script)
+        self.assertIn("restoreArchiveSubmit.disabled = true;", page_script)
         self.assertIn(
             'fetch("/archived-classes/" + encodeURIComponent(restoreArchiveId) + "/restore"',
-            page,
+            page_script,
         )
         self.assertIn(
             "We couldn't confirm the result. Reload this page to see whether the class was restored.",
-            page,
+            page_script,
         )
-        self.assertNotIn("Could not reach the server. Nothing was changed.", page)
+        self.assertNotIn("Could not reach the server. Nothing was changed.", page_script)
         self.assertIn(
             "The archive is removed from Archived Classes once the class is restored.",
             page,
         )
         self.assertNotIn("The archive stays in Archived Classes.", page)
         self.assertNotIn("restoreArchiveClose", page)
-        script = page.split("const restoreNetworkError", 1)[1]
+        script = page_script.split("const restoreNetworkError", 1)[1]
         network_branch = script.split("catch {", 1)[1].split("catch {", 1)[0]
         parse_branch = script.split("catch {", 1)[1].split("catch {", 1)[1].split("payload.success", 1)[0]
         self.assertIn("restoreReloadOnClose = true;", network_branch)

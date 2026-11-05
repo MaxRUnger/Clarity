@@ -661,7 +661,8 @@ class TestClassUpdate(unittest.TestCase):
             re.S,
         )
         self.assertEqual(len(blobs), len(classes))
-        self.assertEqual(html.count('type="application/json"'), len(classes))
+        self.assertEqual(html.count('type="application/json"'), len(classes) + 1)
+        self.assertEqual(html.count('id="instructorModeJson"'), 1)
         parsed = [json.loads(blob) for blob in blobs]
         dangerous_blob = next(
             blob for blob, item in zip(blobs, parsed) if item["id"] == "c1"

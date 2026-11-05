@@ -474,15 +474,15 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
         reports_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "app", "templates", "classes", "class_reports.html",
         )
-        history_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "app", "templates", "classes", "student_history.html",
+        history_script = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "student_history.js",
         )
         helpers_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "app", "static", "js", "ui_helpers.js",
         )
         with open(reports_path, encoding="utf-8") as fh:
             reports_src = fh.read()
-        with open(history_path, encoding="utf-8") as fh:
+        with open(history_script, encoding="utf-8") as fh:
             history_src = fh.read()
         with open(helpers_path, encoding="utf-8") as fh:
             helpers_src = fh.read()

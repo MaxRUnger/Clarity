@@ -636,7 +636,10 @@ class TestStudentHistoryOrder(unittest.TestCase):
         self.assertIn("print-color-adjust: exact", batch)
         self.assertIn("break-after: page", batch)
         self.assertIn("break-inside: avoid", batch)
-        self.assertIn("}, 250);", batch)
+        script_path = os.path.join(root, "..", "static", "js", "student_history_print.js")
+        with open(script_path, encoding="utf-8") as handle:
+            print_script = handle.read()
+        self.assertIn("}, 250);", print_script)
         self.assertIn('{% include "classes/student_history_table.html" %}', page)
         self.assertIn('{% include "classes/student_history_table.html" %}', batch)
         self.assertLess(table.find("<thead>"), table.find("history-sheet-name"))

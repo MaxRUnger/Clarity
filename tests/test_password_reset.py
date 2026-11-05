@@ -659,6 +659,7 @@ class TestResetPages(unittest.TestCase):
         self.assertIn("Uppercase letter", text)
         self.assertIn("Digit", text)
         self.assertIn("One symbol, such as ! or #", text)
+        text = Path("app/static/js/reset_password.js").read_text(encoding="utf-8") + "\n" + text
         self.assertIn("location.hash", text)
         self.assertIn("history.replaceState", text)
         self.assertIn('params.get("token_hash")', text)
@@ -741,8 +742,9 @@ class TestResetPages(unittest.TestCase):
         self.assertIn("Uppercase letter", text)
         self.assertIn("Digit", text)
         self.assertIn("One symbol, such as ! or #", text)
-        self.assertIn("res.message", text)
-        self.assertIn("showError(msg", text)
+        script = Path("app/static/js/signup.js").read_text(encoding="utf-8")
+        self.assertIn("res.message", script)
+        self.assertIn("showError(msg", script)
 
     def test_signup_and_reset_requirements_lists_match(self):
         signup = _requirements_list("app/templates/auth/signup.html")
