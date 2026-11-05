@@ -891,6 +891,8 @@ class TestClassDetailReads(unittest.TestCase):
         self.assertGreaterEqual(start, 0)
         stop = page.find('class="student-item', start)
         if stop < 0:
+            stop = page.find('id="studentsViewEmptyState"', start)
+        if stop < 0:
             stop = start + 800
         return page[start:stop]
 

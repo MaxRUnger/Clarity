@@ -584,16 +584,21 @@ class TestRevisionReminders(unittest.TestCase):
         )
         with open(path, encoding="utf-8") as handle:
             src = handle.read()
+        script_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_detail.js",
+        )
+        with open(script_path, encoding="utf-8") as handle:
+            page_js = handle.read()
         button_at = src.find('id="revisionEmailBtn"')
         self.assertIn("view.key == '3'", src[button_at - 400:button_at])
-        send_fn = src.split("function sendRevisionEmails()", 1)[1]
+        send_fn = page_js.split("function sendRevisionEmails()", 1)[1]
         self.assertIn("emailSendBtn.disabled = true", send_fn)
-        self.assertIn("1 student will be emailed.", src)
-        self.assertIn("Sample message (first student)", src)
-        self.assertIn("if (missingEmail.length)", src)
-        self.assertIn("if (reminded.length)", src)
-        self.assertIn("people.length === 0", src)
-        self.assertIn("location.reload()", src)
+        self.assertIn("1 student will be emailed.", page_js)
+        self.assertIn("Sample message (first student)", page_js)
+        self.assertIn("if (missingEmail.length)", page_js)
+        self.assertIn("if (reminded.length)", page_js)
+        self.assertIn("people.length === 0", page_js)
+        self.assertIn("location.reload()", page_js)
         self.assertIn(
             "Close this window and choose Email students again to send the rest.",
             open(os.path.join(os.path.dirname(__file__), "..", "..", "app", "routes", "class_email.py"), encoding="utf-8").read(),
@@ -603,3 +608,4 @@ class TestRevisionReminders(unittest.TestCase):
             encoding="utf-8",
         ).read())
         self.assertNotIn("over_limit", src)
+        self.assertNotIn("over_limit", page_js)

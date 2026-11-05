@@ -178,7 +178,7 @@ class TestCspInlineScripts(unittest.TestCase):
         detail = pages["detail"]
         self.assertNotIn("js/class_student_detail.js", detail)
         self.assertIn("data-print", detail)
-        self.assertIn("js/app_shell.js?v=2", detail)
+        self.assertIn("js/app_shell.js?v=3", detail)
         history = pages["history"]
         history_payload_at = history.find('id="studentHistoryEmailPayload"')
         history_js_at = history.find("js/student_history.js")
@@ -243,6 +243,8 @@ class TestCspInlineScripts(unittest.TestCase):
         self.assertGreater(shell_replaced_at, shell_auto_print_at)
         self.assertGreater(shell_mode_at, shell_replaced_at)
         self.assertIn("applyInstructorModeVisibility", shell_src[shell_mode_at:])
+        self.assertIn("copyEmailFromBtn(btn)", shell_src)
+        self.assertNotIn("btn.onclick", shell_src)
         for name, html in pages.items():
             self.assertIsNone(ON_ATTR.search(html), name)
             for opener in _script_opens(html):
@@ -290,3 +292,45 @@ class TestCspInlineScripts(unittest.TestCase):
         self.assertEqual(html.count("js/class_assignments.js"), 1)
         self.assertNotIn("js/class_assignments_lo_csv.js", html)
         self.assertNotIn("js/class_assignments_mode.js", html)
+
+    def test_class_detail_page_has_no_inline_script_and_keeps_script_order(self):
+        from datetime import date
+        from flask import render_template
+        from app.helpers.revision_report import build_revision_report
+        text = (ROOT / "app/templates/classes/class_detail.html").read_text(encoding="utf-8")
+        self.assertIsNone(ON_ATTR.search(text))
+        for match in SCRIPT_OPEN.finditer(text):
+            attrs = match.group(1)
+            if "src=" in attrs:
+                continue
+            self.assertIn("application/json", attrs)
+        app = create_app()
+        with app.test_request_context():
+            session["user_id"] = "inst-1"
+            session["role"] = "instructor"
+            html = render_template(
+                "classes/class_detail.html",
+                class_id="c1",
+                class_name="Algebra",
+                class_days="MW",
+                class_section="01",
+                students=[],
+                all_students=[],
+                learning_objectives=[],
+                assignments=[],
+                revision_report=build_revision_report([], date(2026, 10, 20)),
+                revision_printed_on="2026-10-20",
+            )
+        class_json = html.find('id="classIdJson"')
+        mode_json = html.find('id="instructorModeJson"')
+        page_js = html.find("js/class_detail.js?v=1")
+        shell = html.find("js/app_shell.js?v=3")
+        self.assertGreater(class_json, -1)
+        self.assertLess(class_json, mode_json)
+        self.assertLess(mode_json, page_js)
+        self.assertLess(page_js, shell)
+        self.assertIn("data-print", html)
+        self.assertIn('id="progressAssignmentsJson"', html)
+        self.assertIn('id="progressStudentsJson"', html)
+        self.assertIn('id="dashboardAllStudentsJson"', html)
+        self.assertIsNone(ON_ATTR.search(html))

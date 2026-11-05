@@ -237,7 +237,7 @@
     
 document.addEventListener('click', function (event) {
   var btn = event.target && event.target.closest ? event.target.closest('[data-copy-email-btn]') : null;
-  if (!btn || btn.onclick) return;
+  if (!btn) return;
   event.stopPropagation();
   copyEmailFromBtn(btn);
   event.preventDefault();

@@ -691,7 +691,12 @@ class TestRevisionModalTemplate(unittest.TestCase):
         self.assertIn("column-count: 2", print_block)
         self.assertIn("break-inside: avoid", print_block)
         self.assertNotIn("innerHTML", modal)
-        script = src[src.find("function selectRevisionView"):src.find("function openOverdueRevisionsModal")]
+        script_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "class_detail.js",
+        )
+        with open(script_path, encoding="utf-8") as handle:
+            page_js = handle.read()
+        script = page_js[page_js.find("function selectRevisionView"):page_js.find("function openOverdueRevisionsModal")]
         self.assertNotIn("innerHTML", script)
         self.assertIn("classList.toggle", script)
 
@@ -3646,9 +3651,11 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         for element_id in ("uploadStudentsModal", "studentUploadPreviewModal"):
             tag = self._opening_tag(src, element_id)
             self.assertNotIn("onclick", tag.lower())
-        self.assertIn("ClarityUI.lockPageScroll()", src)
-        self.assertIn("ClarityUI.unlockPageScroll()", src)
+        page_js = self._read("app", "static", "js", "class_detail.js")
+        self.assertIn("ClarityUI.lockPageScroll()", page_js)
+        self.assertIn("ClarityUI.unlockPageScroll()", page_js)
         self.assertNotIn("setPageScrollLocked", src)
+        self.assertNotIn("setPageScrollLocked", page_js)
 
     def test_class_detail_lo_csv_preview_code_is_gone(self):
         src = self._read("app", "templates", "classes", "class_detail.html")
