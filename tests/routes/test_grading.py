@@ -1025,7 +1025,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
 
     def test_speed_grader_autosave_runs_when_the_tab_hides(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "app", "templates", "classes", "class_speed_grader.html",
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
         )
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
@@ -2417,7 +2417,16 @@ class TestSpeedGraderReads(unittest.TestCase):
         self.assertEqual(context["class_name"], "Speed Class")
         self.assertNotIn("Speed Class", page)
         self.assertEqual(context["auto_convert_m"], False)
-        self.assertIn("const AUTO_CONVERT_M = JSON.parse('false');", page)
+        self.assertIn('id="autoConvertMJson">false<', page)
+        js_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(js_path, encoding="utf-8") as handle:
+            page_js = handle.read()
+        self.assertIn(
+            "const AUTO_CONVERT_M = JSON.parse(document.getElementById('autoConvertMJson').textContent);",
+            page_js,
+        )
         self.assertEqual(self._student_fields(context["students"]), self._expected_students())
         self.assertEqual(
             re.findall(r'data-student-row data-student-id="([^"]*)"', page),
@@ -2452,7 +2461,7 @@ class TestSpeedGraderReads(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(calls, self.CALLS)
         self.assertEqual(context["auto_convert_m"], True)
-        self.assertIn("const AUTO_CONVERT_M = JSON.parse('true');", page)
+        self.assertIn('id="autoConvertMJson">true<', page)
         self.assertEqual(self._student_fields(context["students"]), self._expected_students())
 
     def test_every_muted_enrollment_skips_free_passes(self):

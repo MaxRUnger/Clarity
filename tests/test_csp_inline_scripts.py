@@ -334,3 +334,78 @@ class TestCspInlineScripts(unittest.TestCase):
         self.assertIn('id="progressStudentsJson"', html)
         self.assertIn('id="dashboardAllStudentsJson"', html)
         self.assertIsNone(ON_ATTR.search(html))
+
+    def test_speed_grader_page_has_no_inline_script_and_keeps_script_order(self):
+        from flask import render_template
+        text = (ROOT / "app/templates/classes/class_speed_grader.html").read_text(encoding="utf-8")
+        self.assertIsNone(ON_ATTR.search(text))
+        for match in SCRIPT_OPEN.finditer(text):
+            attrs = match.group(1)
+            if "src=" in attrs:
+                continue
+            self.assertIn("application/json", attrs)
+        app = create_app()
+        with app.test_request_context():
+            session["user_id"] = "inst-1"
+            session["role"] = "instructor"
+            html = render_template(
+                "classes/class_speed_grader.html",
+                class_id="c1",
+                instructor_mode="mark",
+                assignments=[],
+                students=[],
+                lo_names=[],
+                auto_convert_m=False,
+            )
+        assignment_json = html.find('id="assignmentData"')
+        mode_json = html.find('id="instructorModeJson"')
+        class_json = html.find('id="classIdJson"')
+        auto_json = html.find('id="autoConvertMJson"')
+        page_js = html.find("js/class_speed_grader.js?v=1")
+        shell = html.find("js/app_shell.js?v=3")
+        self.assertGreater(assignment_json, -1)
+        self.assertLess(assignment_json, mode_json)
+        self.assertLess(mode_json, class_json)
+        self.assertLess(class_json, auto_json)
+        self.assertLess(auto_json, page_js)
+        self.assertLess(page_js, shell)
+        self.assertIsNone(ON_ATTR.search(html))
+
+    def test_reports_page_has_no_inline_script_and_keeps_script_order(self):
+        from flask import render_template
+        text = (ROOT / "app/templates/classes/class_reports.html").read_text(encoding="utf-8")
+        self.assertIsNone(ON_ATTR.search(text))
+        for match in SCRIPT_OPEN.finditer(text):
+            attrs = match.group(1)
+            if "src=" in attrs:
+                continue
+            self.assertIn("application/json", attrs)
+        app = create_app()
+        with app.test_request_context():
+            session["user_id"] = "inst-1"
+            session["role"] = "instructor"
+            html = render_template(
+                "classes/class_reports.html",
+                class_id="c1",
+                class_name="Algebra",
+                class_days="MW",
+                class_section="01",
+                students=[],
+                learning_objectives=[],
+                assignments=[],
+            )
+        class_json = html.find('id="classIdJson"')
+        name_json = html.find('id="classNameJson"')
+        vendor = html.find("jspdf.umd.min.js")
+        plugin = html.find("jspdf.plugin.autotable.min.js")
+        page_js = html.find("js/class_reports.js?v=1")
+        shell = html.find("js/app_shell.js?v=3")
+        self.assertGreater(class_json, -1)
+        self.assertLess(class_json, name_json)
+        self.assertLess(name_json, vendor)
+        self.assertLess(vendor, plugin)
+        self.assertLess(plugin, page_js)
+        self.assertLess(page_js, shell)
+        self.assertIn("data-print", html)
+        self.assertNotIn("instructorModeJson", html)
+        self.assertIsNone(ON_ATTR.search(html))

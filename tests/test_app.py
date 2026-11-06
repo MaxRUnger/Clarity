@@ -2416,7 +2416,13 @@ class TestClassHeaderTitle(unittest.TestCase):
             instructor_title="Professor Estes",
         )
         self.assertEqual(reports.count("Test Upload | MW | F26"), 2)
-        self.assertIn('mt-0.5">Test Upload</p>\';', reports)
+        self.assertIn('id="classNameJson">"Test Upload"', reports)
+        page_js_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "class_reports.js",
+        )
+        with open(page_js_path, encoding="utf-8") as handle:
+            page_js = handle.read()
+        self.assertIn("escapeHtml(CLASS_NAME)", page_js)
 
     def test_reports_prev_column_matches_every_row_for_screen_print_and_pdf(self):
         from html.parser import HTMLParser
@@ -2484,16 +2490,23 @@ class TestClassHeaderTitle(unittest.TestCase):
             self.assertEqual(len(row), len(printable[0]))
             self.assertEqual(sum(1 for cell in row if "data-hw-prev-cell" in cell), 1)
         self.assertEqual(sum(1 for cell in printable[0] if "data-hw-prev-col-header" in cell), 1)
-        self.assertEqual(html.count("HW % prev"), 2)
-        self.assertIn("function formatHwPrevScore", html)
-        self.assertIn("function exportGradeSheetPdf", html)
+        self.assertEqual(html.count("HW % prev"), 1)
         self.assertIn("data-hw-prev-col-header", html)
-        self.assertIn("assignmentHwPrev", html)
-        self.assertIn("columnStyles", html)
         self.assertIn(".hw-prev-score-display", html)
         self.assertNotIn("th:nth-child(2)", html)
-        self.assertIn("function applySinglePagePrintScale", html)
-        self.assertIn("pageHeightPx", html)
+        page_js_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "class_reports.js",
+        )
+        with open(page_js_path, encoding="utf-8") as handle:
+            page_js = handle.read()
+        self.assertIn("function formatHwPrevScore", page_js)
+        self.assertIn("function exportGradeSheetPdf", page_js)
+        self.assertIn("assignmentHwPrev", page_js)
+        self.assertIn("columnStyles", page_js)
+        self.assertIn("function applySinglePagePrintScale", page_js)
+        self.assertIn("pageHeightPx", page_js)
+        self.assertEqual(page_js.count("HW % prev"), 1)
+        self.assertNotIn("th:nth-child(2)", page_js)
 
 
 class TestAttachedObjectives(unittest.TestCase):

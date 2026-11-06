@@ -455,8 +455,9 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
             "..",
             "..",
             "app",
-            "templates",
-            "classes/class_reports.html",
+            "static",
+            "js",
+            "class_reports.js",
         )
         with open(template_path, encoding="utf-8") as fh:
             src = fh.read()
@@ -472,7 +473,7 @@ class TestReportsAssignmentScopeAndEmail(unittest.TestCase):
 
     def test_report_email_greeting_footer_and_counts(self):
         reports_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "app", "templates", "classes", "class_reports.html",
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_reports.js",
         )
         history_script = os.path.join(
             os.path.dirname(__file__), "..", "..", "app", "static", "js", "student_history.js",
