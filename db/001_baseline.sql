@@ -316,7 +316,7 @@ ALTER TABLE public.grades
 
 ALTER TABLE public.grades
     ADD CONSTRAINT grades_second_score_check
-    CHECK (((second_score IS NULL) OR (second_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text]))));
+    CHECK (((second_score IS NULL) OR (second_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'Q'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text]))));
 
 ALTER TABLE public.grades
     ADD CONSTRAINT grades_student_id_fkey
@@ -328,7 +328,7 @@ ALTER TABLE public.grades
 
 ALTER TABLE public.grades
     ADD CONSTRAINT grades_top_score_check
-    CHECK ((top_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text])));
+    CHECK ((top_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'Q'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text])));
 
 ALTER TABLE public.homework_scores
     ADD CONSTRAINT homework_scores_class_id_fkey

@@ -114,6 +114,21 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
         self.assertEqual(rv_high.status_code, 200)
         self.assertEqual(rows_high[0]["counts_for_mastery"], True)
 
+    def test_save_grades_stores_q_when_homework_is_recorded(self):
+        rv_missing, rows_missing = self._patched_save_grades_call(hw_map={}, grade="Q")
+        self.assertEqual(rv_missing.status_code, 400)
+        self.assertEqual(rows_missing, [])
+
+        rv, rows = self._patched_save_grades_call(hw_map={"stu-1": 80}, grade="q")
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["top_score"], "Q")
+        self.assertTrue(rows[0]["counts_for_mastery"])
+
+        rv_z, rows_z = self._patched_save_grades_call(hw_map={"stu-1": 80}, grade="Z")
+        self.assertEqual(rv_z.status_code, 200)
+        self.assertEqual(rows_z, [])
+
 
 class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
     """save_hw_percentage with score=-1 flips non-counting M/MR to counting."""
@@ -1067,6 +1082,51 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertLess(handler.find("document.visibilityState === 'hidden'"), handler.find("runAutosave()"))
         self.assertNotIn("visible", handler)
         self.assertNotIn("performSave", handler)
+
+    def test_shift_q_is_stored_q_and_plain_q_stays_rq(self):
+        js_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        html_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "templates", "classes", "class_speed_grader.html",
+        )
+        with open(js_path, encoding="utf-8") as handle:
+            src = handle.read()
+        with open(html_path, encoding="utf-8") as handle:
+            html = handle.read()
+
+        self.assertIn("const GRADE_MAP = { 'Q': 'RQ' };", src)
+        self.assertNotIn("const GRADE_MAP = { 'Q': 'Q' }", src)
+
+        wants_lines = [
+            line for line in src.splitlines()
+            if line.lstrip().startswith("const wantsGrade")
+        ]
+        self.assertEqual(len(wants_lines), 1)
+        wants_line = wants_lines[0]
+        shift_m = wants_line.find("(e.shiftKey && k === 'M') ? 'MR'")
+        self.assertGreater(shift_m, -1)
+        shift_q = wants_line.find("(e.shiftKey && k === 'Q') ? 'Q'")
+        self.assertGreater(shift_q, -1)
+        self.assertGreater(shift_q, shift_m)
+        grade_map_lookup = wants_line.find("GRADE_MAP[k]")
+        self.assertGreater(grade_map_lookup, -1)
+        self.assertGreater(grade_map_lookup, shift_q)
+
+        legend = html.find(">⇧Q</kbd>")
+        self.assertGreater(legend, -1)
+        end = html.find("</div>", legend)
+        self.assertGreater(end, legend)
+        legend_row = html[legend:end]
+        self.assertIn("Revision done, retake pending", legend_row)
+        self.assertNotIn("RQ", legend_row)
+        self.assertIn("Revise with Question (RQ)", html)
+
+        self.assertIn(
+            ".mastery-q  { background: #fde047; color: #713f12; border-color: #a16207; }",
+            html,
+        )
+        self.assertNotIn(".mastery-q  { background: #ffedd5;", html)
 
     def test_csv_wizard_posts_ignored_names_without_preview(self):
         path = os.path.join(

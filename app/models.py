@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   surfaced distinctly so instructors can see who revised vs aced on first try.
 # - "I" is a transient state used by auto-convert-M when HW is below threshold;
 #   it is restored to "M" automatically once HW rises (see routes.save_hw_percentage).
-MASTERY_GRADES = ('M', 'MR', 'R', 'RQ', 'P', 'X', 'A', 'I')
+MASTERY_GRADES = ('M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A', 'I')
 
 # Assignment type labels stored on assignments.assignment_type.
 # All three types share the same LO selection and grading path.
@@ -221,7 +221,7 @@ class Grade:
     @staticmethod
     def get_priority(mark):
         """Maps letter grades to numerical priorities."""
-        priorities = {'M': 5, 'MR': 5, 'R': 4, 'RQ': 3, 'P': 2, 'X': 1, 'I': 1, 'A': 0}
+        priorities = {'M': 5, 'MR': 5, 'R': 4, 'Q': 4, 'RQ': 3, 'P': 2, 'X': 1, 'I': 1, 'A': 0}
         return priorities.get(mark, -1)
 
     @staticmethod
@@ -254,7 +254,7 @@ class Grade:
         # Otherwise assume it's already one of the allowed codes
         if isinstance(score, str):
             score = score.strip().upper()
-            if score in ('M', 'MR', 'R', 'RQ', 'P', 'X', 'A', 'I'):
+            if score in ('M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A', 'I'):
                 return score
 
         return None

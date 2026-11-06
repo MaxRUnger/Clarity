@@ -100,11 +100,12 @@ class TestGradeNormalizeScore(unittest.TestCase):
 
     # -- pass-through codes --
     def test_valid_codes_returned_as_is(self):
-        for code in ('M', 'MR', 'R', 'RQ', 'P', 'X', 'A', 'I'):
+        for code in ('M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A', 'I'):
             self.assertEqual(Grade.normalize_score(code), code)
 
     def test_codes_are_case_insensitive(self):
         self.assertEqual(Grade.normalize_score('m'), 'M')
+        self.assertEqual(Grade.normalize_score('q'), 'Q')
         self.assertEqual(Grade.normalize_score('rq'), 'RQ')
 
     def test_whitespace_stripped(self):
@@ -135,6 +136,12 @@ class TestGradeIsMastered(unittest.TestCase):
     def test_neither_M_not_mastered(self):
         self.assertFalse(Grade.is_mastered('P', 'X'))
 
+    def test_q_is_not_a_mastery_mark(self):
+        self.assertTrue(Grade.is_mastery_mark('M'))
+        self.assertTrue(Grade.is_mastery_mark('MR'))
+        self.assertFalse(Grade.is_mastery_mark('Q'))
+        self.assertFalse(Grade.is_mastery_mark('R'))
+
 
 class TestGradeGetPriority(unittest.TestCase):
     """Tests for Grade.get_priority — used for score comparisons."""
@@ -142,6 +149,8 @@ class TestGradeGetPriority(unittest.TestCase):
     def test_known_grades_ordered_correctly(self):
         self.assertEqual(Grade.get_priority('M'), Grade.get_priority('MR'))
         self.assertGreater(Grade.get_priority('M'), Grade.get_priority('R'))
+        self.assertEqual(Grade.get_priority('Q'), Grade.get_priority('R'))
+        self.assertGreater(Grade.get_priority('Q'), Grade.get_priority('RQ'))
         self.assertGreater(Grade.get_priority('R'), Grade.get_priority('RQ'))
         self.assertGreater(Grade.get_priority('RQ'), Grade.get_priority('P'))
         self.assertGreater(Grade.get_priority('P'), Grade.get_priority('X'))
@@ -735,6 +744,8 @@ class TestConstants(unittest.TestCase):
         self.assertIn('M', MASTERY_GRADES)
         self.assertIn('MR', MASTERY_GRADES)
         self.assertIn('R', MASTERY_GRADES)
+        self.assertIn('Q', MASTERY_GRADES)
+        self.assertNotIn('Z', MASTERY_GRADES)
         self.assertIn('RQ', MASTERY_GRADES)
         self.assertIn('P', MASTERY_GRADES)
         self.assertIn('X', MASTERY_GRADES)

@@ -577,7 +577,7 @@ function handleGradeCellKeydown(e, cell) {
   const row = parseInt(cell.dataset.row);
   const col = parseInt(cell.dataset.col);
 
-  const wantsGrade = (e.shiftKey && k === 'M') ? 'MR' : (GRADES.includes(k) ? (GRADE_MAP[k] || k) : null);
+  const wantsGrade = (e.shiftKey && k === 'M') ? 'MR' : (e.shiftKey && k === 'Q') ? 'Q' : (GRADES.includes(k) ? (GRADE_MAP[k] || k) : null);
   if (wantsGrade) {
     e.preventDefault();
     if (wantsGrade !== 'A' && !studentHasRecordedHwScore(hwScoresMap, cell.dataset.studentId)) {

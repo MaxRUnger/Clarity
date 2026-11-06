@@ -1709,7 +1709,7 @@ dump
             ""name"": ""grades_second_score_check"",
             ""type"": ""c"",
             ""table"": ""grades"",
-            ""definition"": ""CHECK (((second_score IS NULL) OR (second_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text]))))""
+            ""definition"": ""CHECK (((second_score IS NULL) OR (second_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'Q'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text]))))""
         },
         {
             ""name"": ""grades_student_id_fkey"",
@@ -1727,7 +1727,7 @@ dump
             ""name"": ""grades_top_score_check"",
             ""type"": ""c"",
             ""table"": ""grades"",
-            ""definition"": ""CHECK ((top_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text])))""
+            ""definition"": ""CHECK ((top_score = ANY (ARRAY['M'::text, 'MR'::text, 'R'::text, 'Q'::text, 'RQ'::text, 'P'::text, 'X'::text, 'A'::text, 'I'::text])))""
         },
         {
             ""name"": ""homework_scores_class_id_fkey"",
