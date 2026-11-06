@@ -152,16 +152,10 @@ def create_app(config_class=Config):
 
     @app.after_request
     def add_security_headers(resp):
-        # Enforced policy blocks plugins, base-tag hijacks, framing, and
-        # cross-origin form posts. Inline scripts and event handlers still
-        # run. The report-only policy is the strict script and connect
-        # policy; the browser logs violations and still runs the page.
+        # Enforced policy. style-src still allows inline style attributes.
+        # Script, image, font, and connect sources are same-origin only.
         resp.headers.setdefault(
             "Content-Security-Policy",
-            "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
-        )
-        resp.headers.setdefault(
-            "Content-Security-Policy-Report-Only",
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'",
         )
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")

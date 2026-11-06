@@ -26,6 +26,9 @@ TEMPLATES = (
 
 ON_ATTR = re.compile(r"\son[a-zA-Z]+\s*=")
 SCRIPT_OPEN = re.compile(r"<script\b([^>]*)>", re.I)
+JS_HANDLER = re.compile(r"""\bon[a-z]+\s*=\s*\\?["']|setAttribute\(\s*['"]on""")
+JS_EVAL = re.compile(r"\beval\s*\(|\bnew\s+Function\s*\(")
+SRC_ATTR = re.compile(r"\ssrc\s*=")
 
 
 def _script_opens(html):
@@ -409,3 +412,48 @@ class TestCspInlineScripts(unittest.TestCase):
         self.assertIn("data-print", html)
         self.assertNotIn("instructorModeJson", html)
         self.assertIsNone(ON_ATTR.search(html))
+
+    def test_scan_regexes_match_handlers_and_not_property_assignment(self):
+        self.assertIsNotNone(JS_HANDLER.search('<button onclick="x">'))
+        self.assertIsNotNone(JS_HANDLER.search("<button onclick='x'>"))
+        self.assertIsNotNone(JS_HANDLER.search("el.setAttribute('onclick', 'x')"))
+        self.assertIsNone(JS_HANDLER.search("el.onclick = function () {}"))
+        self.assertIsNone(JS_HANDLER.search("el.onclick = null;"))
+        self.assertIsNone(JS_HANDLER.search("var onlineStatus = 1;"))
+        self.assertIsNotNone(JS_EVAL.search("eval(1)"))
+        self.assertIsNotNone(JS_EVAL.search("new Function('x')"))
+        self.assertIsNone(JS_EVAL.search("retrieval(1)"))
+        self.assertIsNone(JS_EVAL.search("obj.myfunction(1)"))
+        data_src = SCRIPT_OPEN.search('<script data-src="x">')
+        real_src = SCRIPT_OPEN.search('<script src="x">')
+        self.assertIsNone(SRC_ATTR.search(data_src.group(1)))
+        self.assertIsNotNone(SRC_ATTR.search(real_src.group(1)))
+
+    def test_every_browser_template_has_no_inline_script_handler_or_javascript_url(self):
+        files = sorted((ROOT / "app/templates").rglob("*.html"))
+        self.assertGreaterEqual(len(files), 21)
+        json_scripts = 0
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            self.assertIsNone(ON_ATTR.search(text), path.name)
+            self.assertIsNone(re.search(r"javascript:", text, re.I), path.name)
+            for match in SCRIPT_OPEN.finditer(text):
+                attrs = match.group(1)
+                if SRC_ATTR.search(attrs):
+                    continue
+                self.assertIn("application/json", attrs, path.name)
+                json_scripts += 1
+        self.assertGreater(json_scripts, 0)
+
+    def test_page_scripts_have_no_eval_or_inline_handler_strings(self):
+        files = sorted(path for path in (ROOT / "app/static/js").glob("*.js"))
+        self.assertGreaterEqual(len(files), 19)
+        self.assertTrue((ROOT / "app/static/js/vendor").is_dir())
+        listeners = 0
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            self.assertIsNone(JS_HANDLER.search(text), path.name)
+            self.assertIsNone(re.search(r"javascript:", text, re.I), path.name)
+            self.assertIsNone(JS_EVAL.search(text), path.name)
+            listeners += text.count("addEventListener")
+        self.assertGreater(listeners, 0)
