@@ -25,7 +25,7 @@
 <div class="progress-bar-wrapper">
   {% if show_label %}<span class="text-sm text-slate-600 dark:text-slate-400 mb-1 block">{{ mastered }}/{{ total }}</span>{% endif %}
   <div class="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-    <div class="h-full bg-green-500 rounded-full transition-all" {{ ('style="width:' ~ pct ~ '%"')|safe }}></div>
+    <div class="h-full bg-green-500 rounded-full progress-bar-fill" data-progress="{{ pct }}"></div>
   </div>
 </div>
 {% endmacro %}

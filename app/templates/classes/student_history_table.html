@@ -1,5 +1,5 @@
 <div class="student-history-print-table">
-  <table class="history-print-frame" style="--history-lo-count: {{ learning_objectives|length or 1 }}">
+  <table class="history-print-frame" data-history-lo-count="{{ learning_objectives|length or 1 }}">
     <colgroup>
       <col class="history-col-assignment">
       {% for lo in learning_objectives %}

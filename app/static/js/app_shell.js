@@ -1,3 +1,17 @@
+(function () {
+  var bars = document.querySelectorAll('[data-progress]');
+  for (var i = 0; i < bars.length; i++) {
+    var pct = bars[i].getAttribute('data-progress');
+    if (pct == null || pct === '') continue;
+    bars[i].style.width = pct + '%';
+  }
+  var tables = document.querySelectorAll('[data-history-lo-count]');
+  for (var j = 0; j < tables.length; j++) {
+    var count = tables[j].getAttribute('data-history-lo-count');
+    if (count == null || count === '') continue;
+    tables[j].style.setProperty('--history-lo-count', count);
+  }
+})();
 
         (function() {
             const stored = localStorage.getItem('theme');

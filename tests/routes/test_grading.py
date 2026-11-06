@@ -1036,7 +1036,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
             src,
         )
-        self.assertIn("csv_wizard.js') }}?v=22", src)
+        self.assertIn("csv_wizard.js') }}?v=23", src)
 
     def test_speed_grader_autosave_runs_when_the_tab_hides(self):
         path = os.path.join(
@@ -1261,7 +1261,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             template = fh.read()
         with open(os.path.join(root, "static", "js", "csv_wizard.js"), encoding="utf-8") as fh:
             script = fh.read()
-        self.assertIn("js/csv_wizard.js') }}?v=22", template)
+        self.assertIn("js/csv_wizard.js') }}?v=23", template)
         self.assertFalse(os.path.exists(os.path.join(root, "static", "js", "pdf_analyzer.js")))
         for src in (template, script):
             self.assertNotIn("pdfInput", src)

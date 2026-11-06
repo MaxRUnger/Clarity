@@ -659,7 +659,7 @@ function displayExtractedData(data) {
 
   let html = `<table class="w-full border-collapse text-sm">
     <thead><tr class="bg-slate-100 dark:bg-slate-700">
-      <th class="border border-slate-300 dark:border-slate-600 px-4 py-2 text-left font-semibold text-slate-900 dark:text-white" style="min-width:240px">Student Name</th>
+      <th class="border border-slate-300 dark:border-slate-600 px-4 py-2 text-left font-semibold text-slate-900 dark:text-white min-w-[240px]">Student Name</th>
       ${showHomework
         ? `<th class="border border-slate-300 dark:border-slate-600 px-2 py-2 text-center font-semibold text-slate-900 dark:text-white text-xs bg-emerald-50 dark:bg-emerald-900/20" title="Updates homework % for this assignment's homework group (same as speed grader)">${escapeHTML(hwLabel)}</th>`
         : ''}

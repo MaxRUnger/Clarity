@@ -195,8 +195,7 @@
                        class="hw-pct-input w-14 text-center text-xs font-bold rounded-full py-1 px-2 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
                        data-student-id="{{ student.id }}"
                        value=""
-                       placeholder="—"
-                       style="background:#64748b">
+                       placeholder="—">
                 <div class="hw-pass-text hidden mt-0.5">
                   <span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-sky-600 text-white" title="Free pass used for this assignment">HW Pass</span>
                 </div>
@@ -250,6 +249,7 @@
 </div>
 
 <style>
+.hw-pct-input { background: #64748b; }
 .kbd {
   display: inline-flex;
   align-items: center;
@@ -411,5 +411,5 @@
 <script type="application/json" id="instructorModeJson">{{ instructor_mode | tojson }}</script>
 <script type="application/json" id="classIdJson">{{ class_id | tojson }}</script>
 <script type="application/json" id="autoConvertMJson">{{ (auto_convert_m or false)|tojson }}</script>
-<script src="{{ url_for('static', filename='js/class_speed_grader.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='js/class_speed_grader.js') }}?v=2"></script>
 {% endblock %}
