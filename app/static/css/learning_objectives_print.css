@@ -1,0 +1,118 @@
+.lo-print-pages { display: none; }
+@media print {
+  @page { size: landscape; margin: 0; }
+  html, body, main {
+    background: #fff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  .lo-screen-header,
+  .lo-sheet-card { display: none !important; }
+  .lo-print-pages { display: block !important; }
+  .lo-print-page {
+    padding: 0.2in;
+    background: #fff !important;
+    break-after: page;
+    page-break-after: always;
+  }
+  .lo-print-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  .lo-print-title h1 {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.15;
+    font-weight: 600;
+    color: #64748b !important;
+  }
+  .lo-print-classline {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .lo-print-classline p {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.15;
+    color: #0f172a !important;
+  }
+  .lo-print-date {
+    color: #64748b !important;
+    white-space: nowrap;
+  }
+  .lo-print-page .lo-grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #fff !important;
+  }
+  .lo-print-page .lo-grid.lo-fit-13 { font-size: 13px !important; }
+  .lo-print-page .lo-grid.lo-fit-11 { font-size: 11px !important; }
+  .lo-print-page .lo-grid.lo-fit-9 { font-size: 9px !important; }
+  .lo-print-page .lo-grid.lo-fit-8 { font-size: 8px !important; }
+  .lo-print-page th,
+  .lo-print-page td {
+    position: static !important;
+    background: #fff !important;
+    background-color: #fff !important;
+    border: 1px solid #111827 !important;
+    color: #0f172a !important;
+    padding: 1px 2px !important;
+    line-height: 1.1 !important;
+    font-size: inherit !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .lo-print-page .lo-grid.lo-fit-8 th,
+  .lo-print-page .lo-grid.lo-fit-8 td {
+    padding: 0 1px !important;
+  }
+  .lo-print-page th *,
+  .lo-print-page td * {
+    font-size: inherit !important;
+    color: #0f172a !important;
+  }
+  .lo-print-page td.font-mono,
+  .lo-print-page td.font-mono * {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  }
+  .lo-print-page th:first-child,
+  .lo-print-page td:first-child {
+    width: 14%;
+    text-align: left !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    padding-left: 4px !important;
+  }
+  .lo-print-page th:not(:first-child),
+  .lo-print-page td:not(:first-child) {
+    text-align: center !important;
+  }
+  .lo-print-page .lo-grid thead { display: table-header-group; }
+  .lo-print-page .lo-grid tfoot { display: table-row-group; }
+  .lo-print-page .lo-grid tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .lo-print-page .lo-grid tfoot p {
+    display: inline;
+    margin: 0 !important;
+  }
+  .lo-print-page td.text-green-700,
+  .lo-print-page td.text-green-700 * { color: #166534 !important; }
+  .lo-print-page td.text-yellow-700,
+  .lo-print-page td.text-yellow-700 * { color: #854d0e !important; }
+  .lo-print-page td.text-red-700,
+  .lo-print-page td.text-red-700 * { color: #991b1b !important; }
+  .lo-print-page td.lo-progress,
+  .lo-print-page td.lo-progress * { color: #0f172a !important; }
+}

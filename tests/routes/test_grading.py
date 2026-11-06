@@ -1140,21 +1140,29 @@ class TestUpdateGradeRoster(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             html = handle.read()
         self.assertIn("revision-grade-{{ obj.top_score|lower }}", html)
-        light = html.find(".revision-grade-q {")
+        css_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "css", "class_detail_print.css",
+        )
+        css = ""
+        if os.path.isfile(css_path):
+            with open(css_path, encoding="utf-8") as handle:
+                css = handle.read()
+        light = css.find(".revision-grade-q {")
         self.assertGreater(light, -1)
-        light_end = html.find("}", light)
+        light_end = css.find("}", light)
         self.assertGreater(light_end, light)
-        light_rule = html[light:light_end]
+        light_rule = css[light:light_end]
         self.assertIn("background: #fde047", light_rule)
         self.assertIn("color: #713f12", light_rule)
         self.assertIn("border-color: #a16207", light_rule)
         self.assertNotIn("#ffedd5", light_rule)
-        dark = html.find(".dark .revision-grade-q {")
+        self.assertNotIn(".revision-grade-q {", html)
+        dark = css.find(".dark .revision-grade-q {")
         self.assertGreater(dark, -1)
         self.assertGreater(dark, light)
-        dark_end = html.find("}", dark)
+        dark_end = css.find("}", dark)
         self.assertGreater(dark_end, dark)
-        dark_rule = html[dark:dark_end]
+        dark_rule = css[dark:dark_end]
         self.assertIn("background: #854d0e", dark_rule)
         self.assertIn("color: #fef9c3", dark_rule)
         self.assertIn("border-color: #facc15", dark_rule)

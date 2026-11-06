@@ -751,20 +751,32 @@ class TestRevisionModalTemplate(unittest.TestCase):
         modal = src.split('id="overdueRevisionsModal"', 1)[1].split(
             'id="studentManagementModal"', 1
         )[0]
-        self.assertIn("@page { size: letter portrait; margin: 0; }", modal)
-        self.assertIn("overflow: visible !important;", modal)
-        self.assertIn("height: auto !important;", modal)
-        self.assertIn("break-inside: avoid;", modal)
-        self.assertIn("padding: 0 0.2in !important;", modal)
-        self.assertIn("display: table-footer-group !important;", modal)
+        css_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "css", "class_detail_print.css",
+        )
+        css = ""
+        if os.path.isfile(css_path):
+            with open(css_path, encoding="utf-8") as handle:
+                css = handle.read()
+        page_at = css.find("@page { size: letter portrait; margin: 0; }")
+        self.assertGreater(page_at, -1)
+        for needle in (
+            "overflow: visible !important;",
+            "height: auto !important;",
+            "break-inside: avoid;",
+            "padding: 0 0.2in !important;",
+            "display: table-footer-group !important;",
+            "column-count: 2",
+        ):
+            found = css.find(needle)
+            self.assertGreater(found, -1)
+            self.assertGreater(found, page_at)
+        self.assertNotIn("@page", modal)
         self.assertIn("class_display_title(class_name, class_days, class_section)", modal)
         self.assertIn('<thead class="revision-print-spacer">', modal)
         self.assertIn('<tfoot class="revision-print-spacer">', modal)
         self.assertIn("revision-modal-chrome", modal)
         self.assertIn("revision-grade", modal)
-        print_block = modal.split("@media print", 1)[1]
-        self.assertIn("column-count: 2", print_block)
-        self.assertIn("break-inside: avoid", print_block)
         self.assertNotIn("innerHTML", modal)
         script_path = os.path.join(
             os.path.dirname(__file__), "..", "app", "static", "js", "class_detail.js",
@@ -2429,12 +2441,20 @@ class TestClassHeaderTitle(unittest.TestCase):
                 "objective_total": 0,
             },
         )
-        start = html.find(".roster-print-student .mastery-badge,")
-        self.assertGreaterEqual(start, 0)
-        block = html[start:html.find("}", start)]
+        css_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "css", "student_progress_print.css",
+        )
+        css = ""
+        if os.path.isfile(css_path):
+            with open(css_path, encoding="utf-8") as handle:
+                css = handle.read()
+        start = css.find(".roster-print-student .mastery-badge,")
+        self.assertGreater(start, -1)
+        block = css[start:css.find("}", start)]
         self.assertIn("width: auto", block)
         self.assertIn("min-width: max-content", block)
         self.assertIsNone(re.search(r"width:\s*\d", block))
+        self.assertNotIn("<style", html)
 
     def test_history_email_and_report_print_keep_raw_name(self):
         history = self._render(
@@ -2569,8 +2589,16 @@ class TestClassHeaderTitle(unittest.TestCase):
         self.assertEqual(sum(1 for cell in printable[0] if "data-hw-prev-col-header" in cell), 1)
         self.assertEqual(html.count("HW % prev"), 1)
         self.assertIn("data-hw-prev-col-header", html)
-        self.assertIn(".hw-prev-score-display", html)
+        reports_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "css", "class_reports_print.css",
+        )
+        with open(reports_path, encoding="utf-8") as handle:
+            reports_css = handle.read()
+        prev_rule = reports_css.find(".hw-prev-score-display")
+        self.assertGreater(prev_rule, -1)
+        self.assertNotIn(".hw-prev-score-display", html)
         self.assertNotIn("th:nth-child(2)", html)
+        self.assertNotIn("th:nth-child(2)", reports_css)
         page_js_path = os.path.join(
             os.path.dirname(__file__), "..", "app", "static", "js", "class_reports.js",
         )
@@ -2624,13 +2652,21 @@ class TestClassHeaderTitle(unittest.TestCase):
         self.assertIn(".mastery-rq { background: #ffedd5; color: #c2410c; border-color: #fdba74; }", css)
         self.assertNotIn(".mastery-q  {", html)
 
-        paper = html.find("  #assignmentReport .mastery-badge {")
+        reports_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "css", "class_reports_print.css",
+        )
+        reports_css = ""
+        if os.path.isfile(reports_path):
+            with open(reports_path, encoding="utf-8") as handle:
+                reports_css = handle.read()
+        paper = reports_css.find("  #assignmentReport .mastery-badge {")
         self.assertGreater(paper, -1)
-        paper_end = html.find("}", paper)
+        paper_end = reports_css.find("}", paper)
         self.assertGreater(paper_end, paper)
-        paper_rule = html[paper:paper_end]
+        paper_rule = reports_css[paper:paper_end]
         self.assertIn("color: #0f172a !important", paper_rule)
         self.assertNotIn("#fde047", paper_rule)
+        self.assertNotIn("  #assignmentReport .mastery-badge {", html)
 
         q_color = js.find("'Q':  [113, 63, 18]")
         self.assertGreater(q_color, -1)
@@ -2645,8 +2681,15 @@ class TestClassHeaderTitle(unittest.TestCase):
 
         screen = css.find(".mastery-q  { background: #fde047; color: #713f12; border-color: #a16207; }")
         self.assertGreater(screen, -1)
-        printed = components.find(".student-detail-print .mastery-q { background: #fde047 !important; color: #713f12 !important; border-color: #a16207 !important; }")
+        progress_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "css", "student_progress_print.css",
+        )
+        with open(progress_path, encoding="utf-8") as handle:
+            progress = handle.read()
+        printed_rule = ".student-detail-print .mastery-q { background: #fde047 !important; color: #713f12 !important; border-color: #a16207 !important; }"
+        printed = progress.find(printed_rule)
         self.assertGreater(printed, -1)
+        self.assertNotIn(printed_rule, components)
         self.assertNotIn(".mastery-q { background: #fde047; color: #713f12; border-color: #a16207; }", components)
         self.assertIn(".mastery-rq { background: #ffedd5; color: #c2410c; border-color: #fdba74; }", css)
 
@@ -3931,19 +3974,32 @@ class TestPrintClassSheet(unittest.TestCase):
 
     def test_summary_print_rules_are_landscape_with_repeating_header(self):
         src = self._template("class_learning_objectives_summary.html")
-        self.assertIn("@page { size: landscape;", src)
-        self.assertIn("@page { size: landscape; margin: 0; }", src)
-        self.assertIn("table-header-group", src)
-        self.assertIn("table-row-group", src)
-        self.assertNotIn("table-footer-group", src)
-        self.assertIn("font-size: inherit !important", src)
-        self.assertIn("td.text-green-700", src)
-        self.assertIn("td.lo-progress", src)
+        css_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "css", "learning_objectives_print.css",
+        )
+        css = ""
+        if os.path.isfile(css_path):
+            with open(css_path, encoding="utf-8") as handle:
+                css = handle.read()
+        page_at = css.find("@page { size: landscape; margin: 0; }")
+        self.assertGreater(page_at, -1)
+        self.assertGreater(css.find("@page { size: landscape;"), -1)
+        for needle in (
+            "table-header-group",
+            "table-row-group",
+            "font-size: inherit !important",
+            "td.text-green-700",
+            "td.lo-progress",
+            "break-after: page",
+            ".lo-print-pages { display: none; }",
+            ".lo-print-pages { display: block !important; }",
+        ):
+            found = css.find(needle)
+            self.assertGreater(found, -1)
+        self.assertNotIn("table-footer-group", css)
+        self.assertNotIn("@page", src)
         self.assertIn("bg-blue-600", src)
         self.assertIn("lo-print-page", src)
-        self.assertIn("break-after: page", src)
-        self.assertIn(".lo-print-pages { display: none; }", src)
-        self.assertIn(".lo-print-pages { display: block !important; }", src)
         print_src = src.split('class="lo-print-pages"', 1)[1].split("lo-screen-header", 1)[0]
         self.assertEqual(print_src.count(">Passed<"), 1)
         self.assertEqual(print_src.count("{{ lo_passed_row() }}"), 1)

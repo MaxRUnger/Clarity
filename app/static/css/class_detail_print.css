@@ -1,0 +1,170 @@
+.revision-grade-r {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fcd34d;
+}
+.dark .revision-grade-r {
+  color: #fde68a;
+  background: #451a03;
+  border-color: #d97706;
+}
+.revision-grade-rq {
+  color: #9a3412;
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+.dark .revision-grade-rq {
+  color: #ffedd5;
+  background: #431407;
+  border-color: #ea580c;
+}
+.revision-grade-q {
+  color: #713f12;
+  background: #fde047;
+  border-color: #a16207;
+}
+.dark .revision-grade-q {
+  color: #fef9c3;
+  background: #854d0e;
+  border-color: #facc15;
+}
+.revision-print-title { display: none; }
+.revision-print-spacer { display: none; }
+.revision-print-frame,
+.revision-print-frame tbody,
+.revision-print-frame tr,
+.revision-print-frame td {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+@media print {
+  @page { size: letter portrait; margin: 0; }
+  html, body {
+    background: #fff !important;
+    color: #000 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+  nav, .space-y-6,
+  #studentManagementModal, #addStudentModal, #editStudentModal,
+  #studentRemovalModal, #uploadStudentsModal, #studentUploadPreviewModal {
+    display: none !important;
+  }
+  #overdueRevisionsModal {
+    display: block !important;
+    position: static !important;
+    background: #fff !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+  }
+  #overdueRevisionsModal .revision-dialog,
+  #overdueRevisionsModal .revision-scroll {
+    display: block !important;
+    position: static !important;
+    background: #fff !important;
+    color: #000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+  #overdueRevisionsModal .revision-modal-chrome { display: none !important; }
+  #overdueRevisionsModal .revision-view { display: none !important; }
+  #overdueRevisionsModal .revision-view.is-selected { display: block !important; }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame {
+    display: table !important;
+    width: 100% !important;
+    border-collapse: collapse;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame thead {
+    display: table-header-group !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame tfoot {
+    display: table-footer-group !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame tbody {
+    display: table-row-group !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame tr {
+    display: table-row !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame td {
+    display: table-cell !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-spacer td {
+    height: 0.2in;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-frame tbody td {
+    padding: 0 0.2in !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-title {
+    display: block !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-title h1,
+  #overdueRevisionsModal .revision-view.is-selected .revision-print-title p,
+  #overdueRevisionsModal .revision-view.is-selected .revision-totals,
+  #overdueRevisionsModal .revision-view.is-selected .revision-empty,
+  #overdueRevisionsModal .revision-view.is-selected .revision-card,
+  #overdueRevisionsModal .revision-view.is-selected .revision-card * {
+    color: #000 !important;
+    background: #fff !important;
+  }
+  .revision-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #000 !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card-columns {
+    column-count: 2;
+    column-gap: 8px;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card {
+    padding: 8px !important;
+    margin: 0 0 8px !important;
+    display: inline-block !important;
+    width: 100% !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card > p,
+  #overdueRevisionsModal .revision-view.is-selected .revision-assignment p {
+    font-size: 12px !important;
+    line-height: 18px !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card .mt-3 {
+    margin-top: 6px !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card .space-y-3 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 6px !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-assignment ul {
+    margin-top: 6px !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-assignment li {
+    font-size: 11px !important;
+    line-height: 18px !important;
+    margin-top: 0 !important;
+  }
+  #overdueRevisionsModal .revision-view.is-selected .revision-card .revision-grade {
+    background: transparent !important;
+    color: #000 !important;
+    border: 1px solid #000 !important;
+  }
+}

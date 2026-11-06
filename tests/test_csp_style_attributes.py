@@ -150,7 +150,11 @@ class TestCspStyleAttributes(unittest.TestCase):
         rule = "#studentProgressCard .student-progress-scroll {"
         self.assertGreater(css.find(rule), -1)
         self.assertNotIn(rule, page)
-        self.assertIn(".revision-grade-q {", page)
+        print_path = ROOT / "app" / "static" / "css" / "class_detail_print.css"
+        print_css = print_path.read_text(encoding="utf-8") if print_path.is_file() else ""
+        chip = print_css.find(".revision-grade-q {")
+        self.assertGreater(chip, -1)
+        self.assertNotIn(".revision-grade-q {", page)
 
     def test_wizard_screen_block_moved(self):
         css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
@@ -164,9 +168,15 @@ class TestCspStyleAttributes(unittest.TestCase):
         page = (ROOT / "app/templates/classes/class_reports.html").read_text(encoding="utf-8")
         self.assertGreater(css.find(".mastery-m  { background: #dcfce7; color: #15803d; border-color: #86efac; }"), -1)
         self.assertNotIn(".mastery-m  { background: #dcfce7;", page)
-        footprint = page.find("td[data-lo-id] .mastery-badge {")
+        reports_path = ROOT / "app" / "static" / "css" / "class_reports_print.css"
+        reports = reports_path.read_text(encoding="utf-8") if reports_path.is_file() else ""
+        footprint = reports.find("td[data-lo-id] .mastery-badge {")
         self.assertGreater(footprint, -1)
+        self.assertNotIn("td[data-lo-id] .mastery-badge {", page)
         self.assertNotIn("#assignmentReport td[data-lo-id] .mastery-badge", css)
+        scale = reports.find("--print-scale: 1;")
+        self.assertGreater(scale, -1)
+        self.assertGreater(scale, footprint)
 
     def test_app_css_v2_follows_tailwind(self):
         for rel in ("app/templates/app_base.html", "app/templates/auth_base.html"):
@@ -286,3 +296,117 @@ class TestCspStyleAttributes(unittest.TestCase):
         )
         self.assertTrue('data-history-lo-count="7"' in html, "seven objectives did not render count 7")
         self.assertIsNone(TEMPLATE_STYLE.search(html), "history seven")
+
+    def test_progress_print_rules_follow_app_css(self):
+        css_path = ROOT / "app" / "static" / "css" / "student_progress_print.css"
+        css = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
+        rule = css.find(".lo-row-rule { display: none; }")
+        page = css.find("@page { size: letter portrait; margin: 0; }")
+        breaks = css.find("  .roster-print-student {")
+        last = css.find(".roster-print-student:last-child {")
+        self.assertGreater(rule, -1)
+        self.assertGreater(page, -1)
+        self.assertGreater(breaks, -1)
+        self.assertGreater(last, -1)
+        self.assertLess(rule, page)
+        self.assertLess(page, breaks)
+        self.assertLess(breaks, last)
+        self.assertEqual(css.count("@page"), 1)
+        students = _render(
+            "classes/class_students.html",
+            class_id="class-1",
+            class_name="Algebra",
+            class_days="MWF",
+            class_section="01",
+            students=[],
+        )
+        detail = _render(
+            "classes/class_student_detail.html",
+            class_id="class-1",
+            class_name="Algebra",
+            class_days="MWF",
+            class_section="01",
+            student={
+                "id": "stu-1",
+                "name": "Ada",
+                "email": "ada@example.edu",
+                "objective_total": 0,
+                "learning_objectives": [],
+            },
+        )
+        link = "css/student_progress_print.css?v=1"
+        for html in (students, detail):
+            tailwind = html.find("css/tailwind.css")
+            app_css = html.find("css/app.css")
+            print_css = html.find(link)
+            self.assertGreater(tailwind, -1)
+            self.assertGreater(app_css, -1)
+            self.assertGreater(print_css, -1)
+            self.assertLess(tailwind, app_css)
+            self.assertLess(app_css, print_css)
+            self.assertNotIn("<style", html)
+        components = (ROOT / "app" / "templates" / "_components.html").read_text(encoding="utf-8")
+        self.assertNotIn("student_progress_print_styles", components)
+
+    def test_detail_print_page_follows_app_css(self):
+        from datetime import date
+        from app.helpers.revision_report import build_revision_report
+        css_path = ROOT / "app" / "static" / "css" / "class_detail_print.css"
+        css = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
+        page_at = css.find("@page { size: letter portrait; margin: 0; }")
+        self.assertGreater(page_at, -1)
+        self.assertEqual(css.count("@page"), 1)
+        html = _render(
+            "classes/class_detail.html",
+            class_id="c1",
+            class_name="Algebra",
+            class_days="MW",
+            class_section="01",
+            students=[],
+            all_students=[],
+            learning_objectives=[],
+            assignments=[],
+            revision_report=build_revision_report([], date(2026, 10, 20)),
+            revision_printed_on="2026-10-20",
+        )
+        tailwind = html.find("css/tailwind.css")
+        app_css = html.find("css/app.css")
+        print_css = html.find("css/class_detail_print.css?v=1")
+        self.assertGreater(tailwind, -1)
+        self.assertGreater(app_css, -1)
+        self.assertGreater(print_css, -1)
+        self.assertLess(tailwind, app_css)
+        self.assertLess(app_css, print_css)
+        self.assertNotIn("<style", html)
+
+    def test_history_sheet_print_follows_table_css(self):
+        css_path = ROOT / "app" / "static" / "css" / "student_history_sheet_print.css"
+        css = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
+        page_at = css.find("@page { size: letter portrait; margin: 0.22in; }")
+        self.assertGreater(page_at, -1)
+        self.assertEqual(css.count("@page"), 1)
+        html = _render(
+            "classes/student_history.html",
+            class_id="class-1",
+            class_name="Algebra",
+            class_days="MWF",
+            class_section="01",
+            student_id="stu-1",
+            student_name="Ada",
+            student_email="ada@example.edu",
+            instructor_title="Instructor",
+            learning_objectives=[],
+            history_assignments=[],
+        )
+        tailwind = html.find("css/tailwind.css")
+        app_css = html.find("css/app.css")
+        table_css = html.find("css/student_history_table.css")
+        sheet_css = html.find("css/student_history_sheet_print.css?v=1")
+        self.assertGreater(tailwind, -1)
+        self.assertGreater(app_css, -1)
+        self.assertGreater(table_css, -1)
+        self.assertGreater(sheet_css, -1)
+        self.assertLess(tailwind, app_css)
+        self.assertLess(app_css, table_css)
+        self.assertLess(table_css, sheet_css)
+        self.assertNotIn("<style", html)

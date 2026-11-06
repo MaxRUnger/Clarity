@@ -1,0 +1,219 @@
+/* Red-outlined M/MR badge: mastery letter was entered while HW < 65% so it
+   does not count toward mastery completion. Mirrors the Speed Grader cue. */
+.mastery-badge.non-counting-grade {
+  box-shadow: inset 0 0 0 2px #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+/* On paper, the red "non-counting" outline must not appear: the
+   beforeprint hook also re-letters M/MR as "I" so it should look like
+   any other regular grade. This rule is a belt-and-braces fallback in
+   case any badge slips past the JS swap (e.g. async re-render). */
+@media print {
+  .mastery-badge.non-counting-grade {
+    box-shadow: none !important;
+    background: inherit !important;
+  }
+}
+
+/* LO grade chips: same footprint as speed grader (M, MR, Q, RQ, …) */
+td[data-lo-id] .mastery-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 9999px;
+  border-width: 1px;
+  border-style: solid;
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-family: ui-monospace, monospace;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  vertical-align: middle;
+}
+
+.hidden { display: none; }
+
+/* Used by JS during beforeprint to measure layout as it will print. */
+#assignmentReport.measuring-print table {
+  width: 100% !important;
+  table-layout: fixed !important;
+  font-size: 13px !important;
+}
+#assignmentReport.measuring-print th,
+#assignmentReport.measuring-print td {
+  padding: 2px 2px !important;
+  line-height: 1.1 !important;
+}
+#assignmentReport.measuring-print th[data-email-col],
+#assignmentReport.measuring-print td[data-email-col] {
+  display: none !important;
+}
+#assignmentReport.measuring-print th[data-hw-col-header],
+#assignmentReport.measuring-print th[data-hw-prev-col-header],
+#assignmentReport.measuring-print td[data-hw-cell],
+#assignmentReport.measuring-print td[data-hw-prev-cell] {
+  white-space: nowrap !important;
+}
+#assignmentReport.measuring-print .print\:hidden {
+  display: none !important;
+}
+#assignmentReport.measuring-print th:first-child,
+#assignmentReport.measuring-print td:first-child {
+  white-space: nowrap !important;
+}
+#assignmentReport.measuring-print .mastery-badge {
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+#assignmentReport.measuring-print .hw-score-display,
+#assignmentReport.measuring-print .hw-prev-score-display {
+  font-size: 12px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+#assignmentReport.measuring-print .grade-sheet-header {
+  padding: 2px 0 4px !important;
+}
+#assignmentReport.measuring-print .grade-sheet-header h2,
+#assignmentReport.measuring-print .grade-sheet-header h3 {
+  font-size: 13px !important;
+  line-height: 1.15 !important;
+  margin: 0 !important;
+}
+#assignmentReport.measuring-print .grade-sheet-header p {
+  font-size: 11px !important;
+  line-height: 1.15 !important;
+  margin: 0 !important;
+}
+
+@media print {
+  @page { size: letter landscape; margin: 0.2in; }
+  .print\:hidden { display: none !important; }
+  body { background: white !important; }
+  .dark body { background: white !important; }
+  #assignmentReport { display: block !important; }
+  #studentHistoryPanel { display: none !important; }
+
+  /* Excel-like print table: tight cells and clear writing grid. */
+  #assignmentReport table,
+  #assignmentReport thead,
+  #assignmentReport tbody,
+  #assignmentReport tr,
+  #assignmentReport th,
+  #assignmentReport td {
+    border: 1px solid #111827 !important;
+    box-shadow: none !important;
+    border-collapse: collapse !important;
+    color: #0f172a !important;
+    background: #ffffff !important;
+  }
+  #assignmentReport .divide-y > :not([hidden]) ~ :not([hidden]) {
+    border-top-width: 1px !important;
+  }
+
+  /* Keep printable content on a single page by shrinking as needed. */
+  html, body {
+    width: 100%;
+    height: auto;
+    overflow: hidden !important;
+  }
+  #assignmentReport {
+    --print-scale: 1;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  #assignmentReport .grade-sheet-header {
+    padding: 2px 0 4px !important;
+  }
+  #assignmentReport .grade-sheet-header h2,
+  #assignmentReport .grade-sheet-header h3 {
+    font-size: 13px !important;
+    line-height: 1.15 !important;
+    margin: 0 !important;
+  }
+  #assignmentReport .grade-sheet-header p {
+    font-size: 11px !important;
+    line-height: 1.15 !important;
+    margin: 0 !important;
+  }
+  #assignmentReport .overflow-x-auto {
+    overflow: visible !important;
+  }
+  #assignmentReport table {
+    width: 100% !important;
+    table-layout: fixed !important;
+    font-size: calc(13px * var(--print-scale)) !important;
+  }
+  #assignmentReport th,
+  #assignmentReport td {
+    padding: calc(2px * var(--print-scale)) calc(2px * var(--print-scale)) !important;
+    line-height: 1.1 !important;
+    letter-spacing: 0 !important;
+  }
+  #assignmentReport th:first-child,
+  #assignmentReport td:first-child {
+    width: 14% !important;
+    text-align: left !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    padding-left: 4px !important;
+  }
+  #assignmentReport th:not(:first-child),
+  #assignmentReport td:not(:first-child) {
+    text-align: center !important;
+  }
+  /* Email column is not needed on printable grade sheets. */
+  #assignmentReport th[data-email-col],
+  #assignmentReport td[data-email-col] {
+    display: none !important;
+  }
+  #assignmentReport th[data-hw-col-header],
+  #assignmentReport th[data-hw-prev-col-header],
+  #assignmentReport td[data-hw-cell],
+  #assignmentReport td[data-hw-prev-cell] {
+    white-space: nowrap !important;
+  }
+  #assignmentReport .text-slate-300,
+  #assignmentReport .dark\:text-slate-600 {
+    color: #334155 !important;
+  }
+  #assignmentReport .mastery-badge {
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    font-size: calc(12px * var(--print-scale)) !important;
+    line-height: 1 !important;
+    padding: calc(0px * var(--print-scale)) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: #0f172a !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  }
+  #assignmentReport .hw-score-display,
+  #assignmentReport .hw-prev-score-display {
+    font-size: calc(12px * var(--print-scale)) !important;
+    padding: calc(0px * var(--print-scale)) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: #0f172a !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  }
+}

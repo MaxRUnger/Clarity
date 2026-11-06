@@ -632,10 +632,19 @@ class TestStudentHistoryOrder(unittest.TestCase):
             page = handle.read()
         with open(os.path.join(root, "classes", "student_history_table.html"), encoding="utf-8") as handle:
             table = handle.read()
-        self.assertIn("@page { size: letter portrait; margin: 0; }", batch)
-        self.assertIn("print-color-adjust: exact", batch)
-        self.assertIn("break-after: page", batch)
-        self.assertIn("break-inside: avoid", batch)
+        css_path = os.path.join(root, "..", "static", "css", "student_history_batch_print.css")
+        css = ""
+        if os.path.isfile(css_path):
+            with open(css_path, encoding="utf-8") as handle:
+                css = handle.read()
+        page_at = css.find("@page { size: letter portrait; margin: 0; }")
+        self.assertGreater(page_at, -1)
+        for needle in ("print-color-adjust: exact", "break-after: page", "break-inside: avoid"):
+            found = css.find(needle)
+            self.assertGreater(found, -1)
+            self.assertGreater(found, page_at)
+        self.assertNotIn("@page", batch)
+        self.assertIn("css/student_history_batch_print.css') }}?v=1", batch)
         self.assertIn("data-auto-print", batch)
         script_path = os.path.join(root, "..", "static", "js", "app_shell.js")
         with open(script_path, encoding="utf-8") as handle:

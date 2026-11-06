@@ -1,5 +1,5 @@
 {% extends "app_base.html" %}
-{% from "_components.html" import homework_percentage_badge, progress_bar, copy_email_button, student_progress_header, student_progress_cards, student_progress_print_styles %}
+{% from "_components.html" import homework_percentage_badge, progress_bar, copy_email_button, student_progress_header, student_progress_cards %}
 
 {% block content %}
 <div class="space-y-6 students-roster-page">
@@ -91,17 +91,5 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/class_students.js') }}?v=2"></script>
-{{ student_progress_print_styles() }}
-<style>
-@media print {
-  .roster-print-student {
-    break-after: page;
-    page-break-after: always;
-  }
-  .roster-print-student:last-child {
-    break-after: auto;
-    page-break-after: auto;
-  }
-}
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/student_progress_print.css') }}?v=1">
 {% endblock %}
