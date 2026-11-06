@@ -125,6 +125,30 @@ class TestRevisionReminders(unittest.TestCase):
         self.assertEqual([row["student_id"] for row in part["invalid"]], ["stu-3"])
         self.assertEqual(part["due"], "2026-10-24")
 
+    def test_q_revision_phrase_is_exact(self):
+        from app.helpers.revision_text import _revision_message
+        student = {
+            "name": "Lee, Ana",
+            "assignments": [{
+                "assignment_name": "Quiz",
+                "objectives": [{
+                    "lo_code": "E1",
+                    "lo_name": "Limits",
+                    "show_name": True,
+                    "top_score": "Q",
+                }, {
+                    "lo_code": "E2",
+                    "lo_name": "Derivatives",
+                    "show_name": True,
+                    "top_score": "RQ",
+                }],
+            }],
+        }
+        body = _revision_message(student, "2026-10-24", "Algebra", "Professor Lovelace")
+        self.assertIn("- E1 Limits: Revision done, retake still needed (Q)", body)
+        self.assertIn("- E2 Derivatives: Revise with Question (RQ)", body)
+        self.assertNotIn("- E1 Limits: Q", body)
+
     def test_signoff_greeting_and_from_header(self):
         from app.helpers.report_email import _reports_from_header
         from app.helpers.revision_text import _revision_message, _revision_signoff

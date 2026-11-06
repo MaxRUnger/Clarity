@@ -261,7 +261,7 @@ class Grade:
 
     @staticmethod
     def get_revision_candidates(class_id, today, lo_ids: Optional[List[str]] = None):
-        """Return eligible R and RQ grades whose revision_due is on or before today+7.
+        """Return eligible R, Q, and RQ grades whose revision_due is on or before today+7.
 
         `today` is the calendar date for this report. Overdue, due today, and due
         in 1 through 7 days all fall in that window. The homework gate is unchanged:
@@ -287,7 +287,7 @@ class Grade:
                     "student_id, top_score, assignment_id, hw_score_at_entry, "
                     "assignments(id, name, revision_due, homework_group, class_id), "
                     "learning_objectives(id, name, vendor_code)"
-                ).in_("top_score", ["R", "RQ"]).in_(
+                ).in_("top_score", ["R", "Q", "RQ"]).in_(
                     "learning_objective_id", lo_ids
                 ).order("id")
             )

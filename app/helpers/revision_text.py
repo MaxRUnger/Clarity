@@ -9,6 +9,7 @@ _REVISION_FOOTER = (
 )
 _REVISION_SCORE_PHRASE = {
     "R": "Revise for Mastery",
+    "Q": "Revision done, retake still needed (Q)",
     "RQ": "Revise with Question (RQ)",
 }
 

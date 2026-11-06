@@ -529,6 +529,72 @@ class TestRevisionReport(unittest.TestCase):
         self.assertEqual(rows[0]["assignment_id"], "a-past")
         self.assertEqual(rows[0]["learning_objective_id"], "lo")
 
+    def test_q_rows_are_revision_candidates_and_other_letters_are_not_queried(self):
+        from datetime import date
+        today = date(2026, 1, 1)
+
+        def grade(student_id, top_score, score):
+            return {
+                "student_id": student_id,
+                "assignment_id": "a-" + student_id,
+                "top_score": top_score,
+                "hw_score_at_entry": score,
+                "assignments": {
+                    "id": "a-" + student_id,
+                    "name": "Quiz",
+                    "revision_due": "2026-01-01",
+                    "class_id": "c1",
+                },
+                "learning_objectives": {
+                    "id": "lo-" + student_id,
+                    "name": "Limits",
+                    "vendor_code": "T1",
+                },
+            }
+
+        grades = [
+            grade("q-ok", "Q", 80),
+            grade("q-low", "Q", 74),
+            grade("rq-ok", "RQ", 80),
+            grade("rq-low", "RQ", 74),
+            grade("m-row", "M", 80),
+            grade("p-row", "P", 80),
+            grade("x-row", "X", 80),
+            grade("a-row", "A", 80),
+            grade("i-row", "I", 80),
+        ]
+        query = MagicMock()
+        query.select.return_value = query
+        query.in_.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        query.execute.return_value = MagicMock(data=[])
+        with unittest.mock.patch(
+            "app.models.Course.get_all_lo_ids_for_class", return_value=["lo"]
+        ), unittest.mock.patch(
+            "app.models.fetch_all_rows", return_value=grades
+        ), unittest.mock.patch("app.models.supabase_admin") as sa:
+            sa.table.return_value = query
+            rows = Grade.get_revision_candidates("c1", today)
+        letters = [
+            call.args[1]
+            for call in query.in_.call_args_list
+            if call.args and call.args[0] == "top_score"
+        ]
+        self.assertEqual(len(letters), 1)
+        queried = letters[0]
+        self.assertIn("Q", queried)
+        self.assertIn("R", queried)
+        self.assertIn("RQ", queried)
+        for excluded in ("M", "P", "X", "A", "I"):
+            self.assertNotIn(excluded, queried)
+            self.assertIn("Q", queried)
+        returned = {row["student_id"]: row["top_score"] for row in rows}
+        self.assertEqual(returned["q-ok"], "Q")
+        self.assertEqual(returned["rq-ok"], "RQ")
+        self.assertNotIn("q-low", returned)
+        self.assertNotIn("rq-low", returned)
+
     def test_report_groups_exact_days_and_one_card_per_student(self):
         from datetime import date
         from app.helpers.revision_report import build_revision_report
