@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 STYLE_ATTR = re.compile(r"""style=["']|setAttribute\(\s*['"]style['"]""")
 TEMPLATE_STYLE = re.compile(r"style\s*=")
+STYLE_ELEMENT = re.compile(r"<style")
+CREATE_STYLE = re.compile(r"""createElement\(\s*['"]style['"]\s*\)""")
 
 BAR_CLASS = "h-full bg-green-500 rounded-full progress-bar-fill"
 
@@ -51,19 +53,39 @@ class TestCspStyleAttributes(unittest.TestCase):
     def test_templates_have_no_style_attributes(self):
         self.assertIsNotNone(STYLE_ATTR.search('style="width:1px"'))
         self.assertIsNone(STYLE_ATTR.search("el.style.width = '1px'"))
+        self.assertIsNotNone(STYLE_ELEMENT.search("<style>a{}</style>"))
+        self.assertIsNone(STYLE_ELEMENT.search("el.style.width = '1px'"))
         files = sorted((ROOT / "app/templates").rglob("*.html"))
         self.assertGreaterEqual(len(files), 21)
         for path in files:
             text = path.read_text(encoding="utf-8")
             self.assertIsNone(TEMPLATE_STYLE.search(text), path.name)
+            self.assertIsNone(STYLE_ELEMENT.search(text), path.name)
+        moved = {
+            "app/templates/classes/class_students.html": "css/student_progress_print.css') }}?v=1",
+            "app/templates/classes/class_student_detail.html": "css/student_progress_print.css') }}?v=1",
+            "app/templates/classes/class_detail.html": "css/class_detail_print.css') }}?v=1",
+            "app/templates/classes/student_history.html": "css/student_history_sheet_print.css') }}?v=1",
+            "app/templates/classes/student_history_print.html": "css/student_history_batch_print.css') }}?v=1",
+            "app/templates/classes/class_reports.html": "css/class_reports_print.css') }}?v=1",
+            "app/templates/classes/class_learning_objectives_summary.html": "css/learning_objectives_print.css') }}?v=1",
+        }
+        for rel, needle in moved.items():
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            self.assertGreater(text.find(needle), -1, rel)
 
     def test_page_scripts_have_no_style_attributes(self):
+        self.assertIsNotNone(CREATE_STYLE.search("document.createElement('style')"))
+        self.assertIsNotNone(CREATE_STYLE.search('document.createElement("style")'))
+        self.assertIsNone(CREATE_STYLE.search("el.style.width = '1px'"))
         files = sorted(path for path in (ROOT / "app/static/js").glob("*.js"))
         self.assertGreaterEqual(len(files), 19)
         self.assertTrue((ROOT / "app/static/js/vendor").is_dir())
         for path in files:
             text = path.read_text(encoding="utf-8")
             self.assertIsNone(STYLE_ATTR.search(text), path.name)
+            self.assertIsNone(STYLE_ELEMENT.search(text), path.name)
+            self.assertIsNone(CREATE_STYLE.search(text), path.name)
 
     def test_app_css_has_panel_and_fill_rules(self):
         path = ROOT / "app/static/css/app.css"

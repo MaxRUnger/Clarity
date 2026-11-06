@@ -4,7 +4,7 @@ import unittest
 
 from app import create_app
 
-ENFORCED_CSP = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'none'; img-src 'self'; font-src 'self'; connect-src 'self'"
+ENFORCED_CSP = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'"
 
 
 def _script_src(policy):
@@ -15,15 +15,26 @@ def _script_src(policy):
     return ""
 
 
+def _style_src(policy):
+    for part in policy.split(";"):
+        directive = part.strip()
+        if directive == "style-src" or directive.startswith("style-src "):
+            return directive
+    return ""
+
+
 class TestSecurityHeaders(unittest.TestCase):
     def setUp(self):
         self.client = create_app().test_client()
 
     def _assert_csp(self, response):
-        self.assertEqual(response.headers["Content-Security-Policy"], ENFORCED_CSP)
+        policy = response.headers["Content-Security-Policy"]
+        self.assertEqual(policy, ENFORCED_CSP)
         self.assertNotIn("Content-Security-Policy-Report-Only", response.headers)
-        self.assertIn("style-src-attr 'none'", response.headers["Content-Security-Policy"])
-        script_src = _script_src(response.headers["Content-Security-Policy"])
+        self.assertEqual(_style_src(policy), "style-src 'self'")
+        self.assertNotIn("unsafe-inline", policy)
+        self.assertNotIn("style-src-attr", policy)
+        script_src = _script_src(policy)
         self.assertEqual(script_src, "script-src 'self'")
         self.assertIn("'self'", script_src)
         self.assertNotIn("unsafe-inline", script_src)
