@@ -4,7 +4,7 @@ import unittest
 
 from app import create_app
 
-ENFORCED_CSP = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'"
+ENFORCED_CSP = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'none'; img-src 'self'; font-src 'self'; connect-src 'self'"
 
 
 def _script_src(policy):
@@ -22,6 +22,7 @@ class TestSecurityHeaders(unittest.TestCase):
     def _assert_csp(self, response):
         self.assertEqual(response.headers["Content-Security-Policy"], ENFORCED_CSP)
         self.assertNotIn("Content-Security-Policy-Report-Only", response.headers)
+        self.assertIn("style-src-attr 'none'", response.headers["Content-Security-Policy"])
         script_src = _script_src(response.headers["Content-Security-Policy"])
         self.assertEqual(script_src, "script-src 'self'")
         self.assertIn("'self'", script_src)

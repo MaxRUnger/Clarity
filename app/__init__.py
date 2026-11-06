@@ -152,11 +152,11 @@ def create_app(config_class=Config):
 
     @app.after_request
     def add_security_headers(resp):
-        # Enforced policy. style-src still allows inline style attributes.
+        # Enforced policy. style-src-attr blocks style attributes.
         # Script, image, font, and connect sources are same-origin only.
         resp.headers.setdefault(
             "Content-Security-Policy",
-            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'",
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'none'; img-src 'self'; font-src 'self'; connect-src 'self'",
         )
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("X-Frame-Options", "DENY")
