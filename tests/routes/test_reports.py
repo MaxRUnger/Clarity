@@ -759,3 +759,19 @@ class TestStudentHistoryOrder(unittest.TestCase):
         self.assertNotIn(">ZZ<", single_table)
         self.assertIn(">M, P<", single_table)
         self.assertIn(">R<", single_table)
+
+    def test_history_badge_whitelist_includes_q_and_excludes_z(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "templates", "classes", "student_history.html",
+        )
+        with open(path, encoding="utf-8") as handle:
+            html = handle.read()
+        top = "score1 in ['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A']"
+        second = "score2 in ['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A']"
+        top_at = html.find(top)
+        self.assertGreater(top_at, -1)
+        second_at = html.find(second)
+        self.assertGreater(second_at, -1)
+        self.assertGreater(second_at, top_at)
+        self.assertIn("'RQ'", html)
+        self.assertNotIn("'Z'", html)

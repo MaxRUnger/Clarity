@@ -1154,6 +1154,64 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertIn("color: #fef9c3", dark_rule)
         self.assertIn("border-color: #facc15", dark_rule)
 
+    def test_wizard_shift_q_enters_q_and_plain_q_stays_rq(self):
+        js_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "csv_wizard.js",
+        )
+        html_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "templates", "classes", "update_grade.html",
+        )
+        with open(js_path, encoding="utf-8") as handle:
+            src = handle.read()
+        with open(html_path, encoding="utf-8") as handle:
+            html = handle.read()
+
+        valid = "const VALID_GRADES = new Set(['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A']);"
+        valid_at = src.find(valid)
+        self.assertGreater(valid_at, -1)
+        self.assertIn("'RQ'", valid)
+        self.assertNotIn("'Z'", valid)
+        self.assertIn("const GRADE_MAP  = { 'Q': 'RQ' };", src)
+        self.assertNotIn("const GRADE_MAP  = { 'Q': 'Q' }", src)
+
+        shift_m = src.find("if (e.shiftKey && k === 'M')")
+        self.assertGreater(shift_m, -1)
+        shift_q = src.find("} else if (e.shiftKey && k === 'Q')")
+        self.assertGreater(shift_q, -1)
+        self.assertGreater(shift_q, shift_m)
+        grade_map_lookup = src.find("const grade = GRADE_MAP[k] || k;")
+        self.assertGreater(grade_map_lookup, -1)
+        self.assertGreater(grade_map_lookup, shift_q)
+
+        self.assertIn("js/csv_wizard.js", html)
+        self.assertNotIn("GRADE_MAP", html)
+        legend = html.find(">⇧Q</kbd>")
+        self.assertGreater(legend, -1)
+        end = html.find("</span>", legend)
+        self.assertGreater(end, legend)
+        legend_row = html[legend:end]
+        self.assertIn("Q, Revision done, retake pending", legend_row)
+        self.assertNotIn("RQ", legend_row)
+        self.assertIn(">Q</kbd> Revise with Question (RQ)", html)
+
+        cell = html.find('.grade-cell[data-grade="Q"]  {')
+        self.assertGreater(cell, -1)
+        cell_end = html.find("}", cell)
+        self.assertGreater(cell_end, cell)
+        cell_rule = html[cell:cell_end]
+        self.assertIn("background: #fde047", cell_rule)
+        self.assertIn("color: #713f12", cell_rule)
+        self.assertNotIn("#ffedd5", cell_rule)
+        dark = html.find('.dark .grade-cell[data-grade="Q"]  {')
+        self.assertGreater(dark, -1)
+        self.assertGreater(dark, cell)
+        dark_end = html.find("}", dark)
+        self.assertGreater(dark_end, dark)
+        dark_rule = html[dark:dark_end]
+        self.assertIn("background: #854d0e", dark_rule)
+        self.assertIn("color: #fef9c3", dark_rule)
+        self.assertIn('.grade-cell[data-grade="RQ"] { background: #ffedd5; color: #9a3412; }', html)
+
     def test_csv_wizard_posts_ignored_names_without_preview(self):
         path = os.path.join(
             os.path.dirname(__file__), "..", "..", "app", "static", "js", "csv_wizard.js",

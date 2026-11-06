@@ -40,7 +40,7 @@ let classRoster = [];
 const gradeHistory = [];
 const GRADE_KEYS = ['M', 'R', 'Q', 'P', 'X', 'A'];
 const GRADE_MAP  = { 'Q': 'RQ' };  // Q key types RQ
-const VALID_GRADES = new Set(['M', 'MR', 'R', 'RQ', 'P', 'X', 'A']);
+const VALID_GRADES = new Set(['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A']);
 
 // LO comparison state
 let assignmentLOs   = [];          // vendor_codes from selected assignment
@@ -744,6 +744,10 @@ function attachGradeCellHandlers() {
     if (e.shiftKey && k === 'M') {
       e.preventDefault();
       setCellGrade(cell, 'MR');
+      moveFocus(row, col + 1);
+    } else if (e.shiftKey && k === 'Q') {
+      e.preventDefault();
+      setCellGrade(cell, 'Q');
       moveFocus(row, col + 1);
     } else if (GRADE_KEYS.includes(k)) {
       e.preventDefault();

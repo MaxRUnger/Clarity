@@ -68,7 +68,7 @@
               <div class="text-2xl font-bold text-slate-900 dark:text-white">
                 {% set score1 = grade.top_score %}
                 {% if score1 %}
-                  {% if score1 in ['M', 'MR', 'R', 'RQ', 'P', 'X', 'A'] %}
+                  {% if score1 in ['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A'] %}
                     <!-- Mastery code -->
                     <span class="mastery-badge mastery-{{ score1|lower }} inline-block px-3 py-1 text-lg font-semibold font-mono rounded border">{{ score1 }}</span>
                   {% else %}
@@ -82,7 +82,7 @@
               {% set score2 = grade.second_score %}
               {% if score2 and score2 != score1 %}
               <div class="text-sm text-slate-500 dark:text-slate-400 mt-2">
-                {% if score2 in ['M', 'MR', 'R', 'RQ', 'P', 'X', 'A'] %}
+                {% if score2 in ['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A'] %}
                   <span class="mastery-badge mastery-{{ score2|lower }} inline-block px-2 py-0.5 text-xs font-semibold font-mono rounded border">{{ score2 }}</span>
                 {% else %}
                   <span class="student-history-numeric inline-block px-2 py-0.5 text-xs font-semibold rounded border border-slate-300 bg-white dark:bg-slate-800 dark:border-slate-600">{{ score2 }}</span>

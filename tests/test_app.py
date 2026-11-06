@@ -2585,6 +2585,74 @@ class TestClassHeaderTitle(unittest.TestCase):
         self.assertEqual(page_js.count("HW % prev"), 1)
         self.assertNotIn("th:nth-child(2)", page_js)
 
+    def test_reports_q_uses_yellow_and_paper_text_stays_black(self):
+        html_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "classes", "class_reports.html",
+        )
+        js_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "class_reports.js",
+        )
+        components_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "templates", "_components.html",
+        )
+        archive_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "helpers", "archive_export.py",
+        )
+        with open(html_path, encoding="utf-8") as handle:
+            html = handle.read()
+        with open(js_path, encoding="utf-8") as handle:
+            js = handle.read()
+        with open(components_path, encoding="utf-8") as handle:
+            components = handle.read()
+        with open(archive_path, encoding="utf-8") as handle:
+            archive = handle.read()
+
+        light = html.find(".mastery-q  {")
+        self.assertGreater(light, -1)
+        light_end = html.find("}", light)
+        self.assertGreater(light_end, light)
+        light_rule = html[light:light_end]
+        self.assertIn("background: #fde047", light_rule)
+        self.assertIn("color: #713f12", light_rule)
+        self.assertIn("border-color: #a16207", light_rule)
+        self.assertNotIn("#ffedd5", light_rule)
+        self.assertIn(".mastery-rq { background: #ffedd5; color: #c2410c; border-color: #fdba74; }", html)
+
+        paper = html.find("  #assignmentReport .mastery-badge {")
+        self.assertGreater(paper, -1)
+        self.assertGreater(paper, light)
+        paper_end = html.find("}", paper)
+        self.assertGreater(paper_end, paper)
+        paper_rule = html[paper:paper_end]
+        self.assertIn("color: #0f172a !important", paper_rule)
+        self.assertNotIn("#fde047", paper_rule)
+
+        q_color = js.find("'Q':  [113, 63, 18]")
+        self.assertGreater(q_color, -1)
+        r_color = js.find("'R':  [161, 98, 7]")
+        self.assertGreater(r_color, -1)
+        rq_color = js.find("'RQ': [194, 65, 12]")
+        self.assertGreater(rq_color, -1)
+        self.assertGreater(q_color, r_color)
+        self.assertGreater(rq_color, q_color)
+        self.assertIn("if (grade !== 'M' && grade !== 'MR')", js)
+        self.assertNotIn("'Q':  [194, 65, 12]", js)
+
+        screen = components.find(".mastery-q { background: #fde047; color: #713f12; border-color: #a16207; }")
+        self.assertGreater(screen, -1)
+        printed = components.find(".student-detail-print .mastery-q { background: #fde047 !important; color: #713f12 !important; border-color: #a16207 !important; }")
+        self.assertGreater(printed, -1)
+        self.assertGreater(printed, screen)
+        self.assertIn(".mastery-rq { background: #ffedd5; color: #c2410c; border-color: #fdba74; }", components)
+
+        q_badge = archive.find('"q": ("#fde047", "#713f12", "#a16207")')
+        self.assertGreater(q_badge, -1)
+        r_badge = archive.find('"r": ("#fef9c3", "#a16207", "#fde047")')
+        self.assertGreater(r_badge, -1)
+        self.assertGreater(q_badge, r_badge)
+        self.assertIn('"rq": ("#ffedd5", "#c2410c", "#fdba74")', archive)
+        self.assertNotIn('"q": ("#ffedd5"', archive)
+
 
 class TestAttachedObjectives(unittest.TestCase):
     def _clear_cache(self):

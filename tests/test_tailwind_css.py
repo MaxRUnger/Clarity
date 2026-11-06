@@ -58,6 +58,7 @@ MASTERY_RULES = (
     "mastery-m",
     "mastery-mr",
     "mastery-r",
+    "mastery-q",
     "mastery-rq",
     "mastery-p",
     "mastery-x",
