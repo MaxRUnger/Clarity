@@ -114,15 +114,68 @@ class TestCspStyleAttributes(unittest.TestCase):
 
     def test_speed_grader_empty_background_is_a_rule(self):
         text = (ROOT / "app/templates/classes/class_speed_grader.html").read_text(encoding="utf-8")
-        normalized = text.replace("\r\n", "\n")
-        self.assertTrue(
-            ".hw-pct-input { background: #64748b; }" in normalized,
-            "speed grader is missing the empty-background rule",
-        )
+        css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+        rule = ".hw-pct-input { background: #64748b; }"
+        self.assertGreater(css.find(rule), -1)
+        self.assertNotIn(rule, text.replace("\r\n", "\n"))
         self.assertTrue(
             'style="background:#64748b"' not in text,
             "speed grader still has a style attribute",
         )
+
+    def test_shared_mastery_colors_are_in_app_css(self):
+        css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+        rule = ".mastery-q  { background: #fde047; color: #713f12; border-color: #a16207; }"
+        self.assertGreater(css.find(rule), -1)
+        components = (ROOT / "app/templates/_components.html").read_text(encoding="utf-8")
+        self.assertNotIn("{% macro mastery_badge_styles() %}", components)
+
+    def test_speed_grader_screen_block_moved(self):
+        css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+        page = (ROOT / "app/templates/classes/class_speed_grader.html").read_text(encoding="utf-8")
+        rule = "#graderTable .grade-cell .mastery-badge {"
+        self.assertGreater(css.find(rule), -1)
+        self.assertGreater(css.find("#graderTableScrollWrap {"), -1)
+        self.assertNotIn("<style>", page.replace("\r\n", "\n"))
+
+    def test_signup_animation_moved(self):
+        css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+        page = (ROOT / "app/templates/auth/signup.html").read_text(encoding="utf-8")
+        self.assertGreater(css.find("animation: slideUp 0.25s ease-out;"), -1)
+        self.assertNotIn("@keyframes slideUp", page)
+
+    def test_detail_scrollbar_moved(self):
+        css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+        page = (ROOT / "app/templates/classes/class_detail.html").read_text(encoding="utf-8")
+        rule = "#studentProgressCard .student-progress-scroll {"
+        self.assertGreater(css.find(rule), -1)
+        self.assertNotIn(rule, page)
+        self.assertIn(".revision-grade-q {", page)
+
+    def test_wizard_screen_block_moved(self):
+        css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+        page = (ROOT / "app/templates/classes/update_grade.html").read_text(encoding="utf-8")
+        rule = "#extractedStudentsTable .grade-cell {"
+        self.assertGreater(css.find(rule), -1)
+        self.assertNotIn("<style>", page)
+
+    def test_reports_screen_colors_moved_and_footprint_stays(self):
+        css = (ROOT / "app/static/css/app.css").read_text(encoding="utf-8")
+        page = (ROOT / "app/templates/classes/class_reports.html").read_text(encoding="utf-8")
+        self.assertGreater(css.find(".mastery-m  { background: #dcfce7; color: #15803d; border-color: #86efac; }"), -1)
+        self.assertNotIn(".mastery-m  { background: #dcfce7;", page)
+        footprint = page.find("td[data-lo-id] .mastery-badge {")
+        self.assertGreater(footprint, -1)
+        self.assertNotIn("#assignmentReport td[data-lo-id] .mastery-badge", css)
+
+    def test_app_css_v2_follows_tailwind(self):
+        for rel in ("app/templates/app_base.html", "app/templates/auth_base.html"):
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            tailwind = text.find("css/tailwind.css")
+            app_css = text.find("css/app.css') }}?v=2")
+            self.assertGreater(tailwind, -1)
+            self.assertGreater(app_css, -1)
+            self.assertLess(tailwind, app_css)
 
     def test_app_shell_sets_width_and_count_before_print_timer(self):
         text = (ROOT / "app/static/js/app_shell.js").read_text(encoding="utf-8")

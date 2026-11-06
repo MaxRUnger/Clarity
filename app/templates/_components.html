@@ -30,24 +30,6 @@
 </div>
 {% endmacro %}
 
-{% macro mastery_badge_styles() %}
-<style>
-.mastery-m { background: #dcfce7; color: #15803d; border-color: #86efac; }
-.mastery-mr { background: #ecfdf5; color: #047857; border-color: #34d399; }
-.mastery-r { background: #fef9c3; color: #a16207; border-color: #fde047; }
-.mastery-q { background: #fde047; color: #713f12; border-color: #a16207; }
-.mastery-rq { background: #ffedd5; color: #c2410c; border-color: #fdba74; }
-.mastery-p { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
-.mastery-x { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
-.mastery-a { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
-.mastery-i { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
-.mastery-badge.non-counting-grade {
-  box-shadow: inset 0 0 0 2px #ef4444;
-  background: rgba(239, 68, 68, 0.08);
-}
-</style>
-{% endmacro %}
-
 {% macro student_progress_header(student, class_name=None, show_contact=false, class_days=None, class_section=None) %}
 <div class="student-progress-header">
   <h1 class="sheet-name text-2xl font-semibold text-slate-900 dark:text-white">{{ student.name }}</h1>

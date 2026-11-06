@@ -1,5 +1,4 @@
 {% extends "app_base.html" %}
-{% from "_components.html" import mastery_badge_styles %}
 
 {% block content %}
 <div class="space-y-5 student-history-page">
@@ -119,7 +118,6 @@
 } | tojson }}</script>
 <script src="{{ url_for('static', filename='js/student_history.js') }}?v=2"></script>
 
-{{ mastery_badge_styles() }}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/student_history_table.css') }}">
 <style>
 @media print {

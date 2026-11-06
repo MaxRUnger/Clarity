@@ -161,31 +161,16 @@ class TestLocalTailwind(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_mastery_rules_are_in_speed_grader_and_reports(self):
+        css = (ROOT / "app" / "static" / "css" / "app.css").read_text(encoding="utf-8")
         pages = {
-            "speed_grader": _render(
-                "classes/class_speed_grader.html",
-                class_id="c1",
-                instructor_mode="mark",
-                assignments=[],
-                students=[],
-                lo_names=[],
-                auto_convert_m=False,
-            ),
-            "reports": _render(
-                "classes/class_reports.html",
-                class_id="c1",
-                class_name="Test Upload",
-                class_days="MW",
-                class_section="F26",
-                students=[],
-                learning_objectives=[],
-                assignments=[],
-                instructor_title="Professor Estes",
-            ),
+            "speed_grader": (ROOT / "app/templates/classes/class_speed_grader.html").read_text(encoding="utf-8"),
+            "reports": (ROOT / "app/templates/classes/class_reports.html").read_text(encoding="utf-8"),
         }
-        for name, html in pages.items():
-            for rule in MASTERY_RULES:
-                self.assertRegex(html, r"\.%s(?:\s|,|\{)" % rule, "%s %s" % (name, rule))
+        for rule in MASTERY_RULES:
+            pattern = r"\.%s(?:\s|,|\{)" % rule
+            self.assertRegex(css, pattern, rule)
+            for name, html in pages.items():
+                self.assertNotRegex(html, pattern, "%s %s" % (name, rule))
 
     def test_vendor_javascript_is_not_scanned(self):
         self.assertTrue(CSS_PATH.is_file(), "app/static/css/tailwind.css is missing")

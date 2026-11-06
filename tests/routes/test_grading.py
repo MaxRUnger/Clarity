@@ -1122,11 +1122,16 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertNotIn("RQ", legend_row)
         self.assertIn("Revise with Question (RQ)", html)
 
-        self.assertIn(
-            ".mastery-q  { background: #fde047; color: #713f12; border-color: #a16207; }",
-            html,
+        css_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "css", "app.css",
         )
-        self.assertNotIn(".mastery-q  { background: #ffedd5;", html)
+        with open(css_path, encoding="utf-8") as handle:
+            css = handle.read()
+        q_rule = ".mastery-q  { background: #fde047; color: #713f12; border-color: #a16207; }"
+        q_at = css.find(q_rule)
+        self.assertGreater(q_at, -1)
+        self.assertNotIn(".mastery-q  { background: #ffedd5;", css)
+        self.assertNotIn(q_rule, html)
 
     def test_revision_modal_q_chip_color(self):
         path = os.path.join(
@@ -1194,23 +1199,32 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertNotIn("RQ", legend_row)
         self.assertIn(">Q</kbd> Revise with Question (RQ)", html)
 
-        cell = html.find('.grade-cell[data-grade="Q"]  {')
+        css_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "css", "app.css",
+        )
+        with open(css_path, encoding="utf-8") as handle:
+            css = handle.read()
+        cell = css.find('#extractedStudentsTable .grade-cell[data-grade="Q"]  {')
         self.assertGreater(cell, -1)
-        cell_end = html.find("}", cell)
+        cell_end = css.find("}", cell)
         self.assertGreater(cell_end, cell)
-        cell_rule = html[cell:cell_end]
+        cell_rule = css[cell:cell_end]
         self.assertIn("background: #fde047", cell_rule)
         self.assertIn("color: #713f12", cell_rule)
         self.assertNotIn("#ffedd5", cell_rule)
-        dark = html.find('.dark .grade-cell[data-grade="Q"]  {')
+        dark = css.find('.dark #extractedStudentsTable .grade-cell[data-grade="Q"]  {')
         self.assertGreater(dark, -1)
         self.assertGreater(dark, cell)
-        dark_end = html.find("}", dark)
+        dark_end = css.find("}", dark)
         self.assertGreater(dark_end, dark)
-        dark_rule = html[dark:dark_end]
+        dark_rule = css[dark:dark_end]
         self.assertIn("background: #854d0e", dark_rule)
         self.assertIn("color: #fef9c3", dark_rule)
-        self.assertIn('.grade-cell[data-grade="RQ"] { background: #ffedd5; color: #9a3412; }', html)
+        self.assertIn(
+            '#extractedStudentsTable .grade-cell[data-grade="RQ"] { background: #ffedd5; color: #9a3412; }',
+            css,
+        )
+        self.assertNotIn('.grade-cell[data-grade="Q"]', html)
 
     def test_csv_wizard_posts_ignored_names_without_preview(self):
         path = os.path.join(

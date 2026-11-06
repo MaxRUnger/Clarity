@@ -1,5 +1,5 @@
 {% extends "app_base.html" %}
-{% from "_components.html" import homework_percentage_badge, progress_bar, copy_email_button, student_progress_header, student_progress_cards, mastery_badge_styles, student_progress_print_styles %}
+{% from "_components.html" import homework_percentage_badge, progress_bar, copy_email_button, student_progress_header, student_progress_cards, student_progress_print_styles %}
 
 {% block content %}
 <div class="space-y-6 students-roster-page">
@@ -91,7 +91,6 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/class_students.js') }}?v=2"></script>
-{{ mastery_badge_styles() }}
 {{ student_progress_print_styles() }}
 <style>
 @media print {
