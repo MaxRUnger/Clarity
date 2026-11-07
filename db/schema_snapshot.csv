@@ -873,6 +873,15 @@ dump
             ""position"": 12
         },
         {
+            ""udt"": ""bool"",
+            ""type"": ""boolean"",
+            ""table"": ""grades"",
+            ""column"": ""promoted_by_pass"",
+            ""default"": null,
+            ""nullable"": ""YES"",
+            ""position"": 13
+        },
+        {
             ""udt"": ""uuid"",
             ""type"": ""uuid"",
             ""table"": ""homework_scores"",

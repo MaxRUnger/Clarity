@@ -437,6 +437,33 @@ function promoteNonCountingMasteriesInDom(studentId) {
   });
 }
 
+/** Turn the server-demoted cells for this student red again. loIds are the active assignment only. */
+function demotePromotedMasteriesInDom(studentId, loIds) {
+  const sid = String(studentId || '');
+  if (!sid) return;
+  const wanted = {};
+  (loIds || []).forEach(function (id) {
+    wanted[String(id)] = true;
+  });
+  const esc = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(sid)
+    : sid;
+  let cells;
+  try {
+    cells = document.querySelectorAll('.grade-cell[data-student-id="' + esc + '"]');
+  } catch (e) {
+    return;
+  }
+  cells.forEach(function (cell) {
+    const loId = String(cell.dataset.loId || '');
+    if (!wanted[loId]) return;
+    const g = String(cell.dataset.actualGrade || '').toUpperCase();
+    if (g !== 'M' && g !== 'MR') return;
+    cell.dataset.countsForMastery = '0';
+    renderGradeInCell(cell, g);
+  });
+}
+
 function setHwEligibilityFromState(studentId, scoreNum, isPass /* , skipGradeRefresh */) {
   if (INSTRUCTOR_MODE !== 'mark') {
     examGradeEligible[studentId] = true;
@@ -1106,12 +1133,16 @@ document.addEventListener('change', async function (e) {
         const res = await fetch('/api/class/' + classId + '/return_pass', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ student_id: studentId })
+          body: JSON.stringify({
+            student_id: studentId,
+            assignment_id: getActiveAssignmentId()
+          })
         });
         const data = await res.json();
         if (data.success) {
           cb.dataset.passes = data.passes_remaining;
           label.textContent = data.passes_remaining + ' left';
+          demotePromotedMasteriesInDom(studentId, data.demoted_lo_ids || []);
         }
       } catch (err) {
         console.error('Error returning pass:', err);

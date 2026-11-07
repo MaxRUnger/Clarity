@@ -117,7 +117,8 @@ CREATE TABLE public.grades (
     assignment_id uuid,
     counts_for_mastery boolean NOT NULL DEFAULT true,
     last_modified_by uuid,
-    hw_score_at_entry numeric
+    hw_score_at_entry numeric,
+    promoted_by_pass boolean
 );
 
 CREATE TABLE public.revision_reminders_sent (
@@ -742,6 +743,24 @@ $function$;
 CREATE TRIGGER trg_log_grade_change AFTER INSERT OR UPDATE ON public.grades FOR EACH ROW EXECUTE FUNCTION public.log_grade_change();
 
 CREATE TRIGGER trg_set_r_deadline BEFORE INSERT OR UPDATE ON public.grades FOR EACH ROW EXECUTE FUNCTION public.set_r_deadline();
+
+CREATE OR REPLACE FUNCTION public.clear_promoted_by_pass()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path = public
+AS $function$
+BEGIN
+  IF coalesce(current_setting('clarity.restoring', true), '') = 'on' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.top_score IS DISTINCT FROM OLD.top_score THEN
+    NEW.promoted_by_pass := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+CREATE TRIGGER trg_clear_promoted_by_pass BEFORE UPDATE ON public.grades FOR EACH ROW EXECUTE FUNCTION public.clear_promoted_by_pass();
 
 DROP TRIGGER IF EXISTS enforce_invite_code ON auth.users;
 

@@ -28,6 +28,7 @@ from app.helpers.csv_text import (
 from app.helpers.free_passes import (
     FREE_PASSES_ALLOWED,
     _batch_get_free_passes,
+    _demote_pass_promoted_masteries_for_student,
     _promote_non_counting_masteries_for_student,
 )
 from app.helpers.grade_log import _clear_grade_cells_for_assignment
@@ -431,7 +432,7 @@ def save_hw_percentage(class_id):
 
         promoted = 0
         if score == -1:
-            promoted = _promote_non_counting_masteries_for_student(class_id, student_id, changed_by=session['user_id'])
+            promoted = _promote_non_counting_masteries_for_student(class_id, student_id, assignment_id)
 
         return jsonify({"success": True, "promoted_masteries": promoted})
     except Exception as e:
@@ -502,6 +503,7 @@ def return_free_pass(class_id):
             .eq("class_id", class_id) \
             .execute()
 
+        demoted_lo_ids = []
         if existing.data and existing.data[0]['passes_used'] > 0:
             current_used = existing.data[0]['passes_used']
             supabase_admin.table("free_passes") \
@@ -509,10 +511,19 @@ def return_free_pass(class_id):
                 .eq("id", existing.data[0]['id']) \
                 .execute()
             remaining = passes_allowed - (current_used - 1)
+            assignment_id = str((data or {}).get("assignment_id") or "").strip()
+            if assignment_id and _assignment_belongs_to_class(class_id, assignment_id):
+                demoted_lo_ids = _demote_pass_promoted_masteries_for_student(
+                    class_id, str(student_id), assignment_id
+                )
         else:
             remaining = passes_allowed
 
-        return jsonify({"success": True, "passes_remaining": remaining})
+        return jsonify({
+            "success": True,
+            "passes_remaining": remaining,
+            "demoted_lo_ids": demoted_lo_ids,
+        })
     except Exception as e:
         logger.error("return pass failed: %s", e)
         return _safe_api_error("Could not return free pass", 500, log_detail=e)

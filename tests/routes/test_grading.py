@@ -2,6 +2,7 @@ import os
 import io
 import unittest
 import unittest.mock
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 from app.models import Course, Homework
@@ -10,7 +11,6 @@ from app.helpers.gradesheet_csv import (
     _enrolled_import_name_index,
     _lookup_enrolled_import_student_id,
 )
-from app.helpers.free_passes import _promote_non_counting_masteries_for_student
 from app.helpers.grade_log import _log_grade_deletions
 from app import create_app
 from tests.routes.fakes import _class_detail_client
@@ -130,6 +130,214 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
         self.assertEqual(rows_z, [])
 
 
+class _PassScopeQuery:
+    def __init__(self, table, store, updates):
+        self.table = table
+        self.store = store
+        self.updates = updates
+        self.filters = []
+        self.op = "select"
+        self.payload = None
+        self.limit_n = None
+
+    def select(self, *_args, **_kwargs):
+        self.op = "select"
+        return self
+
+    def insert(self, row):
+        self.op = "insert"
+        self.payload = row
+        return self
+
+    def update(self, row):
+        self.op = "update"
+        self.payload = row
+        return self
+
+    def upsert(self, rows, **_kwargs):
+        self.op = "upsert"
+        self.payload = rows
+        return self
+
+    def eq(self, column, value):
+        self.filters.append(("eq", column, value))
+        return self
+
+    def in_(self, column, values):
+        self.filters.append(("in", column, list(values)))
+        return self
+
+    def limit(self, count):
+        self.limit_n = count
+        return self
+
+    def _matches(self, row):
+        for kind, column, value in self.filters:
+            if kind == "eq" and row.get(column) != value:
+                return False
+            if kind == "in" and row.get(column) not in value:
+                return False
+        return True
+
+    def execute(self):
+        rows = [
+            row for row in self.store.setdefault(self.table, [])
+            if self._matches(row)
+        ]
+        if self.limit_n is not None:
+            rows = rows[:self.limit_n]
+        if self.op == "update":
+            self.updates.append({
+                "table": self.table,
+                "op": "update",
+                "payload": dict(self.payload),
+                "filters": list(self.filters),
+            })
+            for row in rows:
+                row.update(self.payload)
+            return unittest.mock.MagicMock(data=[])
+        if self.op in ("upsert", "insert"):
+            self.updates.append({
+                "table": self.table,
+                "op": self.op,
+                "payload": self.payload,
+                "filters": list(self.filters),
+            })
+            return unittest.mock.MagicMock(data=[])
+        return unittest.mock.MagicMock(data=[dict(row) for row in rows])
+
+
+class _PassScopeAdmin:
+    def __init__(self, store, updates, calls):
+        self.store = store
+        self.updates = updates
+        self.calls = calls
+
+    def table(self, name):
+        self.calls.append(name)
+        return _PassScopeQuery(name, self.store, self.updates)
+
+
+class TestPassScope(unittest.TestCase):
+    def _grade(self, student, lo_id, assignment, letter, counts, promoted=None, modified_by="inst-original"):
+        return {
+            "student_id": student,
+            "learning_objective_id": lo_id,
+            "assignment_id": assignment,
+            "top_score": letter,
+            "counts_for_mastery": counts,
+            "promoted_by_pass": promoted,
+            "last_modified_by": modified_by,
+        }
+
+    @contextmanager
+    def _patch(self, fp, rows, updates, group, calls=None, passes=None):
+        if calls is None:
+            calls = []
+        assignments = []
+        for label, ids in group.items():
+            for aid in ids:
+                assignments.append({
+                    "id": aid,
+                    "class_id": "class-1",
+                    "homework_group": label,
+                })
+        store = {
+            "assignments": assignments,
+            "grades": rows,
+            "free_passes": list(passes or []),
+            "homework_scores": [],
+        }
+        admin = _PassScopeAdmin(store, updates, calls)
+
+        def _ids_for_old_lookup(_class_id):
+            return [
+                row["learning_objective_id"]
+                for row in rows
+                if row.get("learning_objective_id")
+            ]
+
+        with unittest.mock.patch.object(fp, "supabase_admin", admin), \
+                unittest.mock.patch.object(
+                    Course,
+                    "get_all_lo_ids_for_class",
+                    side_effect=_ids_for_old_lookup,
+                ):
+            yield admin
+
+    def test_scope_students_letters_legacy_and_flag_only_write(self):
+        from app.helpers import free_passes as fp
+        rows = [
+            self._grade("s1", "lo-a", "asg-pass", "M", False),
+            self._grade("s1", "lo-b", "asg-other", "M", False),
+            self._grade("s1", "lo-c", "asg-share", "MR", False),
+            self._grade("s2", "lo-a", "asg-pass", "M", False),
+            self._grade("s1", "lo-d", "asg-pass", "M", True),
+            self._grade("s1", "lo-e", "asg-pass", "R", False),
+            self._grade("s1", "lo-f", None, "M", False),
+        ]
+        updates = []
+        with self._patch(fp, rows, updates, {"HW 1": ["asg-pass", "asg-share"], "HW 2": ["asg-other"]}):
+            n = fp._promote_non_counting_masteries_for_student("class-1", "s1", "asg-pass")
+        self.assertEqual(n, 2)
+        promoted_ids = {row["learning_objective_id"] for row in rows if row["promoted_by_pass"] is True}
+        self.assertIn("lo-a", promoted_ids)
+        self.assertNotIn("lo-b", promoted_ids)
+        self.assertIn("lo-c", promoted_ids)
+        self.assertNotIn("lo-f", promoted_ids)
+        other_student = [row for row in rows if row["student_id"] == "s2"][0]
+        self.assertFalse(other_student["counts_for_mastery"])
+        self.assertIsNone(other_student["promoted_by_pass"])
+        already = [row for row in rows if row["learning_objective_id"] == "lo-d"][0]
+        self.assertTrue(already["counts_for_mastery"])
+        self.assertIsNone(already["promoted_by_pass"])
+        letter_r = [row for row in rows if row["learning_objective_id"] == "lo-e"][0]
+        self.assertEqual(letter_r["top_score"], "R")
+        self.assertFalse(letter_r["counts_for_mastery"])
+        legacy = [row for row in rows if row["assignment_id"] is None]
+        self.assertEqual(len(legacy), 1)
+        self.assertFalse(legacy[0]["counts_for_mastery"])
+        self.assertEqual(len([row for row in rows if row["learning_objective_id"] == "lo-f"]), 1)
+        self.assertEqual(updates[0]["op"], "update")
+        self.assertEqual(updates[0]["payload"], {"counts_for_mastery": True, "promoted_by_pass": True})
+        self.assertNotIn("top_score", updates[0]["payload"])
+        self.assertNotIn("last_modified_by", updates[0]["payload"])
+        self.assertEqual(rows[0]["top_score"], "M")
+        self.assertEqual(rows[0]["last_modified_by"], "inst-original")
+
+    def test_untick_demotes_only_marked_rows_and_a_second_tick_counts(self):
+        from app.helpers import free_passes as fp
+        rows = [
+            self._grade("s1", "lo-a", "asg-pass", "M", False),
+            self._grade("s1", "lo-d", "asg-pass", "M", True),
+        ]
+        updates = []
+        with self._patch(fp, rows, updates, {"HW 1": ["asg-pass"]}):
+            fp._promote_non_counting_masteries_for_student("class-1", "s1", "asg-pass")
+            demoted = fp._demote_pass_promoted_masteries_for_student("class-1", "s1", "asg-pass")
+        self.assertEqual(demoted, ["lo-a"])
+        red = [row for row in rows if row["learning_objective_id"] == "lo-a"][0]
+        kept = [row for row in rows if row["learning_objective_id"] == "lo-d"][0]
+        self.assertFalse(red["counts_for_mastery"])
+        self.assertIsNone(red["promoted_by_pass"])
+        self.assertTrue(kept["counts_for_mastery"])
+        self.assertIsNone(kept["promoted_by_pass"])
+        self.assertEqual(red["top_score"], "M")
+        self.assertEqual(red["last_modified_by"], "inst-original")
+        snapshot = [dict(row) for row in rows]
+        with self._patch(fp, rows, updates, {"HW 1": ["asg-pass"]}):
+            n = fp._demote_pass_promoted_masteries_for_student("class-1", "s1", "asg-pass")
+        self.assertEqual(n, [])
+        self.assertEqual(rows, snapshot)
+        with self._patch(fp, rows, updates, {"HW 1": ["asg-pass"]}):
+            fp._promote_non_counting_masteries_for_student("class-1", "s1", "asg-pass")
+            fp._demote_pass_promoted_masteries_for_student("class-1", "s1", "asg-pass")
+            fp._promote_non_counting_masteries_for_student("class-1", "s1", "asg-pass")
+        again = [row for row in rows if row["learning_objective_id"] == "lo-a"][0]
+        self.assertTrue(again["counts_for_mastery"])
+        self.assertTrue(again["promoted_by_pass"])
+
+
 class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
     """save_hw_percentage with score=-1 flips non-counting M/MR to counting."""
 
@@ -139,58 +347,32 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
         self.client = self.app.test_client()
 
     def test_hw_pass_promotes_non_counting_masteries(self):
+        from app.helpers import free_passes as fp
         from app.routes import grading as r
 
-        captured_upserts = []
-
-        def make_query(table_name):
-            q = MagicMock()
-            if table_name == "homework_scores":
-                q.upsert.return_value.execute.return_value = MagicMock()
-            elif table_name == "grades":
-                q.select.return_value.eq.return_value.in_.return_value.in_.return_value.execute.return_value = MagicMock(
-                    data=[
-                        {
-                            "student_id": "stu-1",
-                            "learning_objective_id": "lo-x",
-                            "assignment_id": "asg-1",
-                            "top_score": "M",
-                            "counts_for_mastery": False,
-                        }
-                    ]
-                )
-
-                def upsert(rows, **kw):
-                    captured_upserts.extend(rows)
-                    return MagicMock(execute=MagicMock(return_value=MagicMock()))
-
-                q.upsert.side_effect = upsert
-            return q
-
-        sa = MagicMock()
-        sa.table.side_effect = make_query
-
+        rows = [{
+            "student_id": "stu-1",
+            "learning_objective_id": "lo-x",
+            "assignment_id": "asg-1",
+            "top_score": "M",
+            "counts_for_mastery": False,
+            "promoted_by_pass": None,
+            "last_modified_by": "inst-original",
+        }]
+        updates = []
+        scope = TestPassScope()
         with self.client.session_transaction() as sess:
             sess["user_id"] = "inst1"
             sess["csrf_token"] = "test-csrf"
-
-        headers = {"X-CSRF-Token": "test-csrf"}
-
-        with unittest.mock.patch.object(r, "supabase_admin", sa), \
-                unittest.mock.patch("app.helpers.free_passes.supabase_admin", sa), \
+        with scope._patch(fp, rows, updates, {"": ["asg-1"]}) as admin, \
+                unittest.mock.patch.object(r, "supabase_admin", admin), \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(
-                    r, "_student_enrolled_in_class", return_value=True
-                ), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
                 unittest.mock.patch.object(
                     Homework,
                     "resolve_hw_group_storage_key",
                     return_value="hw-g1",
-                ), \
-                unittest.mock.patch.object(
-                    Course,
-                    "get_all_lo_ids_for_class",
-                    return_value=["lo-x"],
                 ):
             rv = self.client.post(
                 "/api/class/class-1/save-hw-percentage",
@@ -199,15 +381,103 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
                     "score": -1,
                     "assignment_id": "asg-1",
                 },
-                headers=headers,
+                headers={"X-CSRF-Token": "test-csrf"},
             )
-
-        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
         body = rv.get_json()
         self.assertTrue(body.get("success"))
         self.assertEqual(body.get("promoted_masteries"), 1)
-        self.assertEqual(len(captured_upserts), 1)
-        self.assertTrue(captured_upserts[0].get("counts_for_mastery"))
+        grade_writes = [item for item in updates if item["table"] == "grades"]
+        self.assertEqual(len(grade_writes), 1)
+        self.assertEqual(grade_writes[0]["op"], "update")
+        self.assertEqual(
+            grade_writes[0]["payload"],
+            {"counts_for_mastery": True, "promoted_by_pass": True},
+        )
+        self.assertNotIn("top_score", grade_writes[0]["payload"])
+        self.assertNotIn("last_modified_by", grade_writes[0]["payload"])
+        self.assertEqual(rows[0]["top_score"], "M")
+        self.assertEqual(rows[0]["last_modified_by"], "inst-original")
+        self.assertTrue(rows[0]["counts_for_mastery"])
+        self.assertTrue(rows[0]["promoted_by_pass"])
+
+    def test_pass_with_assignment_id_promotes_and_missing_or_empty_id_returns_400(self):
+        from app.routes import grading as r
+
+        captured = []
+        promote = MagicMock(return_value=3)
+
+        def make_query(table_name):
+            query = MagicMock()
+            if table_name == "homework_scores":
+                def upsert(rows, **kwargs):
+                    captured.extend(rows)
+                    return MagicMock(execute=MagicMock(return_value=MagicMock()))
+                query.upsert.side_effect = upsert
+            return query
+
+        sa = MagicMock()
+        sa.table.side_effect = make_query
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+        headers = {"X-CSRF-Token": "test-csrf"}
+        with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
+                unittest.mock.patch.object(
+                    r, "_promote_non_counting_masteries_for_student", promote
+                ), \
+                unittest.mock.patch.object(
+                    Homework, "resolve_hw_group_storage_key", return_value="hw-g1"
+                ) as resolve:
+            with self.subTest("with assignment id"):
+                rv = self.client.post(
+                    "/api/class/class-1/save-hw-percentage",
+                    json={"student_id": "stu-1", "score": -1, "assignment_id": "asg-1"},
+                    headers=headers,
+                )
+                self.assertEqual(rv.status_code, 200, rv.get_json())
+                self.assertEqual(rv.get_json().get("promoted_masteries"), 3)
+                promote.assert_called_once_with("class-1", "stu-1", "asg-1")
+                self.assertEqual(captured[-1]["score_pct"], -1)
+                self.assertEqual(captured[-1]["homework_group"], "hw-g1")
+            with self.subTest("missing assignment id"):
+                promote.reset_mock()
+                resolve.reset_mock()
+                before = len(captured)
+                rv = self.client.post(
+                    "/api/class/class-1/save-hw-percentage",
+                    json={
+                        "student_id": "stu-1",
+                        "score": -1,
+                        "homework_group": "HW 1",
+                    },
+                    headers=headers,
+                )
+                self.assertEqual(rv.status_code, 400, rv.get_json())
+                promote.assert_not_called()
+                resolve.assert_not_called()
+                self.assertEqual(len(captured), before)
+            with self.subTest("blank assignment id"):
+                promote.reset_mock()
+                resolve.reset_mock()
+                before = len(captured)
+                rv = self.client.post(
+                    "/api/class/class-1/save-hw-percentage",
+                    json={
+                        "student_id": "stu-1",
+                        "score": -1,
+                        "assignment_id": "",
+                        "homework_group": "HW 1",
+                    },
+                    headers=headers,
+                )
+                self.assertEqual(rv.status_code, 400, rv.get_json())
+                promote.assert_not_called()
+                resolve.assert_not_called()
+                self.assertEqual(len(captured), before)
 
     def test_typed_score_does_not_write_previous_or_shift(self):
         from app.routes import grading as r
@@ -1860,19 +2130,30 @@ class TestGradeChangeLog(unittest.TestCase):
         self.assertEqual(len(upsert_calls), 1)
 
     def test_promoter_does_not_insert_grade_change_log(self):
-        sa, grade_rows, log_rows = self._make_sa_mock(existing_grades=[{
+        from app.helpers import free_passes as fp
+        rows = [{
             "student_id": "stu-1",
             "learning_objective_id": "lo-x",
             "assignment_id": "asg-1",
             "top_score": "M",
             "counts_for_mastery": False,
-        }])
-        with unittest.mock.patch("app.helpers.free_passes.supabase_admin", sa), \
-                unittest.mock.patch.object(Course, "get_all_lo_ids_for_class", return_value=["lo-x"]):
-            n = _promote_non_counting_masteries_for_student("class-1", "stu-1", changed_by="inst1")
+            "promoted_by_pass": None,
+            "last_modified_by": "inst-original",
+        }]
+        updates = []
+        calls = []
+        with TestPassScope()._patch(fp, rows, updates, {"": ["asg-1"]}, calls):
+            n = fp._promote_non_counting_masteries_for_student("class-1", "stu-1", "asg-1")
         self.assertEqual(n, 1)
-        self.assertEqual(grade_rows[0]["last_modified_by"], "inst1")
-        self.assertEqual(log_rows, [])
+        self.assertEqual(updates[0]["op"], "update")
+        self.assertEqual(
+            updates[0]["payload"],
+            {"counts_for_mastery": True, "promoted_by_pass": True},
+        )
+        self.assertNotIn("top_score", updates[0]["payload"])
+        self.assertNotIn("last_modified_by", updates[0]["payload"])
+        self.assertEqual(rows[0]["last_modified_by"], "inst-original")
+        self.assertNotIn("grade_change_log", calls)
 
     def test_allowed_operations_and_python_writer(self):
         from app.helpers import grade_log
@@ -2055,6 +2336,101 @@ class TestFreePassAllowance(unittest.TestCase):
         updated = [entry for entry in log if entry["op"] == "update"]
         self.assertEqual(len(updated), 1)
         self.assertEqual(updated[0]["payload"], {"passes_used": 0})
+
+    def _return_pass(self, passes_used, assignment_id, belongs=True):
+        from app.helpers import free_passes as fp
+        from app.routes import grading as r
+        rows = [
+            {
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-a",
+                "assignment_id": "asg-pass",
+                "top_score": "M",
+                "counts_for_mastery": True,
+                "promoted_by_pass": True,
+                "last_modified_by": "inst-original",
+            },
+            {
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-c",
+                "assignment_id": "asg-share",
+                "top_score": "MR",
+                "counts_for_mastery": True,
+                "promoted_by_pass": True,
+                "last_modified_by": "inst-original",
+            },
+        ]
+        updates = []
+        calls = []
+        passes = [{
+            "id": "fp1",
+            "student_id": "stu-1",
+            "class_id": "class-1",
+            "passes_used": passes_used,
+        }]
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+        body = {"student_id": "stu-1"}
+        if assignment_id is not None:
+            body["assignment_id"] = assignment_id
+        with TestPassScope()._patch(
+            fp, rows, updates, {"HW 1": ["asg-pass", "asg-share"]}, calls, passes
+        ) as admin, \
+                unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=belongs):
+            rv = client.post(
+                "/api/class/class-1/return_pass",
+                json=body,
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+        return rv, rows, updates, calls
+
+    def test_return_with_assignment_demotes_active_rows_only_and_decrements(self):
+        from app.helpers.free_passes import FREE_PASSES_ALLOWED
+        rv, rows, updates, _calls = self._return_pass(1, "asg-pass", belongs=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        body = rv.get_json()
+        self.assertEqual(body.get("passes_remaining"), FREE_PASSES_ALLOWED)
+        self.assertEqual(body.get("demoted_lo_ids"), ["lo-a"])
+        self.assertNotIn("lo-c", body.get("demoted_lo_ids") or [])
+        active = [row for row in rows if row["learning_objective_id"] == "lo-a"][0]
+        shared = [row for row in rows if row["learning_objective_id"] == "lo-c"][0]
+        self.assertFalse(active["counts_for_mastery"])
+        self.assertIsNone(active["promoted_by_pass"])
+        self.assertFalse(shared["counts_for_mastery"])
+        self.assertIsNone(shared["promoted_by_pass"])
+        self.assertEqual(active["top_score"], "M")
+        self.assertEqual(active["last_modified_by"], "inst-original")
+        self.assertIn({"passes_used": 0}, [item["payload"] for item in updates if item["table"] == "free_passes"])
+
+    def test_return_with_no_pass_in_use_does_not_read_grades(self):
+        from app.helpers.free_passes import FREE_PASSES_ALLOWED
+        rv, rows, _updates, calls = self._return_pass(0, "asg-pass", belongs=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        body = rv.get_json()
+        self.assertEqual(body.get("passes_remaining"), FREE_PASSES_ALLOWED)
+        self.assertEqual(body.get("demoted_lo_ids"), [])
+        self.assertNotIn("grades", calls)
+        self.assertTrue(all(row["counts_for_mastery"] for row in rows))
+        self.assertTrue(all(row["promoted_by_pass"] for row in rows))
+
+    def test_return_for_another_class_assignment_returns_the_pass_and_demotes_nothing(self):
+        from app.helpers.free_passes import FREE_PASSES_ALLOWED
+        rv, rows, updates, calls = self._return_pass(1, "asg-foreign", belongs=False)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        body = rv.get_json()
+        self.assertEqual(body.get("passes_remaining"), FREE_PASSES_ALLOWED)
+        self.assertEqual(body.get("demoted_lo_ids"), [])
+        self.assertNotIn("grades", calls)
+        self.assertTrue(all(row["counts_for_mastery"] for row in rows))
+        self.assertTrue(all(row["promoted_by_pass"] for row in rows))
+        self.assertIn({"passes_used": 0}, [item["payload"] for item in updates if item["table"] == "free_passes"])
 
 
 def _page_without_csrf(page):
