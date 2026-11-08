@@ -347,6 +347,7 @@ function resolveHwCell(studentId, gradeCellEl) {
  * for already-saved rows; this function never re-evaluates them.
  */
 function predictCountsForMasteryFromCurrentHw(studentId, gradeCellEl) {
+  if (!AUTO_CONVERT_M) return true;
   const sid = String(studentId || '');
   const hwCell = resolveHwCell(sid, gradeCellEl);
   if (!hwCell) {

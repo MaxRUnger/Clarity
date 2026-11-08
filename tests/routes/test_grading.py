@@ -305,6 +305,64 @@ class TestResetHint(unittest.TestCase):
         self.assertGreater(payload, after_backspace)
 
 
+class TestAutoConvertPredict(unittest.TestCase):
+    def test_off_predicts_counting_and_on_still_predicts_red_below_65(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+
+        declaration = (
+            "const AUTO_CONVERT_M = JSON.parse("
+            "document.getElementById('autoConvertMJson').textContent);"
+        )
+        declared = src.find(declaration)
+        self.assertGreater(declared, -1)
+        self.assertEqual(src.find(declaration, declared + 1), -1)
+
+        fn_at = src.find(
+            "function predictCountsForMasteryFromCurrentHw(studentId, gradeCellEl) {"
+        )
+        self.assertGreater(fn_at, -1)
+        fn_end = src.find("\nfunction ", fn_at + 1)
+        self.assertGreater(fn_end, -1)
+        fn = src[fn_at:fn_end]
+        open_brace = fn.find("{")
+        self.assertGreater(open_brace, -1)
+
+        early = fn.find("if (!AUTO_CONVERT_M) return true;")
+        self.assertGreater(early, -1)
+        self.assertEqual(fn[open_brace + 1:early].strip(), "")
+        self.assertLess(declared, fn_at)
+
+        hw_cell = fn.find("const hwCell = resolveHwCell(sid, gradeCellEl);", early)
+        self.assertGreater(hw_cell, -1)
+        missing_cell = fn.find("if (!hwCell) {\n    return true;\n  }", early)
+        self.assertGreater(missing_cell, -1)
+        pass_return = fn.find("if (passChecked) return true;", early)
+        self.assertGreater(pass_return, -1)
+        blank_return = fn.find("if (rawHw === '') {\n    return true;\n  }", early)
+        self.assertGreater(blank_return, -1)
+        parsed = fn.find("const hw = parseInt(rawHw, 10);", early)
+        self.assertGreater(parsed, -1)
+        score_return = fn.find(
+            "return Number.isFinite(hw) && hw >= EXAM_HW_MIN;", early
+        )
+        self.assertGreater(score_return, -1)
+        self.assertLess(early, parsed)
+        self.assertLess(parsed, score_return)
+        exam_min = src.find("const EXAM_HW_MIN = 65;")
+        self.assertGreater(exam_min, -1)
+
+        self.assertEqual(src.count("AUTO_CONVERT_M"), 2)
+        read_at = src.find("if (!AUTO_CONVERT_M) return true;")
+        self.assertGreater(read_at, -1)
+        self.assertEqual(src.find("if (!AUTO_CONVERT_M) return true;", read_at + 1), -1)
+        after_read = read_at + len("if (!AUTO_CONVERT_M) return true;")
+        self.assertEqual(src.find("AUTO_CONVERT_M", after_read), -1)
+
+
 class _PassScopeQuery:
     def __init__(self, table, store, updates):
         self.table = table
