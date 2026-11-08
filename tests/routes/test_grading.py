@@ -130,6 +130,181 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
         self.assertEqual(rows_z, [])
 
 
+class TestResetHint(unittest.TestCase):
+    """A reset key makes the next M/MR a fresh entry. Other saves stay sticky."""
+
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+
+    def _save(self, grade, hw_score, reset=None, existing_letter="M", auto_convert=True, have_row=True):
+        from app.routes import grading as r
+
+        rows = []
+        if have_row:
+            rows.append({
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-x",
+                "assignment_id": "asg-1",
+                "top_score": existing_letter,
+                "counts_for_mastery": True,
+            })
+        updates = []
+        admin = _PassScopeAdmin({"grades": rows}, updates, [])
+        hw_map = {} if hw_score is None else {"stu-1": hw_score}
+        body = {"assignment_id": "asg-1", "grades": {"stu-1|lo-x": grade}}
+        if reset is not None:
+            body["reset_cells"] = reset
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+        headers = {"X-CSRF-Token": "test-csrf"}
+        with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
+                unittest.mock.patch.object(r, "_class_auto_convert_m_enabled", return_value=auto_convert), \
+                unittest.mock.patch.object(r, "_enrolled_student_ids_for_class", return_value={"stu-1"}), \
+                unittest.mock.patch.object(r, "_allowed_lo_ids_for_grading", return_value={"lo-x"}), \
+                unittest.mock.patch.object(
+                    Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
+                ):
+            rv = self.client.post(
+                "/api/class/class-1/save-grades",
+                json=body,
+                headers=headers,
+            )
+        upserts = [item["payload"] for item in updates if item["op"] == "upsert"]
+        return rv, upserts
+
+    def _flag(self, upserts):
+        self.assertEqual(len(upserts), 1)
+        self.assertEqual(len(upserts[0]), 1)
+        return upserts[0][0]
+
+    def test_reset_key_recomputes_and_absence_keeps_the_stored_flag(self):
+        with self.subTest("reset key and homework 54 stores false"):
+            rv, upserts = self._save("M", 54, reset=["stu-1|lo-x"])
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            row = self._flag(upserts)
+            self.assertEqual(row["top_score"], "M")
+            self.assertEqual(row["counts_for_mastery"], False)
+        with self.subTest("same cell without a reset key stays true"):
+            rv, upserts = self._save("M", 54)
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            self.assertEqual(self._flag(upserts)["counts_for_mastery"], True)
+        with self.subTest("reset key and homework 80 stores true"):
+            rv, upserts = self._save("M", 80, reset=["stu-1|lo-x"])
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            self.assertEqual(self._flag(upserts)["counts_for_mastery"], True)
+        with self.subTest("reset key and auto convert off stores true"):
+            rv, upserts = self._save("M", 54, reset=["stu-1|lo-x"], auto_convert=False)
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            self.assertEqual(self._flag(upserts)["counts_for_mastery"], True)
+        with self.subTest("reset key on a non-mastery letter is ignored"):
+            rv, upserts = self._save("R", 54, reset=["stu-1|lo-x"])
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            row = self._flag(upserts)
+            self.assertEqual(row["top_score"], "R")
+            self.assertEqual(row["counts_for_mastery"], True)
+            rv_plain, plain = self._save("R", 54)
+            self.assertEqual(rv_plain.status_code, 200, rv_plain.get_json())
+            self.assertEqual(self._flag(plain)["top_score"], "R")
+            self.assertEqual(self._flag(plain)["counts_for_mastery"], True)
+        with self.subTest("reset key for a cell that is not incoming is ignored"):
+            rv, upserts = self._save("M", 54, reset=["stu-9|lo-z"])
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            self.assertEqual(self._flag(upserts)["counts_for_mastery"], True)
+        with self.subTest("a first entry is the same with or without a reset key"):
+            rv, upserts = self._save("M", 54, reset=["stu-1|lo-x"], have_row=False)
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            self.assertEqual(self._flag(upserts)["counts_for_mastery"], False)
+            rv_plain, plain = self._save("M", 54, have_row=False)
+            self.assertEqual(rv_plain.status_code, 200, rv_plain.get_json())
+            self.assertEqual(self._flag(plain)["counts_for_mastery"], False)
+        with self.subTest("M to MR without a reset key keeps the flag"):
+            rv, upserts = self._save("MR", 54)
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            row = self._flag(upserts)
+            self.assertEqual(row["top_score"], "MR")
+            self.assertEqual(row["counts_for_mastery"], True)
+        with self.subTest("an unchanged M resend without a reset key keeps the flag"):
+            rv, upserts = self._save("M", 54)
+            self.assertEqual(rv.status_code, 200, rv.get_json())
+            row = self._flag(upserts)
+            self.assertEqual(row["top_score"], "M")
+            self.assertEqual(row["counts_for_mastery"], True)
+
+    def test_client_records_departure_reset_payload_and_restores_prev_flag(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+
+        update_at = src.find("function updateCellValue(cell, newGrade)")
+        self.assertGreater(update_at, -1)
+        assigned = src.find("grades[key] = newGrade;", update_at)
+        self.assertGreater(assigned, -1)
+        departure = src.find("markMasteryDeparture(key);", assigned)
+        self.assertGreater(departure, -1)
+        serial = src.find("const prevSerial = resetMasterySerial.get(key);", update_at)
+        self.assertGreater(serial, -1)
+        self.assertLess(serial, departure)
+        recorded = src.find("const prevFlag = cell.dataset.countsForMastery;", update_at)
+        self.assertGreater(recorded, -1)
+        pushed = src.find("gradeHistory.push({ key, prev, newGrade, prevFlag, prevSerial });", update_at)
+        self.assertGreater(pushed, -1)
+        self.assertLess(recorded, pushed)
+        self.assertLess(serial, pushed)
+        self.assertLess(assigned, departure)
+        self.assertLess(departure, pushed)
+
+        undo_at = src.find("document.getElementById('undoBtn').addEventListener('click'")
+        self.assertGreater(undo_at, -1)
+        undo_end = src.find("document.addEventListener('keydown', (e) => {", undo_at)
+        self.assertGreater(undo_end, -1)
+        undo = src[undo_at:undo_end]
+        serial_if = undo.find("if (last.prevSerial === undefined)")
+        self.assertGreater(serial_if, -1)
+        drop_reset = undo.find("resetMasterySerial.delete(last.key);", serial_if)
+        self.assertGreater(drop_reset, -1)
+        self.assertGreater(drop_reset, serial_if)
+        put_back = undo.find("resetMasterySerial.set(last.key, last.prevSerial);", drop_reset)
+        self.assertGreater(put_back, -1)
+        self.assertGreater(put_back, drop_reset)
+        old_delete = undo.find("if (isMasteryLetter(last.prev)) {\n    resetMasterySerial.delete(last.key);")
+        self.assertEqual(old_delete, -1)
+        self.assertGreater(serial_if, -1)
+        old_add = undo.find("markMasteryDeparture(last.key)")
+        self.assertEqual(old_add, -1)
+        self.assertGreater(put_back, -1)
+        flag_back = undo.find("cell.dataset.countsForMastery = last.prevFlag;")
+        self.assertGreater(flag_back, -1)
+        flag_check = undo.find("last.prevFlag === '0' || last.prevFlag === '1'")
+        self.assertGreater(flag_check, -1)
+        self.assertLess(flag_check, flag_back)
+        predict_again = undo.find("applyCountsForMasteryOnEdit(cell, last.prev || '', last.newGrade || '');")
+        self.assertGreater(predict_again, -1)
+        self.assertGreater(predict_again, flag_back)
+
+        wipe = src.find("Object.keys(grades).forEach(k => delete grades[k]);")
+        self.assertGreater(wipe, -1)
+        cleared = src.find("resetMasterySerial.clear();", wipe)
+        self.assertGreater(cleared, -1)
+
+        backspace = src.find("if (e.key === 'Backspace' || e.key === 'Delete')")
+        self.assertGreater(backspace, -1)
+        after_backspace = src.find("} else if (e.key === 'Tab')", backspace)
+        self.assertGreater(after_backspace, -1)
+        branch = src[backspace:after_backspace]
+        self.assertIn("updateCellValue(cell, null)", branch)
+        self.assertNotIn("performSave", branch)
+        payload = src.find("reset_cells: resetCells")
+        self.assertGreater(payload, -1)
+        self.assertGreater(payload, after_backspace)
+
+
 class _PassScopeQuery:
     def __init__(self, table, store, updates):
         self.table = table

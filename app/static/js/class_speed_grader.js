@@ -89,6 +89,18 @@ const REVISION_M_MIN = 75;
 const examGradeEligible = {};
 const revisionEligible = {};
 let hasUnsavedChanges = false;
+let masteryResetSerial = 0;
+const resetMasterySerial = new Map();
+
+function isMasteryLetter(value) {
+  const letter = String(value || '').toUpperCase();
+  return letter === 'M' || letter === 'MR';
+}
+
+function markMasteryDeparture(key) {
+  masteryResetSerial += 1;
+  resetMasterySerial.set(key, masteryResetSerial);
+}
 
 function markUnsavedChanges() {
   hasUnsavedChanges = true;
@@ -648,8 +660,13 @@ function updateCellValue(cell, newGrade) {
   const prev = grades[key];
   if (prev === newGrade) return;
 
+  const prevFlag = cell.dataset.countsForMastery;
+  const prevSerial = resetMasterySerial.get(key);
   grades[key] = newGrade;
-  gradeHistory.push({ key, prev, newGrade });
+  if (isMasteryLetter(prev) && !isMasteryLetter(newGrade)) {
+    markMasteryDeparture(key);
+  }
+  gradeHistory.push({ key, prev, newGrade, prevFlag, prevSerial });
   markUnsavedChanges();
 
   cell.dataset.actualGrade = newGrade || '';
@@ -770,14 +787,21 @@ document.getElementById('undoBtn').addEventListener('click', () => {
   const last = gradeHistory.pop();
   const cell = __gradeCellIndex.get(last.key);
   grades[last.key] = last.prev;
+  if (last.prevSerial === undefined) {
+    resetMasterySerial.delete(last.key);
+  } else {
+    resetMasterySerial.set(last.key, last.prevSerial);
+  }
   if (cell) {
     cell.dataset.actualGrade = last.prev || '';
-    // Treat undo as a "first-entry" again so the flag re-derives from the
-    // current HW row instead of inheriting the now-popped edit's flag.
-    delete cell.dataset.countsForMastery;
-    applyCountsForMasteryOnEdit(cell, last.prev || '', last.newGrade || '');
-    if (!last.prev) {
+    if (isMasteryLetter(last.prev) && (last.prevFlag === '0' || last.prevFlag === '1')) {
+      cell.dataset.countsForMastery = last.prevFlag;
+    } else {
       delete cell.dataset.countsForMastery;
+      applyCountsForMasteryOnEdit(cell, last.prev || '', last.newGrade || '');
+      if (!last.prev) {
+        delete cell.dataset.countsForMastery;
+      }
     }
     renderGradeInCell(cell, last.prev || '');
   }
@@ -915,6 +939,7 @@ function filterByAssignment() {
   if (normalizeAssignmentType(assignment.assignment_type) !== activeAssignmentTypeFilter) return;
 
   Object.keys(grades).forEach(k => delete grades[k]);
+  resetMasterySerial.clear();
   gradeHistory.length = 0;
   updateUndoBtn();
 
@@ -1180,16 +1205,26 @@ async function performSave(btn) {
     await persistAllHwPctInputs();
 
     const apiGrades = {};
+    const resetCells = [];
+    const resetSnapshot = [];
     Object.keys(grades).forEach(function (key) {
       const apiKey = apiGradeKeyFromComposite(key);
       if (!apiKey) return;
       apiGrades[apiKey] = grades[key];
+      if (isMasteryLetter(grades[key]) && resetMasterySerial.has(key)) {
+        resetCells.push(apiKey);
+        resetSnapshot.push({ key: key, serial: resetMasterySerial.get(key) });
+      }
     });
     const res = await fetch('/api/class/' + classId + '/save-grades', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ grades: apiGrades, assignment_id: activeAssignmentId })
+      body: JSON.stringify({
+        grades: apiGrades,
+        assignment_id: activeAssignmentId,
+        reset_cells: resetCells
+      })
     });
     if (!res.ok) {
       const err = await res.json().catch(function () { return {}; });
@@ -1197,6 +1232,11 @@ async function performSave(btn) {
       failure.status = res.status;
       throw failure;
     }
+    resetSnapshot.forEach(function (item) {
+      if (resetMasterySerial.get(item.key) === item.serial) {
+        resetMasterySerial.delete(item.key);
+      }
+    });
     gradeHistory.length = 0;
     updateUndoBtn();
     recomputeUnsavedState();

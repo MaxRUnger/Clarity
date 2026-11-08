@@ -165,6 +165,12 @@ def save_grades(class_id):
         enrolled_student_ids = _enrolled_student_ids_for_class(class_id)
         auto_convert = _class_auto_convert_m_enabled(class_id) if assignment_id else False
         hw_map = Homework.get_hw_scores_map_for_assignment(class_id, assignment_id) if assignment_id else {}
+        reset_cells = set()
+        raw_reset = data.get("reset_cells") or []
+        if isinstance(raw_reset, list):
+            for item in raw_reset:
+                if isinstance(item, str) and item:
+                    reset_cells.add(item)
 
         # Pre-collect the (student, lo) pairs we're about to write so we can
         # batch-fetch the existing rows in ONE query and implement first-entry-
@@ -241,7 +247,8 @@ def save_grades(class_id):
             if normalized in ('M', 'MR'):
                 existing = existing_by_key.get(key)
                 existing_top = (existing or {}).get('top_score')
-                if existing and existing_top in ('M', 'MR'):
+                fresh = key in reset_cells
+                if existing and existing_top in ('M', 'MR') and not fresh:
                     prev_flag = existing.get('counts_for_mastery')
                     counts_for_mastery = True if prev_flag is None else bool(prev_flag)
                 elif auto_convert:
