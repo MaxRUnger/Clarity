@@ -868,7 +868,6 @@ function emailSelectedAllAssignments(btnEl) {
     return;
   }
 
-  const priorText = btnEl ? btnEl.textContent : 'Email Selected';
   if (btnEl) {
     btnEl.disabled = true;
     btnEl.classList.add('opacity-60', 'cursor-not-allowed');

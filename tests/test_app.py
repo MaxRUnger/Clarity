@@ -2498,6 +2498,19 @@ class TestClassHeaderTitle(unittest.TestCase):
             page_js = handle.read()
         self.assertIn("escapeHtml(CLASS_NAME)", page_js)
 
+    def test_reports_js_drops_unread_selected_email_label(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "static", "js", "class_reports.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            page_js = handle.read()
+        self.assertNotIn("const priorText = btnEl ? btnEl.textContent : 'Email Selected'", page_js)
+        self.assertIn("const priorText = btnEl ? btnEl.textContent : 'Email All'", page_js)
+        selected = page_js.find("function emailSelectedAllAssignments")
+        visible = page_js.find("function emailAllVisibleReports")
+        self.assertGreater(visible, -1)
+        self.assertGreater(selected, visible)
+
     def test_reports_prev_column_matches_every_row_for_screen_print_and_pdf(self):
         from html.parser import HTMLParser
 
@@ -3821,6 +3834,15 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         src = self._read("app", "static", "js", "class_assignments.js")
         self.assertIn("ClarityUI.lockPageScroll()", src)
         self.assertIn("ClarityUI.unlockPageScroll()", src)
+
+    def test_assignments_js_drops_unread_lo_csv_rows(self):
+        src = self._read("app", "static", "js", "class_assignments.js")
+        self.assertNotIn("loCsvPendingRows", src)
+        self.assertIn("function escapeCsvCell(val)", src)
+        opened = src.find("function openLoCsvPreviewModal")
+        closed = src.find("function closeLoCsvPreviewModal")
+        self.assertGreater(closed, -1)
+        self.assertGreater(opened, closed)
 
     def test_ui_helpers_defines_and_exports_scroll_helpers(self):
         src = self._read("app", "static", "js", "ui_helpers.js")

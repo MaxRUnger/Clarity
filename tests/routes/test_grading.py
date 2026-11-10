@@ -1737,6 +1737,32 @@ class TestUpdateGradeRoster(unittest.TestCase):
         self.assertNotIn("visible", handler)
         self.assertNotIn("performSave", handler)
 
+    def test_speed_grader_js_drops_unread_student_key(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        sync = src.find("function syncHiddenHwCellFromScore")
+        populate = src.find("function populateHwScoreInputs")
+        self.assertGreater(sync, -1)
+        self.assertGreater(populate, sync)
+        body = src[sync:populate]
+        self.assertNotIn("sidKey", body)
+        self.assertIn("const sidKey = normalizeStudentKeyForMap(sidRaw);", src[populate:])
+
+    def test_speed_grader_js_drops_unread_escape_html(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        self.assertNotIn("function escapeHtml(value)", src)
+        kept = src.find("function promoteNonCountingMasteriesInDom")
+        render_at = src.find("function renderGradeInCell")
+        self.assertGreater(render_at, -1)
+        self.assertGreater(kept, render_at)
+
     def test_shift_q_is_stored_q_and_plain_q_stays_rq(self):
         js_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",

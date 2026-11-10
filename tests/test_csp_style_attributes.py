@@ -244,10 +244,10 @@ class TestCspStyleAttributes(unittest.TestCase):
                 "js/session_timeout.js') }}?v=2",
             ),
             "app/templates/classes/class_speed_grader.html": (
-                "js/class_speed_grader.js') }}?v=6",
+                "js/class_speed_grader.js') }}?v=7",
             ),
             "app/templates/classes/class_reports.html": (
-                "js/class_reports.js') }}?v=2",
+                "js/class_reports.js') }}?v=3",
             ),
             "app/templates/classes/update_grade.html": (
                 "js/csv_wizard.js') }}?v=24",

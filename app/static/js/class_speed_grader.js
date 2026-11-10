@@ -134,7 +134,6 @@ function syncHiddenHwCellFromScore(studentId, rawScore) {
   const passText = cell.querySelector('.hw-pass-text');
   const passCb = cell.querySelector('.hw-pass-check');
   if (!input) return;
-  const sidKey = normalizeStudentKeyForMap(studentId);
   if (rawScore === -1 || rawScore === '-1') {
     input.classList.add('hidden');
     input.value = '';
@@ -417,15 +416,6 @@ function renderGradeInCell(cell, rawGrade) {
     ? gradeBadgeHtml(shown)
     : '<span class="text-slate-200 dark:text-slate-600 text-[12px] select-none">—</span>';
   cell.innerHTML = html;
-}
-
-function escapeHtml(value) {
-  return String(value == null ? '' : value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 /** After an HW pass, remove red borders from all non-counting M/MR for this student. */

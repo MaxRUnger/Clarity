@@ -528,8 +528,6 @@ document.getElementById('submitBtn').addEventListener('click', function () {
 var loCsvConfigEl = document.getElementById('loCsvConfig');
 window.LO_CLASS_ID = loCsvConfigEl ? (loCsvConfigEl.dataset.classId || '') : '';
 
-var loCsvPendingRows = null;
-
 function escapeCsvCell(val) {
   var s = String(val == null ? '' : val);
   if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
@@ -571,7 +569,6 @@ function closeLoCsvPreviewModal() {
   if (wasOpen && window.ClarityUI && typeof window.ClarityUI.unlockPageScroll === 'function') {
     window.ClarityUI.unlockPageScroll();
   }
-  loCsvPendingRows = null;
   var inp = document.getElementById('loCsvInput');
   if (inp) inp.value = '';
   var w = document.getElementById('loCsvPreviewWarnings');
@@ -640,7 +637,6 @@ function renderLoCsvPreviewTable(rows) {
 }
 
 function openLoCsvPreviewModal(rows, warnings) {
-  loCsvPendingRows = rows;
   renderLoCsvPreviewTable(rows);
   var warnEl = document.getElementById('loCsvPreviewWarnings');
   if (warnEl) {
