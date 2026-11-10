@@ -3851,6 +3851,24 @@ class TestLoCsvPreviewModalScrollLock(unittest.TestCase):
         ):
             self.assertNotIn(token, src)
 
+    def test_class_detail_js_drops_orphaned_objective_editor(self):
+        detail = self._read("app", "static", "js", "class_detail.js")
+        assignments = self._read("app", "static", "js", "class_assignments.js")
+        self.assertNotIn("existingLosList", detail)
+        self.assertIn("assignmentsExistingLosList", assignments)
+        self.assertNotIn("function dashboardDeleteLO", detail)
+        self.assertIn("function deleteLO", assignments)
+        self.assertNotIn("function saveEditLo", detail)
+        self.assertIn("function saveEditLo", assignments)
+        self.assertNotIn("function closeEditLoModal", detail)
+        self.assertIn("function closeEditLoModal", assignments)
+        self.assertIn("function addStudent", detail)
+        self.assertIn("function confirmStudentUploadImport", detail)
+        editor = assignments.find("function openEditLoFromRow")
+        listed = assignments.find("assignmentsExistingLosList")
+        self.assertGreater(editor, -1)
+        self.assertGreater(listed, editor)
+
     def test_both_pages_load_ui_helpers(self):
         for name in ("class_assignments.html", "class_detail.html"):
             src = self._read("app", "templates", "classes", name)

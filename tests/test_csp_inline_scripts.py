@@ -350,7 +350,7 @@ class TestCspInlineScripts(unittest.TestCase):
             )
         class_json = html.find('id="classIdJson"')
         mode_json = html.find('id="instructorModeJson"')
-        page_js = html.find("js/class_detail.js?v=1")
+        page_js = html.find("js/class_detail.js?v=2")
         shell = html.find("js/app_shell.js?v=4")
         self.assertGreater(class_json, -1)
         self.assertLess(class_json, mode_json)
