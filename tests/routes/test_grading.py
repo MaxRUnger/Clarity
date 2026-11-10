@@ -103,6 +103,12 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
         self.assertEqual(len(captured_rows), 1)
         self.assertEqual(captured_rows[0]["top_score"], "M")
         self.assertEqual(captured_rows[0]["counts_for_mastery"], True)
+        self.assertNotIn("hw_score_at_entry", captured_rows[0])
+        for key in (
+            "student_id", "learning_objective_id", "top_score",
+            "counts_for_mastery", "last_modified_by", "assignment_id",
+        ):
+            self.assertIn(key, captured_rows[0])
 
     def test_auto_convert_does_not_read_previous_hw(self):
         with unittest.mock.patch.object(Homework, "decide_hw_score_update") as decide:
@@ -1399,7 +1405,12 @@ class TestImportRosterNameMatch(unittest.TestCase):
         self.assertEqual(len(self.hw_upserts), 1)
         self.assertEqual(self.hw_upserts[0]["score_pct"], 80)
         self.assertEqual(self.hw_upserts[0]["prev_score_pct"], 80)
-        self.assertEqual(grade_rows[0]["hw_score_at_entry"], 80)
+        self.assertNotIn("hw_score_at_entry", grade_rows[0])
+        for key in (
+            "student_id", "learning_objective_id", "top_score",
+            "last_modified_by", "assignment_id",
+        ):
+            self.assertIn(key, grade_rows[0])
         self.assertNotIn("homework_scores.delete", writes)
 
     def test_changed_import_moves_stored_current_into_previous(self):
@@ -1441,7 +1452,12 @@ class TestImportRosterNameMatch(unittest.TestCase):
         self.assertEqual(rv.status_code, 200)
         self.assertEqual(self.hw_upserts, [])
         self.assertNotIn("homework_scores.delete", writes)
-        self.assertEqual(grade_rows[0]["hw_score_at_entry"], 80)
+        self.assertNotIn("hw_score_at_entry", grade_rows[0])
+        for key in (
+            "student_id", "learning_objective_id", "top_score",
+            "last_modified_by", "assignment_id",
+        ):
+            self.assertIn(key, grade_rows[0])
 
 
 class TestUpdateGradeRoster(unittest.TestCase):

@@ -739,7 +739,6 @@ class TestClassDetailReads(unittest.TestCase):
             "learning_objective_id": lo_id, "top_score": top_score,
             "second_score": None, "counts_for_mastery": True,
             "assignment_id": None if assignment is None else assignment["id"],
-            "hw_score_at_entry": None,
             "learning_objectives": {
                 "id": lo_id, "name": lo_name, "vendor_code": lo_code,
             },
@@ -766,18 +765,12 @@ class TestClassDetailReads(unittest.TestCase):
         una = self._assignment("asg-una", self.CLASS_ID, "Unattached Quiz", "", "2026-10-21", [])
         ada_r = self._grade("g-ada-r", "stu-ada", "lo-2", "R", live, "Alpha", "A1")
         bea_rq = self._grade("g-bea-rq", "stu-bea", "lo-1", "RQ", exam, "Beta", "B2")
-        bea_rq["hw_score_at_entry"] = 80
         mute_r = self._grade("g-mute-r", "stu-mute", "lo-2", "R", live, "Alpha", "A1")
-        mute_r["hw_score_at_entry"] = 90
         out_r = self._grade("g-out-r", "stu-out", "lo-2", "R", live, "Alpha", "A1")
-        out_r["hw_score_at_entry"] = 90
         ott_r = self._grade("g-ott-r", "stu-ott", "lo-2", "R", other, "Alpha", "A1")
         pass_r = self._grade("g-pass-r", "stu-pass", "lo-2", "R", passed, "Alpha", "A1")
-        pass_r["hw_score_at_entry"] = -1
         null_r = self._grade("g-null-r", "stu-null", "lo-2", "R", None, "Alpha", "A1")
-        null_r["hw_score_at_entry"] = 90
         una_r = self._grade("g-una-r", "stu-una", "lo-9", "R", una, "Gamma", "C3")
-        una_r["hw_score_at_entry"] = 90
         reminders = []
         if reminded:
             reminders.append({
@@ -823,7 +816,9 @@ class TestClassDetailReads(unittest.TestCase):
                 {"id": "hs-sib", "class_id": self.CLASS_ID, "student_id": "stu-ada", "homework_group": "asg-sib", "score_pct": 10},
                 {"id": "hs-group", "class_id": self.CLASS_ID, "student_id": "stu-ada", "homework_group": "HW 1", "score_pct": 80},
                 {"id": "hs-ott", "class_id": self.CLASS_ID, "student_id": "stu-ott", "homework_group": "HW 1", "score_pct": 95},
-                {"id": "hs-pass", "class_id": self.CLASS_ID, "student_id": "stu-pass", "homework_group": "asg-pass", "score_pct": 90},
+                {"id": "hs-bea", "class_id": self.CLASS_ID, "student_id": "stu-bea", "homework_group": "asg-rq", "score_pct": 80},
+                {"id": "hs-una", "class_id": self.CLASS_ID, "student_id": "stu-una", "homework_group": "asg-una", "score_pct": 90},
+                {"id": "hs-pass", "class_id": self.CLASS_ID, "student_id": "stu-pass", "homework_group": "asg-pass", "score_pct": -1},
             ],
             "revision_reminders_sent": reminders,
         }
@@ -1043,7 +1038,6 @@ class TestClassDetailReads(unittest.TestCase):
             }],
             "revision_reminders_sent": [],
         }
-        store["grades"][0]["hw_score_at_entry"] = 90
         response, calls, context, _selects = self._page(store, self.NULL_ID)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(calls, [
@@ -1063,10 +1057,11 @@ class TestClassDetailReads(unittest.TestCase):
         _response, _calls, _context, selects = self._page(self._full_store(), self.CLASS_ID)
         revision_selects = [
             text for table, text in selects
-            if table == "grades" and "hw_score_at_entry" in text
+            if table == "grades" and "assignments(" in text
         ]
         self.assertEqual(len(revision_selects), 1)
         text = revision_selects[0]
+        self.assertNotIn("hw_score_at_entry", text)
         embed_at = text.find("assignments(")
         embed = text[embed_at:text.find(")", embed_at) + 1]
         self.assertIn("homework_group", embed)
