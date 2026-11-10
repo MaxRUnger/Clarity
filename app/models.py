@@ -23,13 +23,6 @@ from app.helpers.paging import fetch_all_rows
 
 logger = logging.getLogger(__name__)
 
-# Valid mastery grade codes used throughout the grading system.
-# - "MR" mastered-on-revision counts toward required masteries like "M" but is
-#   surfaced distinctly so instructors can see who revised vs aced on first try.
-# - "I" is a transient state used by auto-convert-M when HW is below threshold;
-#   it is restored to "M" automatically once HW rises (see routes.save_hw_percentage).
-MASTERY_GRADES = ('M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A', 'I')
-
 # Assignment type labels stored on assignments.assignment_type.
 # All three types share the same LO selection and grading path.
 ASSIGNMENT_TYPES = ('mastery_opp', 'exam', 'project')
@@ -217,17 +210,6 @@ class Grade:
     def is_mastery_mark(mark):
         """True for M and MR (both count as a demonstrated mastery for an assignment)."""
         return mark in ('M', 'MR')
-
-    @staticmethod
-    def get_priority(mark):
-        """Maps letter grades to numerical priorities."""
-        priorities = {'M': 5, 'MR': 5, 'R': 4, 'Q': 4, 'RQ': 3, 'P': 2, 'X': 1, 'I': 1, 'A': 0}
-        return priorities.get(mark, -1)
-
-    @staticmethod
-    def is_mastered(top_score, second_score):
-        """True when both cells on a row are mastery-level (M or MR)."""
-        return Grade.is_mastery_mark(top_score) and Grade.is_mastery_mark(second_score)
 
     @staticmethod
     def normalize_score(score):

@@ -2,7 +2,7 @@
 Test suite for the Capstone grading application.
 
 Covers:
-    - Grade model logic (normalize_score, is_mastered, get_priority)
+    - Grade model logic (normalize_score, is_mastery_mark)
     - Route helper functions (enrich_grade, organize_by_learning_objectives, normalize_profile)
     - Flask app factory / configuration
     - Route smoke tests (public pages, auth redirects)
@@ -27,7 +27,6 @@ from app.models import (
     Course,
     Grade,
     Homework,
-    MASTERY_GRADES,
     DEFAULT_REQUIRED_MS,
 )
 from app.helpers.csv_text import (
@@ -116,50 +115,14 @@ class TestGradeNormalizeScore(unittest.TestCase):
         self.assertIsNone(Grade.normalize_score('hello'))
 
 
-class TestGradeIsMastered(unittest.TestCase):
-    """Tests for Grade.is_mastered — checks if both scores are 'M'."""
-
-    def test_both_M_is_mastered(self):
-        self.assertTrue(Grade.is_mastered('M', 'M'))
-
-    def test_MR_counts_as_mastery_in_pair(self):
-        self.assertTrue(Grade.is_mastered('MR', 'MR'))
-        self.assertTrue(Grade.is_mastered('M', 'MR'))
-        self.assertTrue(Grade.is_mastered('MR', 'M'))
-
-    def test_only_top_M_not_mastered(self):
-        self.assertFalse(Grade.is_mastered('M', 'R'))
-
-    def test_only_second_M_not_mastered(self):
-        self.assertFalse(Grade.is_mastered('R', 'M'))
-
-    def test_neither_M_not_mastered(self):
-        self.assertFalse(Grade.is_mastered('P', 'X'))
+class TestGradeIsMasteryMark(unittest.TestCase):
+    """Tests for Grade.is_mastery_mark."""
 
     def test_q_is_not_a_mastery_mark(self):
         self.assertTrue(Grade.is_mastery_mark('M'))
         self.assertTrue(Grade.is_mastery_mark('MR'))
         self.assertFalse(Grade.is_mastery_mark('Q'))
         self.assertFalse(Grade.is_mastery_mark('R'))
-
-
-class TestGradeGetPriority(unittest.TestCase):
-    """Tests for Grade.get_priority — used for score comparisons."""
-
-    def test_known_grades_ordered_correctly(self):
-        self.assertEqual(Grade.get_priority('M'), Grade.get_priority('MR'))
-        self.assertGreater(Grade.get_priority('M'), Grade.get_priority('R'))
-        self.assertEqual(Grade.get_priority('Q'), Grade.get_priority('R'))
-        self.assertGreater(Grade.get_priority('Q'), Grade.get_priority('RQ'))
-        self.assertGreater(Grade.get_priority('R'), Grade.get_priority('RQ'))
-        self.assertGreater(Grade.get_priority('RQ'), Grade.get_priority('P'))
-        self.assertGreater(Grade.get_priority('P'), Grade.get_priority('X'))
-        self.assertGreater(Grade.get_priority('X'), Grade.get_priority('A'))
-        self.assertEqual(Grade.get_priority('I'), Grade.get_priority('X'))
-
-    def test_unknown_grade_returns_negative(self):
-        self.assertEqual(Grade.get_priority('Z'), -1)
-        self.assertEqual(Grade.get_priority(None), -1)
 
 
 class TestHomeworkImportSheetColumn(unittest.TestCase):
@@ -817,17 +780,6 @@ class TestNormalizeProfile(unittest.TestCase):
 
 class TestConstants(unittest.TestCase):
     """Verify the shared grading constants are correct."""
-
-    def test_mastery_grades_contains_expected_codes(self):
-        self.assertIn('M', MASTERY_GRADES)
-        self.assertIn('MR', MASTERY_GRADES)
-        self.assertIn('R', MASTERY_GRADES)
-        self.assertIn('Q', MASTERY_GRADES)
-        self.assertNotIn('Z', MASTERY_GRADES)
-        self.assertIn('RQ', MASTERY_GRADES)
-        self.assertIn('P', MASTERY_GRADES)
-        self.assertIn('X', MASTERY_GRADES)
-        self.assertIn('A', MASTERY_GRADES)
 
     def test_default_required_ms(self):
         self.assertEqual(DEFAULT_REQUIRED_MS, 2)
