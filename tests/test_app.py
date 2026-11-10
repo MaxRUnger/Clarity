@@ -1284,6 +1284,31 @@ class TestGradesheetExportPrefill(unittest.TestCase):
         self.assertEqual(mapped[("stu-1", "lo-d1")], "M")
         self.assertNotIn(("stu-1", "lo-d2"), mapped)
 
+    def test_export_writes_i_only_for_non_counting_mastery(self):
+        mapped = _gradesheet_letter_map_from_rows([
+            {"student_id": "s", "learning_objective_id": "m-off", "top_score": "M", "counts_for_mastery": False},
+            {"student_id": "s", "learning_objective_id": "mr-off", "top_score": "MR", "counts_for_mastery": False},
+            {"student_id": "s", "learning_objective_id": "m-on", "top_score": "M", "counts_for_mastery": True},
+            {"student_id": "s", "learning_objective_id": "mr-on", "top_score": "MR", "counts_for_mastery": True},
+            {"student_id": "s", "learning_objective_id": "m-missing", "top_score": "M"},
+            {"student_id": "s", "learning_objective_id": "r-off", "top_score": "R", "counts_for_mastery": False},
+        ])
+        self.assertEqual(mapped[("s", "m-off")], "I")
+        self.assertEqual(mapped[("s", "mr-off")], "I")
+        self.assertEqual(mapped[("s", "m-on")], "M")
+        self.assertEqual(mapped[("s", "mr-on")], "MR")
+        self.assertEqual(mapped[("s", "m-missing")], "M")
+        self.assertEqual(mapped[("s", "r-off")], "R")
+        lookup_path = os.path.join(
+            os.path.dirname(__file__), "..", "app", "helpers", "gradesheet_lookup.py",
+        )
+        with open(lookup_path, encoding="utf-8") as handle:
+            lookup = handle.read()
+        self.assertIn(
+            "id, student_id, learning_objective_id, top_score, counts_for_mastery",
+            lookup,
+        )
+
     def test_letter_map_keeps_every_grade_past_the_row_cap(self):
         from app.helpers.gradesheet_lookup import _gradesheet_letter_map_for_assignment
 

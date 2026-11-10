@@ -40,6 +40,7 @@ from app.helpers.lo_import import (
     _insert_learning_objectives,
     _select_class_pool_learning_objectives,
 )
+from app.helpers.paging import fetch_all_rows
 from app.helpers.rate_limit import rate_limited
 from app.helpers.student_names import display_name, name_key, row_sort_key
 from app.models import ASSIGNMENT_TYPES, Course, Grade, Homework
@@ -723,6 +724,20 @@ def api_import_grades():
         except Exception as e:
             logger.error("Error linking LOs to assignment: %s", e)
 
+    existing_by_pair: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    if assignment_id:
+        existing_grade_rows = fetch_all_rows(
+            supabase_admin.table("grades")
+            .select("student_id, learning_objective_id, top_score, counts_for_mastery")
+            .eq("assignment_id", assignment_id)
+            .order("id")
+        )
+        for existing in existing_grade_rows:
+            sid = str(existing.get("student_id") or "").strip()
+            lo_key = str(existing.get("learning_objective_id") or "").strip()
+            if sid and lo_key:
+                existing_by_pair[(sid, lo_key)] = existing
+
     for full_name, student in student_entries:
         profile_id = profile_id_by_name.get(name_key(full_name))
         if not profile_id:
@@ -769,13 +784,31 @@ def api_import_grades():
                 )
                 continue
 
+            letter = normalized
+            existing = existing_by_pair.get(
+                (str(profile_id).strip(), str(lo_id).strip())
+            )
+            if letter == "I":
+                stored_letter = str((existing or {}).get("top_score") or "").strip()
+                if stored_letter in ("M", "MR"):
+                    letter = stored_letter
+                else:
+                    letter = "M"
+                counts_for_mastery = False
+            elif existing:
+                prev_flag = existing.get("counts_for_mastery")
+                counts_for_mastery = True if prev_flag is None else bool(prev_flag)
+            else:
+                counts_for_mastery = True
+
             grade_rows.append({
                 "student_id": profile_id,
                 "learning_objective_id": lo_id,
-                "top_score": normalized,
+                "top_score": letter,
                 "assignment_id": assignment_id,
                 "last_modified_by": session['user_id'],
                 "hw_score_at_entry": hw_map.get(str(profile_id).strip()),
+                "counts_for_mastery": counts_for_mastery,
             })
 
         imported += 1

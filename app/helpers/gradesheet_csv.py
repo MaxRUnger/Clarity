@@ -25,6 +25,8 @@ def _gradesheet_letter_map_from_rows(grade_rows) -> Dict[Tuple[str, str], str]:
         lo_id = str(grade.get("learning_objective_id") or "").strip()
         letter = str(grade.get("top_score") or "").strip()
         if sid and lo_id and letter:
+            if letter in ("M", "MR") and grade.get("counts_for_mastery") is False:
+                letter = "I"
             letter_map[(sid, lo_id)] = letter
     return letter_map
 

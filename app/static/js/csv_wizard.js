@@ -40,7 +40,7 @@ let classRoster = [];
 const gradeHistory = [];
 const GRADE_KEYS = ['M', 'R', 'Q', 'P', 'X', 'A'];
 const GRADE_MAP  = { 'Q': 'RQ' };  // Q key types RQ
-const VALID_GRADES = new Set(['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A']);
+const VALID_GRADES = new Set(['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A', 'I']);
 
 // LO comparison state
 let assignmentLOs   = [];          // vendor_codes from selected assignment
@@ -248,6 +248,11 @@ function goToStep(stepNumber) {
     // Render the extracted data table when entering step 3
     if (stepNumber === 3 && uploadedCsvData) {
       displayExtractedData(uploadedCsvData);
+      loadPreviewCounts().then(function () {
+        document.querySelectorAll('#extractedStudentsTable .grade-cell').forEach(function (cell) {
+          markPreviewCell(cell, cell.dataset.grade);
+        });
+      });
     }
     // Populate confirm summary when entering step 4
     if (stepNumber === 4) populateConfirmSummary();
@@ -568,6 +573,80 @@ function displayExtractedLOs(data) {
   }
 }
 
+let previewCounts = null;
+
+function previewStudentId(name) {
+  if (!window.StudentNames || !window.StudentNames.nameKey) return '';
+  const key = window.StudentNames.nameKey(name);
+  if (!key) return '';
+  const hits = (classRoster || []).filter(function (row) {
+    return window.StudentNames.nameKey(row.full_name || '') === key;
+  });
+  if (hits.length !== 1) return '';
+  return String(hits[0].id || '');
+}
+
+function previewLoId(vendorCode) {
+  const sel = document.getElementById('assignmentSelect');
+  const assignmentId = sel && sel.value;
+  const data = (window.ASSIGNMENTS_DATA || []).find(function (a) {
+    return String(a.id) === String(assignmentId);
+  });
+  if (!data) return '';
+  const want = String(vendorCode || '').toUpperCase();
+  let found = '';
+  (data.assignment_objectives || []).forEach(function (ao) {
+    const lo = ao.learning_objectives || {};
+    if (String(lo.vendor_code || '').toUpperCase() === want) {
+      found = String(ao.learning_objective_id || lo.id || '');
+    }
+  });
+  return found;
+}
+
+function previewCellStaysNonCounting(studentName, vendorCode, letter) {
+  if (letter === 'I') return true;
+  if (letter !== 'M' && letter !== 'MR') return false;
+  if (!previewCounts) return false;
+  const sid = previewStudentId(studentName);
+  const loId = previewLoId(vendorCode);
+  if (!sid || !loId) return false;
+  const key = sid + '|' + loId;
+  return Object.prototype.hasOwnProperty.call(previewCounts, key) && previewCounts[key] === false;
+}
+
+function previewNonCountingClass(studentName, vendorCode, grade) {
+  const letter = String(grade || '').toUpperCase();
+  return previewCellStaysNonCounting(studentName, vendorCode, letter) ? ' non-counting-grade' : '';
+}
+
+function markPreviewCell(cell, grade) {
+  const rowIdx = parseInt(cell.dataset.studentIndex, 10);
+  const student = uploadedCsvData && uploadedCsvData.students && uploadedCsvData.students[rowIdx];
+  const name = student ? (student.name || '') : '';
+  const extra = previewNonCountingClass(name, cell.dataset.lo || '', grade);
+  cell.classList.toggle('non-counting-grade', extra !== '');
+}
+
+async function loadPreviewCounts() {
+  previewCounts = null;
+  try {
+    const sel = document.getElementById('assignmentSelect');
+    const assignmentId = sel && sel.value;
+    if (!assignmentId || !window.CLASS_ID || !window.ClarityUI || !window.ClarityUI.apiRequest) return;
+    const result = await window.ClarityUI.apiRequest(
+      '/api/class/' + encodeURIComponent(window.CLASS_ID) + '/assignment/' + encodeURIComponent(assignmentId) + '/grades',
+      { method: 'GET' }
+    );
+    const counts = result && result.ok && result.data && result.data.counts_for_mastery_map;
+    if (counts && typeof counts === 'object' && !Array.isArray(counts)) {
+      previewCounts = counts;
+    }
+  } catch {
+    previewCounts = null;
+  }
+}
+
 function displayExtractedData(data) {
   hideImportNameMatchError();
   setImportNameConfirmCount(0);
@@ -689,7 +768,7 @@ function displayExtractedData(data) {
       const raw = (student.grades && student.grades[lo]) ? student.grades[lo] : '';
       const grade = VALID_GRADES.has(String(raw).toUpperCase()) ? String(raw).toUpperCase() : raw;
       html += `<td class="border border-slate-300 dark:border-slate-600 px-1 py-1 text-center">
-        <div class="grade-cell" tabindex="0" data-grade="${escapeHTML(grade)}" data-row="${rowIdx}" data-col="${ac}" data-lo="${escapeHTML(lo)}" data-student-index="${rowIdx}">
+        <div class="grade-cell${previewNonCountingClass(name, lo, grade)}" tabindex="0" data-grade="${escapeHTML(grade)}" data-row="${rowIdx}" data-col="${ac}" data-lo="${escapeHTML(lo)}" data-student-index="${rowIdx}">
           ${escapeHTML(grade) || '<span class="text-slate-300 dark:text-slate-600 text-xs select-none">\u2014</span>'}
         </div>
       </td>`;
@@ -790,6 +869,7 @@ function setCellGrade(cell, grade) {
   cell.innerHTML = grade
     ? escapeHTML(grade)
     : '<span class="text-slate-300 dark:text-slate-600 text-xs select-none">\u2014</span>';
+  markPreviewCell(cell, grade);
 }
 
 function undoLastGrade() {
@@ -808,6 +888,7 @@ function undoLastGrade() {
   cell.innerHTML = prev
     ? escapeHTML(prev)
     : '<span class="text-slate-300 dark:text-slate-600 text-xs select-none">\u2014</span>';
+  markPreviewCell(cell, prev);
 }
 
 function moveFocus(row, col) {

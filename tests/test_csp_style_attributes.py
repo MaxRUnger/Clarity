@@ -250,7 +250,7 @@ class TestCspStyleAttributes(unittest.TestCase):
                 "js/class_reports.js') }}?v=2",
             ),
             "app/templates/classes/update_grade.html": (
-                "js/csv_wizard.js') }}?v=23",
+                "js/csv_wizard.js') }}?v=24",
             ),
         }
         for rel, needles in expected.items():

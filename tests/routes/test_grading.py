@@ -1055,7 +1055,7 @@ class TestImportRosterNameMatch(unittest.TestCase):
 
     def _post_grade_import(
         self, students, enroll_rows, extra=None, lo_rows=None, learning_objectives=None,
-        hw_map=None,
+        hw_map=None, existing_grades=None,
     ):
         from app.routes import grading as r
         if hw_map is None:
@@ -1083,6 +1083,28 @@ class TestImportRosterNameMatch(unittest.TestCase):
 
         grades.upsert.side_effect = upsert_grades
         grades.execute.return_value = MagicMock(data=[])
+        stored_grades = list(existing_grades or [])
+        grade_read = MagicMock()
+
+        def read_grades():
+            start = getattr(grade_read, "_page_start", None)
+            if start is None:
+                data = list(stored_grades)
+            else:
+                data = list(stored_grades)[start:grade_read._page_end + 1]
+            return MagicMock(data=data)
+
+        def remember_range(start, end):
+            grade_read._page_start = start
+            grade_read._page_end = end
+            return grade_read
+
+        grade_read.range.side_effect = remember_range
+        grade_read.order.return_value = grade_read
+        grade_read.eq.return_value = grade_read
+        grade_read.in_.return_value = grade_read
+        grade_read.execute.side_effect = read_grades
+        grades.select.return_value = grade_read
 
         class _EnrollQuery:
             def __init__(self):
@@ -1443,6 +1465,135 @@ class TestImportRosterNameMatch(unittest.TestCase):
         self.assertNotIn("homework_scores.delete", writes)
         self.assertEqual(grade_rows[0]["hw_score_at_entry"], 80)
 
+    def test_import_i_keeps_stored_mastery_letter(self):
+        los = [
+            {"id": "lo-m", "vendor_code": "D1", "description": None},
+            {"id": "lo-mr", "vendor_code": "D2", "description": None},
+        ]
+        rv, _, _, grade_rows = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "I", "D2": "i"}, "homework_pct": "80"}],
+            self._enrolled_jane(),
+            lo_rows=los,
+            learning_objectives=["D1", "D2"],
+            hw_map={"stu-1": 80},
+            existing_grades=[
+                {"id": "g-m", "student_id": "stu-1", "learning_objective_id": "lo-m", "top_score": "M", "counts_for_mastery": True},
+                {"id": "g-mr", "student_id": "stu-1", "learning_objective_id": "lo-mr", "top_score": "MR", "counts_for_mastery": True},
+            ],
+        )
+        self.assertEqual(rv.status_code, 200)
+        by_lo = {row["learning_objective_id"]: row for row in grade_rows}
+        self.assertEqual(by_lo["lo-m"]["top_score"], "M")
+        self.assertFalse(by_lo["lo-m"]["counts_for_mastery"])
+        self.assertEqual(by_lo["lo-mr"]["top_score"], "MR")
+        self.assertFalse(by_lo["lo-mr"]["counts_for_mastery"])
+        self.assertNotIn("I", [row["top_score"] for row in grade_rows])
+
+    def test_import_i_without_mastery_stores_m_not_the_letter(self):
+        rv_new, _, _, new_rows = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "I"}, "homework_pct": "80"}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 80},
+        )
+        self.assertEqual(rv_new.status_code, 200)
+        self.assertEqual(new_rows[0]["top_score"], "M")
+        self.assertFalse(new_rows[0]["counts_for_mastery"])
+        rv_r, _, _, r_rows = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": " I "}, "homework_pct": "80"}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 80},
+            existing_grades=[
+                {"id": "g-r", "student_id": "stu-1", "learning_objective_id": "lo-1", "top_score": "R", "counts_for_mastery": True},
+            ],
+        )
+        self.assertEqual(rv_r.status_code, 200)
+        self.assertEqual(r_rows[0]["top_score"], "M")
+        self.assertFalse(r_rows[0]["counts_for_mastery"])
+
+    def test_import_of_m_keeps_todays_flag(self):
+        rv_new, _, _, new_rows = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "M"}, "homework_pct": "80"}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 80},
+        )
+        self.assertEqual(rv_new.status_code, 200)
+        self.assertEqual(new_rows[0]["top_score"], "M")
+        self.assertTrue(new_rows[0]["counts_for_mastery"])
+        rv_kept, _, _, kept_rows = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "M"}, "homework_pct": "80"}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 80},
+            existing_grades=[
+                {"id": "g-m", "student_id": "stu-1", "learning_objective_id": "lo-1", "top_score": "M", "counts_for_mastery": False},
+            ],
+        )
+        self.assertEqual(rv_kept.status_code, 200)
+        self.assertEqual(kept_rows[0]["top_score"], "M")
+        self.assertFalse(kept_rows[0]["counts_for_mastery"])
+
+    def test_exported_i_round_trip_keeps_mr(self):
+        from app.helpers.gradesheet_csv import _gradesheet_letter_map_from_rows
+
+        mapped = _gradesheet_letter_map_from_rows([
+            {"student_id": "stu-1", "learning_objective_id": "lo-1", "top_score": "MR", "counts_for_mastery": False},
+        ])
+        self.assertEqual(mapped[("stu-1", "lo-1")], "I")
+        rv, _, _, grade_rows = self._post_grade_import(
+            [{"name": "Doe, Jane", "grades": {"D1": "I"}, "homework_pct": "80"}],
+            self._enrolled_jane(),
+            hw_map={"stu-1": 80},
+            existing_grades=[
+                {"id": "g-mr", "student_id": "stu-1", "learning_objective_id": "lo-1", "top_score": "MR", "counts_for_mastery": False},
+            ],
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(grade_rows[0]["top_score"], "MR")
+        self.assertFalse(grade_rows[0]["counts_for_mastery"])
+
+    def _csv_wizard_source(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "csv_wizard.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_csv_preview_uses_the_speed_grader_red_border(self):
+        src = self._csv_wizard_source()
+        self.assertIn("'I'", src[src.find("const VALID_GRADES"):src.find("const VALID_GRADES") + 80])
+        self.assertIn("non-counting-grade", src)
+        self.assertIn("function previewCellStaysNonCounting", src)
+        self.assertIn("counts_for_mastery_map", src)
+        step = src[src.find("if (stepNumber === 3"):src.find("if (stepNumber === 4")]
+        self.assertIn("loadPreviewCounts()", step)
+        self.assertEqual(step.count("displayExtractedData(uploadedCsvData)"), 1)
+        refresh = step[step.find("loadPreviewCounts()"):]
+        self.assertIn("markPreviewCell(cell, cell.dataset.grade)", refresh)
+        self.assertNotIn("displayExtractedData", refresh)
+
+    def test_csv_preview_renders_when_the_flag_request_fails(self):
+        src = self._csv_wizard_source()
+        step = src[src.find("if (stepNumber === 3"):src.find("if (stepNumber === 4")]
+        display_at = step.find("displayExtractedData(uploadedCsvData)")
+        load_at = step.find("loadPreviewCounts()")
+        self.assertGreater(display_at, -1)
+        self.assertGreater(load_at, display_at)
+        self.assertEqual(step.count("displayExtractedData(uploadedCsvData)"), 1)
+        refresh = step[step.find("loadPreviewCounts()"):]
+        self.assertIn("markPreviewCell(cell, cell.dataset.grade)", refresh)
+        self.assertNotIn("displayExtractedData", refresh)
+        fn_at = src.find("async function loadPreviewCounts")
+        self.assertGreater(fn_at, -1)
+        fn = src[fn_at:src.find("function displayExtractedData")]
+        self.assertIn("catch", fn)
+        self.assertNotIn("console.", fn)
+        rule_at = src.find("function previewCellStaysNonCounting")
+        self.assertGreater(rule_at, -1)
+        rule = src[rule_at:src.find("function previewNonCountingClass")]
+        early = rule.find("if (letter === 'I') return true;")
+        map_gate = rule.find("if (!previewCounts) return false;")
+        self.assertGreater(early, -1)
+        self.assertGreater(map_gate, early)
+
 
 class TestUpdateGradeRoster(unittest.TestCase):
     def test_update_grade_roster_is_id_and_full_name_including_muted(self):
@@ -1539,7 +1690,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
             src,
         )
-        self.assertIn("csv_wizard.js') }}?v=23", src)
+        self.assertIn("csv_wizard.js') }}?v=24", src)
 
     def test_speed_grader_autosave_runs_when_the_tab_hides(self):
         path = os.path.join(
@@ -1682,7 +1833,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
         with open(html_path, encoding="utf-8") as handle:
             html = handle.read()
 
-        valid = "const VALID_GRADES = new Set(['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A']);"
+        valid = "const VALID_GRADES = new Set(['M', 'MR', 'R', 'Q', 'RQ', 'P', 'X', 'A', 'I']);"
         valid_at = src.find(valid)
         self.assertGreater(valid_at, -1)
         self.assertIn("'RQ'", valid)
@@ -1786,7 +1937,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             template = fh.read()
         with open(os.path.join(root, "static", "js", "csv_wizard.js"), encoding="utf-8") as fh:
             script = fh.read()
-        self.assertIn("js/csv_wizard.js') }}?v=23", template)
+        self.assertIn("js/csv_wizard.js') }}?v=24", template)
         self.assertFalse(os.path.exists(os.path.join(root, "static", "js", "pdf_analyzer.js")))
         for src in (template, script):
             self.assertNotIn("pdfInput", src)

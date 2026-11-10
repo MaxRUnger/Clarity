@@ -26,7 +26,7 @@ def _gradesheet_letter_map_for_assignment(
             # One chunk of 100 students can still be more than 1000 grade rows.
             grade_rows.extend(fetch_all_rows(
                 supabase_admin.table("grades")
-                .select("id, student_id, learning_objective_id, top_score")
+                .select("id, student_id, learning_objective_id, top_score, counts_for_mastery")
                 .eq("assignment_id", assignment_id)
                 .in_("student_id", batch)
                 .in_("learning_objective_id", lo_ids)

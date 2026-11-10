@@ -238,7 +238,7 @@ class TestCspInlineScripts(unittest.TestCase):
         self.assertGreater(assignments_at, -1)
         self.assertLess(assignments_at, wizard_at)
         self.assertLess(wizard_at, shell_at)
-        self.assertIn("?v=23", upload[wizard_at:wizard_at + 80])
+        self.assertIn("?v=24", upload[wizard_at:wizard_at + 80])
         self.assertNotIn("js/update_grade.js", upload)
         wizard_src = (ROOT / "app/static/js/csv_wizard.js").read_text(encoding="utf-8")
         wizard_class_at = wizard_src.find("window.CLASS_ID")
