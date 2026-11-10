@@ -795,3 +795,35 @@ class TestAssignmentsPageReads(unittest.TestCase):
         self.assertIn("/instructor/dashboard", response.headers["Location"])
         self.assertEqual(calls, ["classes"])
         self.assertIsNone(context)
+
+
+class TestCreateLearningObjectiveRole(unittest.TestCase):
+    def _get(self, role):
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = role
+        return client
+
+    def test_student_owner_is_sent_to_login(self):
+        client = self._get("student")
+        with unittest.mock.patch("app.routes.assignments._instructor_owns_class", return_value=True), \
+                unittest.mock.patch("app.routes.assignments.Course.get_full_class_data") as load:
+            load.return_value = {"id": "c1"}
+            response = client.get("/class/c1/create_learning_objective")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
+        load.assert_not_called()
+
+    def test_instructor_get_still_redirects_to_assignments(self):
+        client = self._get("instructor")
+        with unittest.mock.patch("app.routes.assignments._instructor_owns_class", return_value=True), \
+                unittest.mock.patch(
+                    "app.routes.assignments.Course.get_full_class_data",
+                    return_value={"id": "c1"},
+                ):
+            response = client.get("/class/c1/create_learning_objective")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/class/c1/assignments", response.headers["Location"])

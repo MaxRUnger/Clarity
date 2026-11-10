@@ -399,6 +399,26 @@ class TestClassArchiveExport(unittest.TestCase):
         self.assertFalse(response.data.startswith(b"PK"))
         build.assert_not_called()
 
+    def test_student_owner_export_is_sent_to_login(self):
+        from app.helpers.rate_limit import _rate_limit_events
+        _rate_limit_events.clear()
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["role"] = "student"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch("app.routes.archives._instructor_owns_class", return_value=True), \
+                unittest.mock.patch(
+                    "app.helpers.archive_export.build_class_archive_zip",
+                    return_value=(b"PK\x03\x04archive", {"class_name": "Alg II"}),
+                ) as build:
+            response = client.get("/class/c-archive/export-archive")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
+        build.assert_not_called()
+
     def test_owner_download_names_the_zip_and_deletes_nothing(self):
         from werkzeug.utils import secure_filename
         client = self._client()

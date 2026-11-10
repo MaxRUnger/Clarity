@@ -3381,6 +3381,62 @@ class TestSpeedGraderReads(unittest.TestCase):
             self._expected_assignments(),
         )
 
+    def test_failed_free_pass_lookup_logs_and_shows_the_full_allowance(self):
+        from flask import template_rendered
+        from app import models
+        from app.routes import grading as r
+        store = self._store()
+        calls = []
+        admin = _class_detail_client(store, calls, [])
+        real_table = admin.table.side_effect
+
+        def table(name):
+            query = real_table(name)
+            if name == "free_passes":
+                def fail_execute():
+                    calls.append("free_passes")
+                    raise RuntimeError("free passes down")
+                query.execute = fail_execute
+            return query
+
+        admin.table.side_effect = table
+        app = create_app()
+        app.config["TESTING"] = True
+        captured = {}
+
+        def grab(sender, template, context, **kwargs):
+            if getattr(template, "name", "") == "classes/class_speed_grader.html":
+                captured["context"] = context
+
+        template_rendered.connect(grab, app)
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst-1"
+            sess["role"] = "instructor"
+        try:
+            with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                    unittest.mock.patch.object(models, "supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.free_passes.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_data.supabase_admin", admin), \
+                    unittest.mock.patch("app.helpers.class_access.supabase_admin", admin), \
+                    self.assertLogs("app.helpers.free_passes", level="ERROR") as logged:
+                response = client.get("/class/%s/speed_grader" % self.CLASS_ID)
+        finally:
+            template_rendered.disconnect(grab, app)
+        self.assertTrue(any(
+            "free pass lookup failed for class %s" % self.CLASS_ID in line
+            for line in logged.output
+        ))
+        self.assertEqual(response.status_code, 200)
+        shown = self._student_fields(captured["context"]["students"])
+        self.assertEqual(
+            [row["id"] for row in shown],
+            [row["id"] for row in self._expected_students()],
+        )
+        self.assertEqual([row["passes_remaining"] for row in shown], [2, 2, 2, 2])
+        self.assertEqual(self._expected_students()[0]["passes_remaining"], 2)
+        self.assertEqual(self._expected_students()[1]["passes_remaining"], 1)
+
     def test_convert_flag_on_does_not_change_the_students(self):
         response, calls, context = self._page(self._store(True), self.CLASS_ID)
         page = response.get_data(as_text=True)

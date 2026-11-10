@@ -537,6 +537,8 @@ def api_import_learning_objectives(class_id):
 @main_bp.route("/class/<class_id>/create_learning_objective", methods=["GET", "POST"], endpoint='create_learning_objective')
 @login_required
 def create_lo_handler(class_id):
+    if session.get("role") != "instructor":
+        return redirect(url_for("main.login_page"))
     if not _instructor_owns_class(class_id):
         return redirect(url_for('main.instructor_dashboard'))
 

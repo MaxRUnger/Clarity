@@ -1,5 +1,8 @@
+import logging
+
 from app.helpers.authentication import supabase_admin
 
+logger = logging.getLogger(__name__)
 
 FREE_PASSES_ALLOWED = 2
 
@@ -15,7 +18,8 @@ def _batch_get_free_passes(student_ids, class_id):
             .in_("student_id", student_ids) \
             .execute()
         return {r['student_id']: r['passes_used'] for r in (resp.data or [])}
-    except Exception:
+    except Exception as exc:
+        logger.error("free pass lookup failed for class %s: %s", class_id, exc)
         return {}
 
 

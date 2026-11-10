@@ -445,6 +445,8 @@ def restore_archived_class(archive_id):
 @rate_limited("archive_export", limit=5, window_sec=3600)
 def export_class_archive(class_id):
     """Download a class archive zip. Does not delete the class or write a row."""
+    if session.get("role") != "instructor":
+        return redirect(url_for("main.login_page"))
     if not _instructor_owns_class(class_id):
         return redirect(url_for("main.instructor_dashboard"))
     from app.helpers.archive_export import (
