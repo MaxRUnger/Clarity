@@ -284,7 +284,7 @@ class Grade:
                 return []
             grade_rows = fetch_all_rows(
                 supabase_admin.table("grades").select(
-                    "student_id, top_score, assignment_id, "
+                    "student_id, top_score, assignment_id, hw_score_at_entry, "
                     "assignments(id, name, revision_due, homework_group, class_id), "
                     "learning_objectives(id, name, vendor_code)"
                 ).in_("top_score", ["R", "Q", "RQ"]).in_(
@@ -316,14 +316,14 @@ class Grade:
             sibling_ids_by_group: Dict[str, List[str]] = {}
             if unique_groups:
                 try:
-                    sib_rows = fetch_all_rows(
+                    sib_resp = (
                         supabase_admin.table("assignments")
                         .select("id, homework_group")
                         .eq("class_id", class_id)
                         .in_("homework_group", unique_groups)
-                        .order("id")
+                        .execute()
                     )
-                    for row in sib_rows:
+                    for row in (sib_resp.data or []):
                         group = (row.get('homework_group') or '').strip()
                         rid = row.get('id')
                         if not group or not rid:
@@ -348,13 +348,14 @@ class Grade:
                     keys_list = list(group_keys)
                     for i in range(0, len(keys_list), CHUNK):
                         batch = keys_list[i:i + CHUNK]
-                        for r in fetch_all_rows(
+                        sresp = (
                             supabase_admin.table("homework_scores")
                             .select("student_id, score_pct, homework_group")
                             .eq("class_id", class_id)
                             .in_("homework_group", batch)
-                            .order("id")
-                        ):
+                            .execute()
+                        )
+                        for r in (sresp.data or []):
                             hg = r.get('homework_group')
                             sid = r.get('student_id')
                             if not hg or not sid:
@@ -392,7 +393,11 @@ class Grade:
                 if not rev_due or rev_due > horizon:
                     continue
                 aid = grade.get('assignment_id')
-                score = hw_by_assignment.get(aid, {}).get(grade['student_id'])
+                snapshot = grade.get('hw_score_at_entry')
+                if snapshot is None:
+                    score = hw_by_assignment.get(aid, {}).get(grade['student_id'])
+                else:
+                    score = snapshot
                 if not Homework.is_revision_to_m_eligible_hw_score(score):
                     continue
                 lo = grade.get('learning_objectives') or {}

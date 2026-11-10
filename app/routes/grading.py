@@ -269,6 +269,7 @@ def save_grades(class_id):
                 "top_score": normalized,
                 "counts_for_mastery": counts_for_mastery,
                 "last_modified_by": session['user_id'],
+                "hw_score_at_entry": hw_map.get(sid) if sid in hw_map else None,
             }
             if assignment_id:
                 row["assignment_id"] = assignment_id
@@ -774,6 +775,7 @@ def api_import_grades():
                 "top_score": normalized,
                 "assignment_id": assignment_id,
                 "last_modified_by": session['user_id'],
+                "hw_score_at_entry": hw_map.get(str(profile_id).strip()),
             })
 
         imported += 1

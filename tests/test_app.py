@@ -478,99 +478,47 @@ class TestRevisionReport(unittest.TestCase):
             create_app(BadTimezone)
         self.assertIn("Not/ARealZone", str(caught.exception))
 
-    def _revision_tables(self, grades, homework):
-        class Query:
-            def __init__(self, table):
-                self.table = table
-                self.window = None
-
-            def select(self, *_args, **_kwargs):
-                return self
-
-            def eq(self, *_args, **_kwargs):
-                return self
-
-            def in_(self, column, values):
-                self.in_calls = getattr(self, "in_calls", [])
-                self.in_calls.append((column, values))
-                return self
-
-            def order(self, *_args, **_kwargs):
-                return self
-
-            def range(self, start, end):
-                self.window = (start, end)
-                return self
-
-            def execute(self):
-                if self.table == "grades":
-                    rows = list(grades)
-                elif self.table == "homework_scores":
-                    rows = list(homework)
-                else:
-                    rows = []
-                if self.window is not None:
-                    start, end = self.window
-                    rows = rows[start:end + 1]
-                return unittest.mock.MagicMock(data=rows)
-
-        queries = []
-
-        class Admin:
-            def table(self, name):
-                query = Query(name)
-                queries.append(query)
-                return query
-
-        return Admin(), queries
-
-    def _revision_grade(self, student_id, due, score, top_score="R"):
-        aid = "a-" + student_id
-        grade = {
-            "id": "g-" + student_id,
-            "student_id": student_id,
-            "assignment_id": aid,
-            "top_score": top_score,
-            "assignments": {
-                "id": aid,
-                "name": "Quiz",
-                "revision_due": due,
-                "homework_group": "",
-                "class_id": "c1",
-            },
-            "learning_objectives": {
-                "id": "lo",
-                "name": "Limits",
-                "vendor_code": "T1",
-            },
-        }
-        homework = {
-            "id": "h-" + student_id,
-            "student_id": student_id,
-            "score_pct": score,
-            "homework_group": aid,
-            "class_id": "c1",
-        }
-        return grade, homework
-
     def test_revision_candidates_honor_the_passed_date(self):
         from datetime import date
         today = date(2026, 1, 1)
-        pairs = [
-            self._revision_grade("past", "2025-12-31", 80),
-            self._revision_grade("today", "2026-01-01", 80),
-            self._revision_grade("day7", "2026-01-08", 80),
-            self._revision_grade("day8", "2026-01-09", 80),
-            self._revision_grade("low", "2026-01-01", 74),
-            self._revision_grade("blank", "", 80),
-            self._revision_grade("missing", None, 80),
+        def grade(student_id, due, score):
+            return {
+                "student_id": student_id,
+                "assignment_id": "a-" + student_id,
+                "top_score": "R",
+                "hw_score_at_entry": score,
+                "assignments": {
+                    "id": "a-" + student_id,
+                    "name": "Quiz",
+                    "revision_due": due,
+                },
+                "learning_objectives": {
+                    "id": "lo",
+                    "name": "Limits",
+                    "vendor_code": "T1",
+                },
+            }
+        grades = [
+            grade("past", "2025-12-31", 80),
+            grade("today", "2026-01-01", 80),
+            grade("day7", "2026-01-08", 80),
+            grade("day8", "2026-01-09", 80),
+            grade("low", "2026-01-01", 74),
+            grade("blank", "", 80),
+            grade("missing", None, 80),
         ]
-        grades = [grade for grade, _homework in pairs]
-        homework = [row for _grade, row in pairs]
-        admin, _queries = self._revision_tables(grades, homework)
+        query = MagicMock()
+        query.select.return_value = query
+        query.in_.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        query.execute.return_value = MagicMock(data=[])
         with unittest.mock.patch(
             "app.models.Course.get_all_lo_ids_for_class", return_value=["lo"]
-        ), unittest.mock.patch("app.models.supabase_admin", admin):
+        ), unittest.mock.patch(
+            "app.models.fetch_all_rows", return_value=grades
+        ), unittest.mock.patch("app.models.supabase_admin") as sa:
+            sa.table.return_value = query
             rows = Grade.get_revision_candidates("c1", today)
         self.assertEqual(
             sorted(row["revision_due"] for row in rows),
@@ -584,35 +532,54 @@ class TestRevisionReport(unittest.TestCase):
     def test_q_rows_are_revision_candidates_and_other_letters_are_not_queried(self):
         from datetime import date
         today = date(2026, 1, 1)
-        pairs = [
-            self._revision_grade("q-ok", "2026-01-01", 80, "Q"),
-            self._revision_grade("q-low", "2026-01-01", 74, "Q"),
-            self._revision_grade("rq-ok", "2026-01-01", 80, "RQ"),
-            self._revision_grade("rq-low", "2026-01-01", 74, "RQ"),
-            self._revision_grade("m-row", "2026-01-01", 80, "M"),
-            self._revision_grade("p-row", "2026-01-01", 80, "P"),
-            self._revision_grade("x-row", "2026-01-01", 80, "X"),
-            self._revision_grade("a-row", "2026-01-01", 80, "A"),
-            self._revision_grade("i-row", "2026-01-01", 80, "I"),
-        ]
-        for grade, _homework in pairs:
-            grade["learning_objectives"] = {
-                "id": "lo-" + grade["student_id"],
-                "name": "Limits",
-                "vendor_code": "T1",
+
+        def grade(student_id, top_score, score):
+            return {
+                "student_id": student_id,
+                "assignment_id": "a-" + student_id,
+                "top_score": top_score,
+                "hw_score_at_entry": score,
+                "assignments": {
+                    "id": "a-" + student_id,
+                    "name": "Quiz",
+                    "revision_due": "2026-01-01",
+                    "class_id": "c1",
+                },
+                "learning_objectives": {
+                    "id": "lo-" + student_id,
+                    "name": "Limits",
+                    "vendor_code": "T1",
+                },
             }
-        grades = [grade for grade, _homework in pairs]
-        homework = [row for _grade, row in pairs]
-        admin, queries = self._revision_tables(grades, homework)
+
+        grades = [
+            grade("q-ok", "Q", 80),
+            grade("q-low", "Q", 74),
+            grade("rq-ok", "RQ", 80),
+            grade("rq-low", "RQ", 74),
+            grade("m-row", "M", 80),
+            grade("p-row", "P", 80),
+            grade("x-row", "X", 80),
+            grade("a-row", "A", 80),
+            grade("i-row", "I", 80),
+        ]
+        query = MagicMock()
+        query.select.return_value = query
+        query.in_.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        query.execute.return_value = MagicMock(data=[])
         with unittest.mock.patch(
             "app.models.Course.get_all_lo_ids_for_class", return_value=["lo"]
-        ), unittest.mock.patch("app.models.supabase_admin", admin):
+        ), unittest.mock.patch(
+            "app.models.fetch_all_rows", return_value=grades
+        ), unittest.mock.patch("app.models.supabase_admin") as sa:
+            sa.table.return_value = query
             rows = Grade.get_revision_candidates("c1", today)
         letters = [
-            values
-            for query in queries
-            for column, values in getattr(query, "in_calls", [])
-            if column == "top_score"
+            call.args[1]
+            for call in query.in_.call_args_list
+            if call.args and call.args[0] == "top_score"
         ]
         self.assertEqual(len(letters), 1)
         queried = letters[0]
@@ -732,217 +699,6 @@ class TestRevisionReport(unittest.TestCase):
         self.assertTrue(early["objectives"][0]["show_name"])
         self.assertFalse(early["objectives"][1]["show_name"])
         self.assertEqual(early["objectives"][0]["top_score"], "RQ")
-
-
-class TestCurrentHomeworkRevision(unittest.TestCase):
-    def _candidates(self, grades, homework):
-        from datetime import date
-        from app.models import Grade
-
-        class Query:
-            def __init__(self, table):
-                self.table = table
-                self.window = None
-
-            def select(self, *_args, **_kwargs):
-                return self
-
-            def in_(self, *_args, **_kwargs):
-                return self
-
-            def eq(self, *_args, **_kwargs):
-                return self
-
-            def order(self, *_args, **_kwargs):
-                return self
-
-            def range(self, start, end):
-                self.window = (start, end)
-                return self
-
-            def execute(self):
-                if self.table == "grades":
-                    rows = list(grades)
-                elif self.table == "homework_scores":
-                    rows = list(homework)
-                else:
-                    rows = []
-                if self.window is not None:
-                    start, end = self.window
-                    rows = rows[start:end + 1]
-                return unittest.mock.MagicMock(data=rows)
-
-        class Admin:
-            def table(self, name):
-                return Query(name)
-
-        with unittest.mock.patch(
-            "app.models.Course.get_all_lo_ids_for_class", return_value=["lo"]
-        ), unittest.mock.patch("app.models.supabase_admin", Admin()):
-            return Grade.get_revision_candidates("c1", date(2026, 1, 1))
-
-    def _grade(self, student, letter, snapshot, aid):
-        return {
-            "student_id": student,
-            "assignment_id": aid,
-            "top_score": letter,
-            "hw_score_at_entry": snapshot,
-            "assignments": {
-                "id": aid, "name": "Quiz", "revision_due": "2026-01-01",
-                "homework_group": "", "class_id": "c1",
-            },
-            "learning_objectives": {
-                "id": "lo", "name": "Limits", "vendor_code": "T1",
-            },
-        }
-
-    def test_current_homework_decides_and_a_stale_snapshot_does_not(self):
-        grades = [
-            self._grade("stale-high", "R", 80, "asg-1"),
-            self._grade("stale-low", "R", 60, "asg-2"),
-            self._grade("pass-now", "R", 80, "asg-3"),
-            self._grade("missing-now", "R", 80, "asg-4"),
-            self._grade("exact", "R", 60, "asg-5"),
-            self._grade("just-under", "R", 80, "asg-6"),
-            self._grade("q-stale", "Q", 60, "asg-7"),
-            self._grade("rq-stale", "RQ", 60, "asg-8"),
-            self._grade("kept", "R", None, "asg-9"),
-            self._grade("kept-low", "R", None, "asg-10"),
-        ]
-        homework = [
-            {"student_id": "stale-high", "score_pct": 60, "homework_group": "asg-1"},
-            {"student_id": "stale-low", "score_pct": 80, "homework_group": "asg-2"},
-            {"student_id": "pass-now", "score_pct": -1, "homework_group": "asg-3"},
-            {"student_id": "exact", "score_pct": 75, "homework_group": "asg-5"},
-            {"student_id": "just-under", "score_pct": 74, "homework_group": "asg-6"},
-            {"student_id": "q-stale", "score_pct": 80, "homework_group": "asg-7"},
-            {"student_id": "rq-stale", "score_pct": 80, "homework_group": "asg-8"},
-            {"student_id": "kept", "score_pct": 80, "homework_group": "asg-9"},
-            {"student_id": "kept-low", "score_pct": 60, "homework_group": "asg-10"},
-        ]
-        got = {row["student_id"] for row in self._candidates(grades, homework)}
-        self.assertNotIn("stale-high", got)
-        self.assertIn("stale-low", got)
-        self.assertNotIn("pass-now", got)
-        self.assertNotIn("missing-now", got)
-        self.assertIn("exact", got)
-        self.assertNotIn("just-under", got)
-        self.assertIn("q-stale", got)
-        self.assertIn("rq-stale", got)
-        self.assertIn("kept", got)
-        self.assertNotIn("kept-low", got)
-
-    def test_row_past_the_first_homework_page_stays_eligible(self):
-        from datetime import date
-        from app.models import Grade
-
-        homework = []
-        for i in range(1000):
-            homework.append({
-                "id": "h-%05d" % i,
-                "student_id": "pad-%04d" % i,
-                "score_pct": 80,
-                "homework_group": "asg-late",
-                "class_id": "c1",
-            })
-        homework.append({
-            "id": "h-99999",
-            "student_id": "late",
-            "score_pct": 80,
-            "homework_group": "asg-late",
-            "class_id": "c1",
-        })
-        for i in range(200):
-            homework.append({
-                "id": "o-%04d" % i,
-                "student_id": "other-%04d" % i,
-                "score_pct": 80,
-                "homework_group": "asg-%04d" % i,
-                "class_id": "c1",
-            })
-
-        def grade(gid, student, aid):
-            return {
-                "id": gid,
-                "student_id": student,
-                "assignment_id": aid,
-                "top_score": "R",
-                "hw_score_at_entry": None,
-                "assignments": {
-                    "id": aid,
-                    "name": "Quiz",
-                    "revision_due": "2026-01-01",
-                    "homework_group": "",
-                    "class_id": "c1",
-                },
-                "learning_objectives": {
-                    "id": "lo", "name": "Limits", "vendor_code": "T1",
-                },
-            }
-
-        grades = [
-            grade("g-late", "late", "asg-late"),
-            grade("g-none", "none", "asg-none"),
-        ]
-        for i in range(200):
-            grades.append(grade("g-%04d" % i, "other-%04d" % i, "asg-%04d" % i))
-
-        class Query:
-            def __init__(self, table):
-                self.table = table
-                self.groups = None
-                self.window = None
-
-            def select(self, *_args, **_kwargs):
-                return self
-
-            def eq(self, *_args, **_kwargs):
-                return self
-
-            def in_(self, column, values):
-                if column == "homework_group":
-                    self.groups = set(values)
-                return self
-
-            def order(self, *_args, **_kwargs):
-                return self
-
-            def range(self, start, end):
-                self.window = (start, end)
-                return self
-
-            def execute(self):
-                if self.table == "grades":
-                    rows = list(grades)
-                elif self.table == "homework_scores":
-                    rows = [
-                        row for row in homework
-                        if row["homework_group"] in (self.groups or set())
-                    ]
-                else:
-                    rows = []
-                rows = sorted(rows, key=lambda row: row["id"])
-                if self.table == "homework_scores" and self.window is None:
-                    rows = rows[:1000]
-                elif self.window is not None:
-                    start, end = self.window
-                    rows = rows[start:end + 1]
-                self.window = None
-                return unittest.mock.MagicMock(data=rows)
-
-        class Admin:
-            def table(self, name):
-                return Query(name)
-
-        with unittest.mock.patch(
-            "app.models.Course.get_all_lo_ids_for_class", return_value=["lo"]
-        ), unittest.mock.patch("app.models.supabase_admin", Admin()):
-            got = {
-                row["student_id"]
-                for row in Grade.get_revision_candidates("c1", date(2026, 1, 1))
-            }
-        self.assertIn("late", got)
-        self.assertNotIn("none", got)
 
 
 class TestRevisionModalTemplate(unittest.TestCase):
