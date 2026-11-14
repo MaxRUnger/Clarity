@@ -285,7 +285,6 @@ function showHwGradeLockNotice() {
 }
 
 function applyHwGradeLockForStudent(studentId) {
-  const recorded = studentHasRecordedHwScore(hwScoresMap, studentId);
   const sid = String(studentId || '');
   if (!sid) return;
   const esc = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(sid) : sid;
@@ -296,6 +295,14 @@ function applyHwGradeLockForStudent(studentId) {
     return;
   }
   const lockTitle = 'Enter a homework % before grading. Absent (A) is still allowed.';
+  if (selectedAssignmentIsExam()) {
+    cells.forEach(function (cell) {
+      cell.classList.remove('hw-lock-no-score');
+      if (cell.getAttribute('title') === lockTitle) cell.removeAttribute('title');
+    });
+    return;
+  }
+  const recorded = studentHasRecordedHwScore(hwScoresMap, studentId);
   cells.forEach(function (cell) {
     cell.classList.toggle('hw-lock-no-score', !recorded);
     if (recorded) {
@@ -618,7 +625,7 @@ function handleGradeCellKeydown(e, cell) {
   const wantsGrade = (e.shiftKey && k === 'M') ? 'MR' : (e.shiftKey && k === 'Q') ? 'Q' : (GRADES.includes(k) ? (GRADE_MAP[k] || k) : null);
   if (wantsGrade) {
     e.preventDefault();
-    if (wantsGrade !== 'A' && !studentHasRecordedHwScore(hwScoresMap, cell.dataset.studentId)) {
+    if (wantsGrade !== 'A' && !selectedAssignmentIsExam() && !studentHasRecordedHwScore(hwScoresMap, cell.dataset.studentId)) {
       showHwGradeLockNotice();
       return;
     }

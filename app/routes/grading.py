@@ -228,7 +228,7 @@ def save_grades(class_id):
             if (
                 assignment_id
                 and normalized != "A"
-                and not (exam_assignment and normalized in ("M", "MR"))
+                and not exam_assignment
                 and not Homework.student_has_recorded_score(hw_map, student_id)
             ):
                 return jsonify({

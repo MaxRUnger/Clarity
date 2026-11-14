@@ -306,9 +306,10 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
         self.assertTrue(row["counts_for_mastery"])
 
         rv, upserts = self._save_with_type("exam", grade="R", hw_score=None, auto_convert=True)
-        self.assertEqual(rv.status_code, 400, rv.get_json())
-        self.assertEqual(rv.get_json().get("error"), blocked)
-        self.assertEqual(upserts, [])
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        row = self._one_flag(upserts)
+        self.assertEqual(row["top_score"], "R")
+        self.assertIsNone(row["hw_score_at_entry"])
 
         for assignment_type in ("mastery_opp", "project", None, "quiz"):
             rv, upserts = self._save_with_type(
@@ -578,6 +579,32 @@ class TestAutoConvertPredict(unittest.TestCase):
             src,
         )
 
+    def test_exam_skips_blank_homework_keystroke_and_cell_lock(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        key_at = src.find("function handleGradeCellKeydown(e, cell) {")
+        self.assertGreater(key_at, -1)
+        key_end = src.find("\nfunction ", key_at + 1)
+        self.assertGreater(key_end, key_at)
+        key = src[key_at:key_end]
+        self.assertIn(
+            "wantsGrade !== 'A' && !selectedAssignmentIsExam() && !studentHasRecordedHwScore(hwScoresMap, cell.dataset.studentId)",
+            key,
+        )
+        lock_at = src.find("function applyHwGradeLockForStudent(studentId) {")
+        self.assertGreater(lock_at, -1)
+        lock_end = src.find("\nfunction ", lock_at + 1)
+        self.assertGreater(lock_end, lock_at)
+        lock = src[lock_at:lock_end]
+        exam_at = lock.find("if (selectedAssignmentIsExam()) {")
+        self.assertGreater(exam_at, -1)
+        exam_body = lock[exam_at:]
+        self.assertIn("cell.classList.remove('hw-lock-no-score');", exam_body)
+        self.assertIn("cell.removeAttribute('title');", exam_body)
+        self.assertLess(exam_body.find("return;"), exam_body.find("const recorded"))
 
 
 class _PassScopeQuery:
