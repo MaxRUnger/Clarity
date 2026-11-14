@@ -1036,6 +1036,24 @@ function filterByAssignment() {
       if (counts[t] != null) counts[t] += 1;
     });
   }
+  const requested = (new URLSearchParams(window.location.search).get('assignment') || '').trim();
+  if (select && requested) {
+    const match = Array.from(select.options).find(function (opt) {
+      return opt.value === requested;
+    });
+    if (match) {
+      setAssignmentTypeFilter(
+        match.getAttribute('data-assignment-type'),
+        { force: true, skipUnsavedGuard: true }
+      );
+      if (select.value !== requested) {
+        select.value = requested;
+        assignmentFilterLastValue = select.value;
+        filterByAssignment();
+      }
+      return;
+    }
+  }
   let initial = 'mastery_opp';
   if (counts.mastery_opp === 0) {
     if (counts.exam > 0) initial = 'exam';

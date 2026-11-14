@@ -254,7 +254,7 @@
         <div id="importHwSkipBox" class="hidden mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
           <p class="text-sm font-semibold text-amber-900 dark:text-amber-100">Some grade cells were not imported</p>
           <ul id="importHwSkipWarnings" class="mt-2 list-disc list-inside text-sm text-amber-800 dark:text-amber-200 space-y-1"></ul>
-          <a id="importHwSkipReportsLink" class="inline-block mt-2 text-sm font-medium text-blue-600 dark:text-blue-400 underline" href="#">Go to Reports</a>
+          <a id="importHwSkipGraderLink" class="inline-block mt-2 text-sm font-medium text-blue-600 dark:text-blue-400 underline" href="#">Go to Speed Grader</a>
         </div>
       </div>
 
@@ -275,6 +275,6 @@
 <script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>
 <script type="application/json" id="classIdJson">{{ class_id | tojson }}</script>
 <script type="application/json" id="assignmentsJson">{{ assignments | tojson }}</script>
-<script src="{{ url_for('static', filename='js/csv_wizard.js') }}?v=24"></script>
+<script src="{{ url_for('static', filename='js/csv_wizard.js') }}?v=25"></script>
 {% endif %}
 {% endblock %}

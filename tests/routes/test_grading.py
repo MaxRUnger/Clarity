@@ -2064,7 +2064,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             '<script type="application/json" id="classRosterJson">{{ roster|tojson }}</script>',
             src,
         )
-        self.assertIn("csv_wizard.js') }}?v=24", src)
+        self.assertIn("csv_wizard.js') }}?v=25", src)
 
     def test_speed_grader_autosave_runs_when_the_tab_hides(self):
         path = os.path.join(
@@ -2337,7 +2337,7 @@ class TestUpdateGradeRoster(unittest.TestCase):
             template = fh.read()
         with open(os.path.join(root, "static", "js", "csv_wizard.js"), encoding="utf-8") as fh:
             script = fh.read()
-        self.assertIn("js/csv_wizard.js') }}?v=24", template)
+        self.assertIn("js/csv_wizard.js') }}?v=25", template)
         self.assertFalse(os.path.exists(os.path.join(root, "static", "js", "pdf_analyzer.js")))
         for src in (template, script):
             self.assertNotIn("pdfInput", src)
@@ -2380,6 +2380,42 @@ class TestUpdateGradeRoster(unittest.TestCase):
             "who is now in this class. Correct the name in the sheet row to match.",
             src,
         )
+
+    def test_clean_import_opens_speed_grader_on_the_assignment(self):
+        js_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "csv_wizard.js",
+        )
+        html_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "templates", "classes", "update_grade.html",
+        )
+        with open(js_path, encoding="utf-8") as handle:
+            src = handle.read()
+        with open(html_path, encoding="utf-8") as handle:
+            html = handle.read()
+        start = src.find("async function handleFormSubmit(e) {")
+        self.assertGreater(start, -1)
+        end = src.find("\ndocument.addEventListener('click'", start)
+        self.assertGreater(end, start)
+        submit = src[start:end]
+        captured = submit.find("const assignmentId = sel ? sel.value : null;")
+        self.assertGreater(captured, -1)
+        href = submit.find(
+            "const speedGraderHref = '/class/' + classId + '/speed_grader?assignment=' + encodeURIComponent(assignmentId);"
+        )
+        self.assertGreater(href, captured)
+        warnings = submit.find("if (warnings.length && boxEl && listEl) {", href)
+        self.assertGreater(warnings, href)
+        warning_return = submit.find("restoreImportButton();\n      return;", warnings)
+        self.assertGreater(warning_return, warnings)
+        warning_body = submit[warnings:warning_return]
+        self.assertIn("graderLink.setAttribute('href', speedGraderHref);", warning_body)
+        self.assertNotIn("window.location.href", warning_body)
+        self.assertIn("window.location.href = speedGraderHref;", submit[warning_return:])
+        self.assertNotIn("/reports", submit)
+        self.assertIn('id="importHwSkipGraderLink"', html)
+        self.assertIn("Go to Speed Grader", html)
+        self.assertNotIn("importHwSkipReportsLink", html)
+        self.assertNotIn("Go to Reports", html)
 
 
 class TestImportBlankCellActions(unittest.TestCase):
@@ -4041,3 +4077,38 @@ class TestSpeedGraderReads(unittest.TestCase):
         self.assertIn("/instructor/dashboard", response.headers["Location"])
         self.assertEqual(calls, ["classes"])
         self.assertIsNone(context)
+
+    def test_assignment_query_selects_that_option_and_its_type(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        start = src.find("function initSpeedGraderAssignmentTypeFilter() {")
+        self.assertGreater(start, -1)
+        end = src.find("\n})();", start)
+        self.assertGreater(end, start)
+        body = src[start:end]
+        requested = body.find(
+            "const requested = (new URLSearchParams(window.location.search).get('assignment') || '').trim();"
+        )
+        self.assertGreater(requested, -1)
+        chosen = body.find(
+            "setAssignmentTypeFilter(\n"
+            "        match.getAttribute('data-assignment-type'),\n"
+            "        { force: true, skipUnsavedGuard: true }\n"
+            "      );",
+            requested,
+        )
+        self.assertGreater(chosen, requested)
+        reselect = body.find("if (select.value !== requested) {", chosen)
+        self.assertGreater(reselect, chosen)
+        reselect_body = body[reselect:body.find("return;", reselect)]
+        self.assertIn("select.value = requested;", reselect_body)
+        self.assertIn("filterByAssignment();", reselect_body)
+        initial = body.find("let initial = 'mastery_opp';")
+        self.assertGreater(initial, body.find("return;", reselect))
+        self.assertIn(
+            "setAssignmentTypeFilter(initial, { force: true, skipUnsavedGuard: true });",
+            body[initial:],
+        )

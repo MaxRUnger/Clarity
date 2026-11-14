@@ -1342,10 +1342,11 @@ async function handleFormSubmit(e) {
     const result = await resp.json();
     if (!result.success) throw new Error(result.error || 'Import failed');
 
+    const speedGraderHref = '/class/' + classId + '/speed_grader?assignment=' + encodeURIComponent(assignmentId);
     const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
     const boxEl = document.getElementById('importHwSkipBox');
     const listEl = document.getElementById('importHwSkipWarnings');
-    const reportsLink = document.getElementById('importHwSkipReportsLink');
+    const graderLink = document.getElementById('importHwSkipGraderLink');
     if (listEl) {
       listEl.textContent = '';
     }
@@ -1355,15 +1356,15 @@ async function handleFormSubmit(e) {
         li.textContent = line;
         listEl.appendChild(li);
       });
-      if (reportsLink) {
-        reportsLink.setAttribute('href', '/class/' + classId + '/reports');
+      if (graderLink) {
+        graderLink.setAttribute('href', speedGraderHref);
       }
       boxEl.classList.remove('hidden');
       restoreImportButton();
       return;
     }
 
-    window.location.href = '/class/' + classId + '/reports';
+    window.location.href = speedGraderHref;
   } catch (err) {
     console.error('Import error:', err);
     alert('Error importing grades: ' + (err.message || err));
