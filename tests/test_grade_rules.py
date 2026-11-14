@@ -376,6 +376,15 @@ class GradeRuleCopyTests(unittest.TestCase):
         self.assertIn("b.textContent = 'I';", body)
         self.assertNotIn("b.textContent = 'M';", body)
 
+    def test_project_label_is_not_described_as_the_exam_path(self):
+        rows = read("app/helpers/assignment_rows.py")
+        self.assertNotIn("follows the same path as 'exam'", rows)
+        self.assertIn(
+            "'project' is a valid stored label, separate from 'exam'.",
+            rows,
+        )
+
+
 
 if __name__ == "__main__":
     unittest.main()

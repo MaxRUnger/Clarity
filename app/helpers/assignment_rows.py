@@ -15,7 +15,7 @@ def _assignment_type_fields_from_payload(data: Dict[str, Any]) -> str:
     """Parse assignment_type from create/update body.
 
     Invalid / missing type falls back to 'mastery_opp'.
-    'project' is a valid label and follows the same path as 'exam'.
+    'project' is a valid stored label, separate from 'exam'.
     """
     raw = data.get("assignment_type") or "mastery_opp"
     if not isinstance(raw, str):

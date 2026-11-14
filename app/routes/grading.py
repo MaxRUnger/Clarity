@@ -52,6 +52,29 @@ _HW_REQUIRED_FOR_MARK_ERROR = (
     "Enter a homework % for this student before saving a grade other than A (Absent)."
 )
 
+def _saved_assignment_is_exam(class_id, assignment_id) -> bool:
+    """True only when assignments.assignment_type is exactly 'exam'.
+
+    A missing row, a non-list payload, or any other type keeps the current path.
+    """
+    if not assignment_id:
+        return False
+    resp = (
+        supabase_admin.table("assignments")
+        .select("assignment_type")
+        .eq("id", str(assignment_id))
+        .eq("class_id", str(class_id))
+        .execute()
+    )
+    data = getattr(resp, "data", None)
+    if not isinstance(data, list) or not data:
+        return False
+    row = data[0]
+    if not isinstance(row, dict):
+        return False
+    return row.get("assignment_type") == "exam"
+
+
 @main_bp.route("/class/<class_id>/speed_grader", endpoint='class_speed_grader')
 @login_required
 def class_speed_grader(class_id):
@@ -173,6 +196,11 @@ def save_grades(class_id):
                 if isinstance(item, str) and item:
                     reset_cells.add(item)
 
+        exam_assignment = (
+            _saved_assignment_is_exam(class_id, str(assignment_id))
+            if assignment_id else False
+        )
+
         # Pre-collect the (student, lo) pairs we're about to write so we can
         # batch-fetch the existing rows in ONE query and implement first-entry-
         # only stickiness for the counts_for_mastery flag. Cells with an empty/
@@ -200,6 +228,7 @@ def save_grades(class_id):
             if (
                 assignment_id
                 and normalized != "A"
+                and not (exam_assignment and normalized in ("M", "MR"))
                 and not Homework.student_has_recorded_score(hw_map, student_id)
             ):
                 return jsonify({
@@ -252,6 +281,8 @@ def save_grades(class_id):
                 if existing and existing_top in ('M', 'MR') and not fresh:
                     prev_flag = existing.get('counts_for_mastery')
                     counts_for_mastery = True if prev_flag is None else bool(prev_flag)
+                elif exam_assignment:
+                    counts_for_mastery = True
                 elif auto_convert:
                     # First-entry M/MR: capture HW eligibility. Non-A marks
                     # already required a recorded HW score above, so sid is in hw_map.

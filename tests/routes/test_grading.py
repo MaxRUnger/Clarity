@@ -129,6 +129,195 @@ class TestSaveGradesAutoConvertHwGuard(unittest.TestCase):
         self.assertEqual(rv_z.status_code, 200)
         self.assertEqual(rows_z, [])
 
+    def _save_with_type(
+        self,
+        assignment_type,
+        grade="M",
+        hw_score=30,
+        auto_convert=True,
+        existing_flag=None,
+        existing_letter="M",
+        reset=None,
+        have_row=False,
+    ):
+        from app.routes import grading as r
+
+        updates = []
+        grades = []
+        if have_row:
+            grades.append({
+                "student_id": "stu-1",
+                "learning_objective_id": "lo-x",
+                "assignment_id": "asg-1",
+                "top_score": existing_letter,
+                "counts_for_mastery": existing_flag,
+            })
+        assignments = []
+        if assignment_type is not None:
+            assignments.append({
+                "id": "asg-1",
+                "class_id": "class-1",
+                "assignment_type": assignment_type,
+            })
+        admin = _PassScopeAdmin(
+            {"assignments": assignments, "grades": grades},
+            updates,
+            [],
+        )
+        hw_map = {} if hw_score is None else {"stu-1": hw_score}
+        body = {"assignment_id": "asg-1", "grades": {"stu-1|lo-x": grade}}
+        if reset is not None:
+            body["reset_cells"] = reset
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+        headers = {"X-CSRF-Token": "test-csrf"}
+        with unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
+                unittest.mock.patch.object(r, "_class_auto_convert_m_enabled", return_value=auto_convert), \
+                unittest.mock.patch.object(r, "_enrolled_student_ids_for_class", return_value={"stu-1"}), \
+                unittest.mock.patch.object(r, "_allowed_lo_ids_for_grading", return_value={"lo-x"}), \
+                unittest.mock.patch.object(
+                    Homework, "get_hw_scores_map_for_assignment", return_value=hw_map
+                ):
+            rv = self.client.post(
+                "/api/class/class-1/save-grades",
+                json=body,
+                headers=headers,
+            )
+        upserts = [item["payload"] for item in updates if item["op"] == "upsert"]
+        return rv, upserts
+
+    def _one_flag(self, upserts):
+        self.assertEqual(len(upserts), 1)
+        self.assertEqual(len(upserts[0]), 1)
+        return upserts[0][0]
+
+    def test_exam_fresh_and_reset_mastery_counts(self):
+        rv, upserts = self._save_with_type("exam", grade="M", hw_score=30, auto_convert=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        row = self._one_flag(upserts)
+        self.assertEqual(row["top_score"], "M")
+        self.assertTrue(row["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type("exam", grade="MR", hw_score=30, auto_convert=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        row = self._one_flag(upserts)
+        self.assertEqual(row["top_score"], "MR")
+        self.assertTrue(row["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type("exam", grade="M", hw_score=0, auto_convert=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertTrue(self._one_flag(upserts)["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type("exam", grade="M", hw_score=30, auto_convert=False)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertTrue(self._one_flag(upserts)["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type(
+            "exam",
+            grade="MR",
+            hw_score=30,
+            auto_convert=True,
+            have_row=True,
+            existing_letter="M",
+            existing_flag=False,
+            reset=["stu-1|lo-x"],
+        )
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        row = self._one_flag(upserts)
+        self.assertEqual(row["top_score"], "MR")
+        self.assertTrue(row["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type(
+            "exam",
+            grade="M",
+            hw_score=30,
+            auto_convert=False,
+            have_row=True,
+            existing_letter="M",
+            existing_flag=False,
+            reset=["stu-1|lo-x"],
+        )
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertTrue(self._one_flag(upserts)["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type("mastery_opp", grade="M", hw_score=30, auto_convert=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertFalse(self._one_flag(upserts)["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type("project", grade="M", hw_score=30, auto_convert=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertFalse(self._one_flag(upserts)["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type(None, grade="M", hw_score=30, auto_convert=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertFalse(self._one_flag(upserts)["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type("quiz", grade="M", hw_score=30, auto_convert=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertFalse(self._one_flag(upserts)["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type(
+            "exam",
+            grade="M",
+            hw_score=30,
+            auto_convert=True,
+            have_row=True,
+            existing_letter="M",
+            existing_flag=False,
+        )
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        row = self._one_flag(upserts)
+        self.assertEqual(row["top_score"], "M")
+        self.assertFalse(row["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type(
+            "exam",
+            grade="MR",
+            hw_score=80,
+            auto_convert=True,
+            have_row=True,
+            existing_letter="M",
+            existing_flag=True,
+        )
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        row = self._one_flag(upserts)
+        self.assertEqual(row["top_score"], "MR")
+        self.assertTrue(row["counts_for_mastery"])
+
+    def test_exam_blank_homework_allows_m_and_mr(self):
+        blocked = (
+            "Enter a homework % for this student before saving a grade other than A (Absent)."
+        )
+
+        rv, upserts = self._save_with_type("exam", grade="M", hw_score=None, auto_convert=True)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        row = self._one_flag(upserts)
+        self.assertEqual(row["top_score"], "M")
+        self.assertTrue(row["counts_for_mastery"])
+        self.assertIsNone(row["hw_score_at_entry"])
+
+        rv, upserts = self._save_with_type("exam", grade="MR", hw_score=None, auto_convert=False)
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        row = self._one_flag(upserts)
+        self.assertEqual(row["top_score"], "MR")
+        self.assertTrue(row["counts_for_mastery"])
+
+        rv, upserts = self._save_with_type("exam", grade="R", hw_score=None, auto_convert=True)
+        self.assertEqual(rv.status_code, 400, rv.get_json())
+        self.assertEqual(rv.get_json().get("error"), blocked)
+        self.assertEqual(upserts, [])
+
+        for assignment_type in ("mastery_opp", "project", None, "quiz"):
+            rv, upserts = self._save_with_type(
+                assignment_type, grade="M", hw_score=None, auto_convert=True
+            )
+            self.assertEqual(rv.status_code, 400, (assignment_type, rv.get_json()))
+            self.assertEqual(rv.get_json().get("error"), blocked)
+            self.assertEqual(upserts, [])
+
 
 class TestResetHint(unittest.TestCase):
     """A reset key makes the next M/MR a fresh entry. Other saves stay sticky."""
@@ -361,6 +550,34 @@ class TestAutoConvertPredict(unittest.TestCase):
         self.assertEqual(src.find("if (!AUTO_CONVERT_M) return true;", read_at + 1), -1)
         after_read = read_at + len("if (!AUTO_CONVERT_M) return true;")
         self.assertEqual(src.find("AUTO_CONVERT_M", after_read), -1)
+
+    def test_selected_exam_predicts_counting_before_the_65_percent_line(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        fn_at = src.find(
+            "function predictCountsForMasteryFromCurrentHw(studentId, gradeCellEl) {"
+        )
+        self.assertGreater(fn_at, -1)
+        fn_end = src.find("\nfunction ", fn_at + 1)
+        self.assertGreater(fn_end, fn_at)
+        fn = src[fn_at:fn_end]
+        early = fn.find("if (!AUTO_CONVERT_M) return true;")
+        exam_return = fn.find("if (selectedAssignmentIsExam()) return true;")
+        score_return = fn.find("return Number.isFinite(hw) && hw >= EXAM_HW_MIN;")
+        self.assertGreater(early, -1)
+        self.assertGreater(exam_return, early)
+        self.assertGreater(score_return, exam_return)
+        helper = src.find("function selectedAssignmentIsExam() {")
+        self.assertGreater(helper, -1)
+        self.assertLess(helper, fn_at)
+        self.assertIn(
+            "return normalizeAssignmentType(opt.getAttribute('data-assignment-type')) === 'exam';",
+            src,
+        )
+
 
 
 class _PassScopeQuery:

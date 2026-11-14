@@ -339,6 +339,13 @@ function resolveHwCell(studentId, gradeCellEl) {
   }
 }
 
+function selectedAssignmentIsExam() {
+  const select = document.getElementById('assignmentFilter');
+  const opt = select && select.selectedOptions && select.selectedOptions[0];
+  if (!opt) return false;
+  return normalizeAssignmentType(opt.getAttribute('data-assignment-type')) === 'exam';
+}
+
 /**
  * Live-DOM HW eligibility check, used only to PREDICT counts_for_mastery on a
  * brand-new M/MR keystroke before the server has had a chance to persist the
@@ -347,6 +354,7 @@ function resolveHwCell(studentId, gradeCellEl) {
  */
 function predictCountsForMasteryFromCurrentHw(studentId, gradeCellEl) {
   if (!AUTO_CONVERT_M) return true;
+  if (selectedAssignmentIsExam()) return true;
   const sid = String(studentId || '');
   const hwCell = resolveHwCell(sid, gradeCellEl);
   if (!hwCell) {
