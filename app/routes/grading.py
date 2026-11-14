@@ -451,6 +451,11 @@ def save_hw_percentage(class_id):
             return jsonify({"success": False, "error": "Assignment not found for this class"}), 404
         if not _student_enrolled_in_class(class_id, str(student_id).strip()):
             return jsonify({"success": False, "error": "Student is not enrolled in this class"}), 403
+        if score == -1 and _saved_assignment_is_exam(class_id, assignment_id):
+            return jsonify({
+                "success": False,
+                "error": "Homework passes cannot be used on an exam.",
+            }), 400
 
         hw_key = Homework.resolve_hw_group_storage_key(class_id, assignment_id)
         if hw_key is None:
@@ -488,8 +493,18 @@ def use_free_pass(class_id):
         student_id = data.get('student_id')
         if not student_id:
             return jsonify({"success": False, "error": "student_id required"}), 400
+        assignment_id = str(data.get("assignment_id") or "").strip()
+        if not assignment_id:
+            return jsonify({"success": False, "error": "assignment_id required"}), 400
         if not _student_enrolled_in_class(class_id, str(student_id)):
             return jsonify({"success": False, "error": "Student is not enrolled in this class"}), 403
+        if not _assignment_belongs_to_class(class_id, assignment_id):
+            return jsonify({"success": False, "error": "Invalid assignment for class"}), 400
+        if _saved_assignment_is_exam(class_id, assignment_id):
+            return jsonify({
+                "success": False,
+                "error": "Homework passes cannot be used on an exam.",
+            }), 400
 
         passes_allowed = FREE_PASSES_ALLOWED
 

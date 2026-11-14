@@ -606,6 +606,33 @@ class TestAutoConvertPredict(unittest.TestCase):
         self.assertIn("cell.removeAttribute('title');", exam_body)
         self.assertLess(exam_body.find("return;"), exam_body.find("const recorded"))
 
+    def test_exam_hides_pass_control_and_posts_assignment_id(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        sync_at = src.find("function syncHomeworkPassControl() {")
+        self.assertGreater(sync_at, -1)
+        sync_end = src.find("\nfunction ", sync_at + 1)
+        self.assertGreater(sync_end, sync_at)
+        sync = src[sync_at:sync_end]
+        self.assertIn("const hide = selectedAssignmentIsExam();", sync)
+        self.assertIn("label.classList.toggle('hidden', hide);", sync)
+        filt = src.find("function filterByAssignment() {")
+        self.assertGreater(filt, -1)
+        filt_body = src[filt:filt + 180]
+        self.assertIn("syncHomeworkPassControl();", filt_body)
+        empty = src.find("if (visibleCount === 0) {")
+        self.assertGreater(empty, -1)
+        empty_body = src[empty:empty + 160]
+        self.assertIn("syncHomeworkPassControl();", empty_body)
+        use_at = src.find("'/use_pass'")
+        self.assertGreater(use_at, -1)
+        use_body = src[use_at:use_at + 420]
+        self.assertIn("assignment_id: getActiveAssignmentId()", use_body)
+        self.assertNotIn("JSON.stringify({ student_id: studentId })", use_body)
+
 
 class _PassScopeQuery:
     def __init__(self, table, store, updates):
@@ -1008,6 +1035,109 @@ class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0]["score_pct"], 91)
         self.assertNotIn("prev_score_pct", captured[0])
+
+    def test_exam_pass_score_is_refused_and_a_number_still_saves(self):
+        from app.routes import grading as r
+
+        store = {
+            "assignments": [
+                {"id": "asg-exam", "class_id": "class-1", "assignment_type": "exam"},
+                {"id": "asg-ok", "class_id": "class-1", "assignment_type": "project"},
+            ]
+        }
+
+        class _Query:
+            def __init__(self, table, captured, log):
+                self.table = table
+                self.captured = captured
+                self.log = log
+                self.op = "select"
+                self.payload = None
+                self.filters = []
+
+            def select(self, *_args, **_kwargs):
+                self.op = "select"
+                return self
+
+            def eq(self, column, value):
+                self.filters.append((column, value))
+                return self
+
+            def limit(self, _count):
+                return self
+
+            def upsert(self, rows, **_kwargs):
+                self.op = "upsert"
+                self.payload = rows
+                return self
+
+            def execute(self):
+                self.log.append({"table": self.table, "op": self.op})
+                if self.op == "upsert":
+                    self.captured.extend(self.payload)
+                    return MagicMock(data=[])
+                rows = []
+                for row in store.get(self.table, []):
+                    if all(row.get(column) == value for column, value in self.filters):
+                        rows.append(dict(row))
+                return MagicMock(data=rows)
+
+        def post(score, assignment_id):
+            captured = []
+            log = []
+            promote = MagicMock(return_value=4)
+            sa = MagicMock()
+            sa.table.side_effect = lambda name: _Query(name, captured, log)
+            with self.client.session_transaction() as sess:
+                sess["user_id"] = "inst1"
+                sess["csrf_token"] = "test-csrf"
+            with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                    unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                    unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True), \
+                    unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
+                    unittest.mock.patch.object(
+                        r, "_promote_non_counting_masteries_for_student", promote
+                    ), \
+                    unittest.mock.patch.object(
+                        Homework, "resolve_hw_group_storage_key", return_value="hw-g1"
+                    ) as resolve:
+                rv = self.client.post(
+                    "/api/class/class-1/save-hw-percentage",
+                    json={
+                        "student_id": "stu-1",
+                        "score": score,
+                        "assignment_id": assignment_id,
+                    },
+                    headers={"X-CSRF-Token": "test-csrf"},
+                )
+            return rv, captured, log, promote, resolve
+
+        rv, captured, log, promote, resolve = post(-1, "asg-exam")
+        self.assertEqual(rv.status_code, 400, rv.get_json())
+        self.assertEqual(
+            rv.get_json().get("error"),
+            "Homework passes cannot be used on an exam.",
+        )
+        self.assertEqual(captured, [])
+        self.assertFalse(any(entry["op"] == "upsert" for entry in log))
+        promote.assert_not_called()
+        resolve.assert_not_called()
+
+        rv, captured, _log, promote, resolve = post(40, "asg-exam")
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertTrue(rv.get_json().get("success"))
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]["score_pct"], 40)
+        self.assertEqual(captured[0]["homework_group"], "hw-g1")
+        promote.assert_not_called()
+        resolve.assert_called_once()
+
+        rv, captured, _log, promote, _resolve = post(-1, "asg-ok")
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertEqual(rv.get_json().get("promoted_masteries"), 4)
+        self.assertEqual(captured[-1]["score_pct"], -1)
+        promote.assert_called_once_with("class-1", "stu-1", "asg-ok")
+
 
 
 class _GradesApiQuery:
@@ -2905,7 +3035,7 @@ class TestGradeChangeLog(unittest.TestCase):
 
 
 class TestFreePassAllowance(unittest.TestCase):
-    def _post(self, path, rows):
+    def _post(self, path, rows, extra=None):
         from app.routes import grading as r
         log = []
 
@@ -2942,20 +3072,24 @@ class TestFreePassAllowance(unittest.TestCase):
         with client.session_transaction() as sess:
             sess["user_id"] = "inst1"
             sess["csrf_token"] = "test-csrf"
+        payload = {"student_id": "stu-1"}
+        if extra:
+            payload.update(extra)
         with unittest.mock.patch.object(r, "supabase_admin") as sa, \
                 unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
-                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True):
+                unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True):
             sa.table.side_effect = lambda name: _PassQuery()
             rv = client.post(
                 path,
-                json={"student_id": "stu-1"},
+                json=payload,
                 headers={"X-CSRF-Token": "test-csrf"},
             )
         return rv, log
 
     def test_first_use_inserts_one_and_returns_one_less_than_the_allowance(self):
         from app.helpers.free_passes import FREE_PASSES_ALLOWED
-        rv, log = self._post("/api/class/c1/use_pass", [])
+        rv, log = self._post("/api/class/c1/use_pass", [], {"assignment_id": "asg-1"})
         self.assertEqual(rv.status_code, 200)
         self.assertEqual(rv.get_json()["passes_remaining"], FREE_PASSES_ALLOWED - 1)
         inserted = [entry for entry in log if entry["op"] == "insert"]
@@ -2971,6 +3105,7 @@ class TestFreePassAllowance(unittest.TestCase):
         rv, log = self._post(
             "/api/class/c1/use_pass",
             [{"id": "fp1", "passes_used": FREE_PASSES_ALLOWED}],
+            {"assignment_id": "asg-1"},
         )
         self.assertEqual(rv.status_code, 400)
         self.assertEqual(rv.get_json()["error"], "No passes remaining")
@@ -2978,6 +3113,119 @@ class TestFreePassAllowance(unittest.TestCase):
             [entry for entry in log if entry["op"] == "update"],
             [],
         )
+
+    def test_use_pass_rejects_missing_foreign_and_exam_before_any_write(self):
+        from app.routes import grading as r
+
+        class _Query:
+            def __init__(self, table, store, log):
+                self.table = table
+                self.store = store
+                self.log = log
+                self.op = "select"
+                self.payload = None
+                self.filters = []
+
+            def select(self, *_args, **_kwargs):
+                self.op = "select"
+                return self
+
+            def insert(self, row):
+                self.op = "insert"
+                self.payload = row
+                return self
+
+            def update(self, row):
+                self.op = "update"
+                self.payload = row
+                return self
+
+            def eq(self, column, value):
+                self.filters.append((column, value))
+                return self
+
+            def limit(self, _count):
+                return self
+
+            def execute(self):
+                self.log.append({
+                    "table": self.table,
+                    "op": self.op,
+                    "payload": self.payload,
+                })
+                if self.op == "insert":
+                    self.store.setdefault(self.table, []).append(dict(self.payload))
+                    return unittest.mock.MagicMock(data=[])
+                if self.op != "select":
+                    return unittest.mock.MagicMock(data=[])
+                rows = []
+                for row in self.store.get(self.table, []):
+                    if all(row.get(column) == value for column, value in self.filters):
+                        rows.append(dict(row))
+                return unittest.mock.MagicMock(data=rows)
+
+        store = {
+            "assignments": [
+                {"id": "asg-exam", "class_id": "c1", "assignment_type": "exam"},
+                {"id": "asg-ok", "class_id": "c1", "assignment_type": "mastery_opp"},
+            ],
+            "free_passes": [],
+        }
+        log = []
+
+        def belongs(_class_id, assignment_id):
+            return assignment_id in {"asg-exam", "asg-ok"}
+
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = "inst1"
+            sess["csrf_token"] = "test-csrf"
+        headers = {"X-CSRF-Token": "test-csrf"}
+
+        def post(body):
+            before = len(log)
+            sa = MagicMock()
+            sa.table.side_effect = lambda name: _Query(name, store, log)
+            with unittest.mock.patch.object(r, "supabase_admin", sa), \
+                    unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                    unittest.mock.patch.object(r, "_student_enrolled_in_class", return_value=True), \
+                    unittest.mock.patch.object(r, "_assignment_belongs_to_class", side_effect=belongs):
+                rv = client.post("/api/class/c1/use_pass", json=body, headers=headers)
+            writes = [
+                entry for entry in log[before:]
+                if entry["op"] in ("insert", "update")
+            ]
+            return rv, writes
+
+        rv, writes = post({"student_id": "stu-1"})
+        self.assertEqual(rv.status_code, 400, rv.get_json())
+        self.assertEqual(rv.get_json().get("error"), "assignment_id required")
+        self.assertEqual(writes, [])
+
+        rv, writes = post({"student_id": "stu-1", "assignment_id": "asg-missing"})
+        self.assertEqual(rv.status_code, 400, rv.get_json())
+        self.assertEqual(rv.get_json().get("error"), "Invalid assignment for class")
+        self.assertEqual(writes, [])
+
+        rv, writes = post({"student_id": "stu-1", "assignment_id": "asg-exam"})
+        self.assertEqual(rv.status_code, 400, rv.get_json())
+        self.assertEqual(
+            rv.get_json().get("error"),
+            "Homework passes cannot be used on an exam.",
+        )
+        self.assertEqual(writes, [])
+        self.assertEqual(store["free_passes"], [])
+
+        rv, writes = post({"student_id": "stu-1", "assignment_id": "asg-ok"})
+        self.assertEqual(rv.status_code, 200, rv.get_json())
+        self.assertEqual(rv.get_json().get("passes_remaining"), 1)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0]["op"], "insert")
+        self.assertEqual(writes[0]["payload"]["passes_used"], 1)
+
+
 
     def test_return_from_one_used_restores_the_allowance(self):
         from app.helpers.free_passes import FREE_PASSES_ALLOWED

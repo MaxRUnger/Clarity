@@ -353,6 +353,16 @@ function selectedAssignmentIsExam() {
   return normalizeAssignmentType(opt.getAttribute('data-assignment-type')) === 'exam';
 }
 
+function syncHomeworkPassControl() {
+  const hide = selectedAssignmentIsExam();
+  const boxes = document.querySelectorAll('.hw-pass-check');
+  for (let i = 0; i < boxes.length; i++) {
+    const label = boxes[i].closest('label');
+    if (!label) continue;
+    label.classList.toggle('hidden', hide);
+  }
+}
+
 /**
  * Live-DOM HW eligibility check, used only to PREDICT counts_for_mastery on a
  * brand-new M/MR keystroke before the server has had a chance to persist the
@@ -905,6 +915,7 @@ function setAssignmentTypeFilter(type, opts) {
 
   if (visibleCount === 0) {
     select.value = '';
+    syncHomeworkPassControl();
     showFlatGraderLayout();
     restoreLoColumnSubtitles();
     assignmentFilterLastValue = '';
@@ -933,6 +944,7 @@ function showFlatGraderLayout() {
 }
 
 function filterByAssignment() {
+  syncHomeworkPassControl();
   const assignmentId = document.getElementById('assignmentFilter').value;
   const assignmentData = getAssignmentDataList();
 
@@ -1131,7 +1143,10 @@ document.addEventListener('change', async function (e) {
         const res = await fetch('/api/class/' + classId + '/use_pass', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ student_id: studentId })
+          body: JSON.stringify({
+            student_id: studentId,
+            assignment_id: getActiveAssignmentId()
+          })
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Failed');
