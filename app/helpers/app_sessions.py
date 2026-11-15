@@ -133,6 +133,7 @@ _EXEMPT = {
     "main.signup",
     "main.logout",
     "main.forgot_password_page",
+    "main.privacy_page",
     "main.forgot_password",
     "main.reset_password_page",
     "main.reset_password",

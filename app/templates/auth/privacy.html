@@ -1,0 +1,70 @@
+{% extends "auth_base.html" %}
+
+{% block title %}Privacy Policy{% endblock %}
+
+{% block content %}
+<div class="flex-1 px-8 py-10">
+  <div class="max-w-3xl mx-auto bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-8">
+    <h1 class="text-2xl font-bold text-slate-900 dark:text-white mb-4">Privacy Policy</h1>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">Clarity Grader does not sell your information. It is not read, shared or changed except in the narrow cases described below. This policy covers claritygrader.net and is run by Brody Estes ("Operator"), who maintains the site in his own name.</p>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">It applies to instructors who use the site and to the student records those instructors enter. Students do not have accounts and never log in.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">What information is collected</h2>
+    <ul class="list-disc list-inside space-y-1 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+      <li>Instructor account: name, email address and login details.</li>
+      <li>Class records an instructor enters: class names, assignments and learning objectives, student names, grades and the history of grade changes, homework scores and homework pass usage, and the settings for each class.</li>
+      <li>Student email addresses: instructors enter an email address for each student on a class roster. It is used for the progress and revision emails the instructor sends to that student.</li>
+      <li>Technical data: a session cookie that keeps an instructor logged in, a few settings stored in the browser (the display theme and session-timeout timers), and standard server logs used to find and fix errors.</li>
+      <li>Payment details: payments are made to Operator through Venmo, outside this website. The site does not collect, see or store payment or card information.</li>
+    </ul>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">How the information is used</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">Information is used only to run Clarity Grader for the instructor who entered it: to record and show grades, produce reports, exports and archives, send the progress and revision emails the instructor asks for, send account emails such as password resets, keep accounts secure and fix problems.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">Never sold</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">Operator does not sell, rent or trade any information on this site. It is not used for advertising, marketing profiles or tracking, and it is not shared with anyone except the service providers listed below, who need it to run the site.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">Who can see it</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">An instructor can see only the classes they own. Operator does not read class records as a matter of course. Operator looks at specific records only when needed to:</p>
+    <ul class="list-disc list-inside space-y-1 text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">
+      <li>help with a problem the instructor reported,</li>
+      <li>find and repair a technical fault, or</li>
+      <li>meet a legal obligation.</li>
+    </ul>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">When Operator looks at an instructor's records for one of these reasons, it is limited to what that reason needs.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">Service providers</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">Operator uses outside providers that store or process data only to run the site:</p>
+    <ul class="list-disc list-inside space-y-1 text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">
+      <li>Railway: hosts the website</li>
+      <li>Supabase: stores the database and handles login</li>
+      <li>Resend: sends email, including progress and revision emails to students at an instructor's request and account emails to instructors, such as password reset and password-changed notices</li>
+    </ul>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">These providers hold data on Operator's behalf under their own security and privacy terms. They are not permitted by Operator to use it for their own purposes.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">Integrity and security</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">Operator does not change grades or class records. The only exceptions are a change an instructor asks for, or repairing a technical fault, and in both cases Operator tells the instructor.</p>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">Safeguards in place:</p>
+    <ul class="list-disc list-inside space-y-1 text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">
+      <li>The site is served over HTTPS.</li>
+      <li>Every page with class data requires login, and an instructor can open only their own classes.</li>
+      <li>Operator keeps the software and hosting up to date.</li>
+    </ul>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">No website can promise perfect security. If Operator learns of a breach affecting an instructor's data, Operator tells that instructor promptly.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">Keeping, exporting and deleting data</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">Data is kept while an instructor's account is active. Instructors can export their class data at any time as CSV files and class archives.</p>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">An instructor can ask Operator to delete their account and class data at <a href="mailto:brodyestes4@icloud.com" class="text-blue-600 dark:text-blue-400 hover:underline font-medium">brodyestes4@icloud.com</a>. Operator deletes it from the live system within 30 days and from backups within 90 days after that.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">Instructors and student records</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">Instructors decide what student information to enter and are responsible for having the right to do so under their institution's policies and applicable law, including FERPA where it applies. Because students have no accounts, a student who wants to see or correct a record should ask their instructor, who can change it directly.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">Cookies</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">The site uses a session cookie to keep an instructor logged in and a security token to protect forms from forgery. It also keeps a few settings in the browser's local storage, such as the display theme and session-timeout timers. It does not use advertising or third-party tracking cookies.</p>
+
+    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mt-6 mb-2">Changes and contact</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-3">If this policy changes in a way that matters, Operator emails instructors at least 30 days before the change takes effect. Last updated: November 14, 2026.</p>
+    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">Questions, access requests and deletion requests: <a href="mailto:brodyestes4@icloud.com" class="text-blue-600 dark:text-blue-400 hover:underline font-medium">brodyestes4@icloud.com</a>.</p>
+  </div>
+</div>
+{% endblock %}

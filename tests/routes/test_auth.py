@@ -29,6 +29,41 @@ class TestPublicRoutes(unittest.TestCase):
         response = self.client.get('/logout')
         self.assertEqual(response.status_code, 405)
 
+    def test_privacy_policy_is_public_and_linked(self):
+        privacy = self.client.get('/privacy')
+        self.assertEqual(privacy.status_code, 200)
+        page = privacy.get_data(as_text=True)
+        self.assertIn('Privacy Policy', page)
+        self.assertNotIn('style=', page)
+        self.assertNotIn('<style', page)
+        start = 0
+        lowered = page.lower()
+        while True:
+            at = lowered.find('<script', start)
+            if at < 0:
+                break
+            end = lowered.find('>', at)
+            self.assertIn('src=', lowered[at:end])
+            start = end + 1
+        login = self.client.get('/login')
+        self.assertEqual(login.status_code, 200)
+        self.assertIn('href="/privacy"', login.get_data(as_text=True))
+        root = os.path.join(os.path.dirname(__file__), '..', '..')
+        with open(os.path.join(root, 'app', 'templates', 'auth', 'privacy.html'), encoding='utf-8') as handle:
+            template = handle.read()
+        self.assertNotIn('<script', template)
+        self.assertNotIn('style=', template)
+        with open(os.path.join(root, 'app', 'templates', 'app_base.html'), encoding='utf-8') as handle:
+            logged_in = handle.read()
+        self.assertIn('href="/privacy"', logged_in)
+        self.assertIn('Operator does not sell, rent or trade any information', page)
+        self.assertIn('brodyestes4@icloud.com', page)
+        self.assertIn('Venmo', page)
+        self.assertIn('Railway', page)
+        self.assertIn('Supabase', page)
+        self.assertIn('Resend', page)
+        self.assertIn('history of grade changes', page)
+
 
 class TestSignupEmailRedirect(unittest.TestCase):
     def setUp(self):

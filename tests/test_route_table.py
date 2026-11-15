@@ -66,6 +66,7 @@ EXPECTED = (
     ("/instructor/dashboard", ("GET",), "main.instructor_dashboard"),
     ("/login", ("GET",), "main.login_page"),
     ("/logout", ("POST",), "main.logout"),
+    ("/privacy", ("GET",), "main.privacy_page"),
     ("/reset-password", ("GET",), "main.reset_password_page"),
     ("/signup", ("GET",), "main.signup_page"),
 )
@@ -85,4 +86,4 @@ class TestRouteTable(unittest.TestCase):
                 rule.endpoint,
             ))
         self.assertEqual(sorted(found), sorted(EXPECTED))
-        self.assertEqual(len(found), 63)
+        self.assertEqual(len(found), 64)

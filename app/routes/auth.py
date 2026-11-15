@@ -38,6 +38,10 @@ def signup_page():
 def forgot_password_page():
     return render_template("auth/forgot_password.html")
 
+@main_bp.route("/privacy")
+def privacy_page():
+    return render_template("auth/privacy.html")
+
 @main_bp.route("/reset-password")
 def reset_password_page():
     return render_template("auth/reset_password.html")
