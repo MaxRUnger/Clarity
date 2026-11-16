@@ -32,7 +32,7 @@
         <a href="/privacy" class="text-blue-600 dark:text-blue-400 hover:underline font-medium">Privacy Policy</a>
     </footer>
 
-    <script src="{{ url_for('static', filename='js/auth_theme.js') }}?v=1"></script>
+    <script src="{{ url_for('static', filename='js/auth_theme.js') }}?v=2"></script>
     {% block scripts %}{% endblock %}
     {% if session.get('user_id') %}
     <script type="application/json" id="sessionTimeoutConfig">{{ session_timeout|tojson }}</script>

@@ -11,5 +11,14 @@
                 document.documentElement.classList.toggle('dark');
                 localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
             });
+            var privacyBack = document.getElementById('privacyBack');
+            if (privacyBack) {
+                privacyBack.addEventListener('click', function (event) {
+                    if (window.history.length > 1) {
+                        event.preventDefault();
+                        window.history.back();
+                    }
+                });
+            }
         })();
     

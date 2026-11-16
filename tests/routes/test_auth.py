@@ -34,6 +34,9 @@ class TestPublicRoutes(unittest.TestCase):
         self.assertEqual(privacy.status_code, 200)
         page = privacy.get_data(as_text=True)
         self.assertIn('Privacy Policy', page)
+        self.assertIn('id="privacyBack"', page)
+        self.assertIn('href="/login"', page)
+        self.assertIn('>Back<', page)
         self.assertNotIn('style=', page)
         self.assertNotIn('<style', page)
         start = 0
