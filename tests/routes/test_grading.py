@@ -4093,22 +4093,77 @@ class TestSpeedGraderReads(unittest.TestCase):
             "const requested = (new URLSearchParams(window.location.search).get('assignment') || '').trim();"
         )
         self.assertGreater(requested, -1)
-        chosen = body.find(
+        match_at = body.find("if (match) {", requested)
+        self.assertGreater(match_at, -1)
+        match_return = body.find("return;", match_at)
+        match_body = body[match_at:match_return]
+        self.assertIn("select.value = requested;", match_body)
+        self.assertIn(
             "setAssignmentTypeFilter(\n"
             "        match.getAttribute('data-assignment-type'),\n"
             "        { force: true, skipUnsavedGuard: true }\n"
             "      );",
-            requested,
+            match_body,
         )
-        self.assertGreater(chosen, requested)
-        reselect = body.find("if (select.value !== requested) {", chosen)
-        self.assertGreater(reselect, chosen)
-        reselect_body = body[reselect:body.find("return;", reselect)]
-        self.assertIn("select.value = requested;", reselect_body)
-        self.assertIn("filterByAssignment();", reselect_body)
+        self.assertLess(
+            match_body.find("select.value = requested;"),
+            match_body.find("setAssignmentTypeFilter("),
+        )
         initial = body.find("let initial = 'mastery_opp';")
-        self.assertGreater(initial, body.find("return;", reselect))
+        self.assertGreater(initial, match_return)
         self.assertIn(
             "setAssignmentTypeFilter(initial, { force: true, skipUnsavedGuard: true });",
             body[initial:],
         )
+
+    def test_assignment_query_loads_requested_id_before_grades(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "app", "static", "js", "class_speed_grader.js",
+        )
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        start = src.find("function initSpeedGraderAssignmentTypeFilter() {")
+        self.assertGreater(start, -1)
+        end = src.find("\n})();", start)
+        self.assertGreater(end, start)
+        body = src[start:end]
+        requested = body.find(
+            "const requested = (new URLSearchParams(window.location.search).get('assignment') || '').trim();"
+        )
+        self.assertGreater(requested, -1)
+        match_at = body.find("if (match) {", requested)
+        self.assertGreater(match_at, -1)
+        match_body = body[match_at:body.find("return;", match_at)]
+        value_at = match_body.find("select.value = requested;")
+        last_at = match_body.find("assignmentFilterLastValue = select.value;")
+        load_at = match_body.find("setAssignmentTypeFilter(")
+        problems = []
+        if value_at < 0 or last_at < 0 or load_at < 0 or not (value_at < last_at < load_at):
+            problems.append(
+                "match branch must set select.value and assignmentFilterLastValue before setAssignmentTypeFilter"
+            )
+        if "filterByAssignment(" in match_body:
+            problems.append(
+                "match branch must load grades once, through setAssignmentTypeFilter only"
+            )
+        filter_at = src.find("function filterByAssignment() {")
+        self.assertGreater(filter_at, -1)
+        filter_end = src.find("\n// Prefer Mastery Opportunities on load", filter_at)
+        self.assertGreater(filter_end, filter_at)
+        filter_body = src[filter_at:filter_end]
+        handler = filter_body.find(".then(data => {")
+        guard_at = filter_body.find(
+            "if (getActiveAssignmentId() !== String(gradesRequestId || '').trim()) return;"
+        )
+        hw_at = filter_body.find("hwScoresMap = hwScores;")
+        if (
+            "const gradesRequestId = assignmentId;" not in filter_body
+            or handler < 0
+            or guard_at < 0
+            or hw_at < 0
+            or not (handler < guard_at < hw_at)
+        ):
+            problems.append(
+                "filterByAssignment must ignore a response when the selected assignment changed"
+            )
+        self.assertEqual(problems, [])

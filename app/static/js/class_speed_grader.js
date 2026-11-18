@@ -989,15 +989,17 @@ function filterByAssignment() {
     }
   });
 
-  fetch('/api/class/' + classId + '/assignment/' + assignmentId + '/grades')
+  const gradesRequestId = assignmentId;
+  fetch('/api/class/' + classId + '/assignment/' + gradesRequestId + '/grades')
     .then(r => r.json())
     .then(data => {
+      if (getActiveAssignmentId() !== String(gradesRequestId || '').trim()) return;
       if (!data.success) return;
       const fetchedGrades = data.grades || {};
       const countsMap = data.counts_for_mastery_map || {};
       for (const key in fetchedGrades) {
         const grade = fetchedGrades[key];
-        const compositeKey = compositeGradeKeyFromApi(key, assignmentId);
+        const compositeKey = compositeGradeKeyFromApi(key, gradesRequestId);
         grades[compositeKey] = grade;
         const cell = __gradeCellIndex.get(compositeKey);
         if (cell) {
@@ -1042,15 +1044,12 @@ function filterByAssignment() {
       return opt.value === requested;
     });
     if (match) {
+      select.value = requested;
+      assignmentFilterLastValue = select.value;
       setAssignmentTypeFilter(
         match.getAttribute('data-assignment-type'),
         { force: true, skipUnsavedGuard: true }
       );
-      if (select.value !== requested) {
-        select.value = requested;
-        assignmentFilterLastValue = select.value;
-        filterByAssignment();
-      }
       return;
     }
   }
