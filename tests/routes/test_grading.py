@@ -841,6 +841,205 @@ class TestPassScope(unittest.TestCase):
         self.assertTrue(again["counts_for_mastery"])
         self.assertTrue(again["promoted_by_pass"])
 
+    def test_spaced_label_promotes_both_assignments_and_demotes_only_pass_rows(self):
+        from app.helpers import free_passes as fp
+        rows = [
+            self._grade("s1", "lo-plain", "asg-plain", "M", False),
+            self._grade("s1", "lo-spaced", "asg-spaced", "MR", False),
+            self._grade("s1", "lo-kept", "asg-plain", "M", True),
+            self._grade("s1", "lo-other", "asg-other", "M", False),
+        ]
+        updates = []
+        groups = {
+            "Quiz 1": ["asg-plain"],
+            "Quiz  1": ["asg-spaced"],
+            "Other": ["asg-other"],
+        }
+        with self._patch(fp, rows, updates, groups):
+            promoted = fp._promote_non_counting_masteries_for_student(
+                "class-1", "s1", "asg-plain"
+            )
+        self.assertEqual(promoted, 2)
+        by_lo = {row["learning_objective_id"]: row for row in rows}
+        self.assertTrue(by_lo["lo-plain"]["counts_for_mastery"])
+        self.assertTrue(by_lo["lo-plain"]["promoted_by_pass"])
+        self.assertTrue(by_lo["lo-spaced"]["counts_for_mastery"])
+        self.assertTrue(by_lo["lo-spaced"]["promoted_by_pass"])
+        self.assertTrue(by_lo["lo-kept"]["counts_for_mastery"])
+        self.assertIsNone(by_lo["lo-kept"]["promoted_by_pass"])
+        self.assertFalse(by_lo["lo-other"]["counts_for_mastery"])
+        self.assertIsNone(by_lo["lo-other"]["promoted_by_pass"])
+        with self._patch(fp, rows, updates, groups):
+            demoted = fp._demote_pass_promoted_masteries_for_student(
+                "class-1", "s1", "asg-plain"
+            )
+        self.assertEqual(demoted, ["lo-plain"])
+        self.assertFalse(by_lo["lo-plain"]["counts_for_mastery"])
+        self.assertIsNone(by_lo["lo-plain"]["promoted_by_pass"])
+        self.assertFalse(by_lo["lo-spaced"]["counts_for_mastery"])
+        self.assertIsNone(by_lo["lo-spaced"]["promoted_by_pass"])
+        self.assertTrue(by_lo["lo-kept"]["counts_for_mastery"])
+        self.assertIsNone(by_lo["lo-kept"]["promoted_by_pass"])
+        self.assertFalse(by_lo["lo-other"]["counts_for_mastery"])
+
+    def test_blank_homework_group_returns_only_itself_and_skips_the_sibling_query(self):
+        from app.helpers import free_passes as fp
+        calls = []
+        with self._patch(fp, [], [], {"": ["asg-1"]}, calls=calls):
+            ids = fp._assignment_ids_sharing_homework_group("class-1", "asg-1")
+        self.assertEqual(ids, ["asg-1"])
+        self.assertEqual(calls.count("assignments"), 1)
+
+
+class TestDoubleSpacedHomeworkGroupImport(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+
+    def test_import_writes_collapsed_key_and_the_read_returns_it(self):
+        from app.routes import grading as r
+        from app import models
+
+        store = {
+            "assignments": [{
+                "id": "asg-1",
+                "class_id": "c1",
+                "homework_group": "Quiz  1",
+            }],
+            "enrollments": [{
+                "class_id": "c1",
+                "student_id": "stu-1",
+                "profiles": {"id": "stu-1", "full_name": "Ada, Ann"},
+            }],
+            "learning_objectives": [],
+            "assignment_objectives": [],
+            "grades": [],
+            "homework_scores": [],
+        }
+        writes = []
+
+        class _Query:
+            def __init__(self, table):
+                self.table = table
+                self.filters = []
+                self.op = "select"
+                self.payload = None
+                self.limit_n = None
+                self.window = None
+                self.order_col = None
+
+            def select(self, *_args, **_kwargs):
+                return self
+
+            def eq(self, column, value):
+                self.filters.append(("eq", column, value))
+                return self
+
+            def in_(self, column, values):
+                self.filters.append(("in", column, list(values)))
+                return self
+
+            def is_(self, column, value):
+                self.filters.append(("is", column, value))
+                return self
+
+            def limit(self, count):
+                self.limit_n = count
+                return self
+
+            def order(self, column, desc=False):
+                self.order_col = (column, desc)
+                return self
+
+            def range(self, start, end):
+                self.window = (start, end)
+                return self
+
+            def insert(self, rows):
+                self.op = "insert"
+                self.payload = rows
+                return self
+
+            def upsert(self, rows, **_kwargs):
+                self.op = "upsert"
+                self.payload = rows
+                return self
+
+            def _matches(self, row):
+                for kind, column, value in self.filters:
+                    if kind == "eq" and row.get(column) != value:
+                        return False
+                    if kind == "in" and row.get(column) not in value:
+                        return False
+                    if kind == "is" and row.get(column) is not value:
+                        return False
+                return True
+
+            def execute(self):
+                rows = [
+                    row for row in store.setdefault(self.table, [])
+                    if self._matches(row)
+                ]
+                if self.order_col:
+                    column, desc = self.order_col
+                    rows = sorted(
+                        rows,
+                        key=lambda row: str(row.get(column)),
+                        reverse=desc,
+                    )
+                if self.window:
+                    start, end = self.window
+                    rows = rows[start:end + 1]
+                if self.limit_n is not None:
+                    rows = rows[:self.limit_n]
+                if self.op == "upsert":
+                    payload = self.payload if isinstance(self.payload, list) else [self.payload]
+                    copied = [dict(item) for item in payload]
+                    writes.extend(copied)
+                    store.setdefault(self.table, []).extend(copied)
+                    return MagicMock(data=copied)
+                return MagicMock(data=[dict(row) for row in rows])
+
+        class _Admin:
+            def table(self, name):
+                return _Query(name)
+
+        admin = _Admin()
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = "inst-1"
+            sess["csrf_token"] = "test-csrf"
+        with unittest.mock.patch("app.helpers.rate_limit._rate_limit", return_value=True), \
+                unittest.mock.patch.object(r, "_instructor_owns_class", return_value=True), \
+                unittest.mock.patch.object(r, "_assignment_belongs_to_class", return_value=True), \
+                unittest.mock.patch.object(r, "supabase_admin", admin), \
+                unittest.mock.patch.object(models, "supabase_admin", admin), \
+                unittest.mock.patch("app.helpers.lo_import.supabase_admin", admin):
+            response = self.client.post(
+                "/api/import-grades",
+                json={
+                    "class_id": "c1",
+                    "assignment_id": "asg-1",
+                    "students": [{
+                        "name": "Ada, Ann",
+                        "grades": {},
+                        "homework_pct": "90",
+                    }],
+                    "learning_objectives": [],
+                },
+                headers={"X-CSRF-Token": "test-csrf"},
+            )
+            self.assertEqual(response.status_code, 200, response.get_json())
+            hw_writes = [row for row in writes if row.get("score_pct") == 90]
+            self.assertEqual(len(hw_writes), 1)
+            self.assertEqual(hw_writes[0]["homework_group"], "Quiz 1")
+            scores, _prev = Homework.load_hw_score_and_prev_maps(
+                "c1",
+                "asg-1",
+                {"id": "asg-1", "homework_group": "Quiz  1"},
+            )
+        self.assertEqual(scores.get("stu-1"), 90)
+
 
 class TestHwPassPromotesNonCountingMasteries(unittest.TestCase):
     """save_hw_percentage with score=-1 flips non-counting M/MR to counting."""

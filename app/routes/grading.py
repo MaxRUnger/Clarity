@@ -460,12 +460,11 @@ def save_hw_percentage(class_id):
         hw_key = Homework.resolve_hw_group_storage_key(class_id, assignment_id)
         if hw_key is None:
             client_hg = Homework.normalize_homework_group(data.get("homework_group"))
-            hw_key = client_hg or assignment_id
-        hw_group = str(hw_key).strip()
+            hw_key = client_hg or str(assignment_id).strip()
         row = {
             "student_id": student_id,
             "class_id": class_id,
-            "homework_group": hw_group,
+            "homework_group": hw_key,
             "score_pct": score,
         }
         # Single-row list so PostgREST gets explicit columns=… (more reliable than a bare dict).
@@ -896,7 +895,7 @@ def api_import_grades():
         hw_rows.append({
             "student_id": inc["student_id"],
             "class_id": class_id,
-            "homework_group": str(hw_storage_key).strip(),
+            "homework_group": hw_storage_key,
             "score_pct": decision["score_pct"],
             "prev_score_pct": decision["prev_score_pct"],
         })

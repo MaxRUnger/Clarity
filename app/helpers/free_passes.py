@@ -1,6 +1,7 @@
 import logging
 
 from app.helpers.authentication import supabase_admin
+from app.models import Homework
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +39,22 @@ def _assignment_ids_sharing_homework_group(class_id: str, assignment_id: str) ->
     )
     if not resp.data:
         return []
-    label = (resp.data[0].get("homework_group") or "").strip()
-    if not label:
+    label = Homework.normalize_homework_group(resp.data[0].get("homework_group"))
+    if label is None:
         return [assignment_id]
     siblings = (
         supabase_admin.table("assignments")
-        .select("id")
+        .select("id, homework_group")
         .eq("class_id", class_id)
-        .eq("homework_group", label)
         .execute()
     )
     ids = []
     seen = set()
     for row in siblings.data or []:
         aid = str(row.get("id") or "").strip()
-        if aid and aid not in seen:
+        if not aid or aid in seen:
+            continue
+        if Homework.homework_score_storage_key(row, aid) == label:
             seen.add(aid)
             ids.append(aid)
     if assignment_id not in seen:

@@ -146,6 +146,38 @@ class TestHomeworkImportSheetColumn(unittest.TestCase):
         self.assertIsNone(Homework.normalize_homework_group("   "))
         self.assertIsNone(Homework.normalize_homework_group(None))
 
+    def test_homework_score_storage_key(self):
+        self.assertEqual(
+            Homework.homework_score_storage_key({"homework_group": "Quiz 1"}, "asg-1"),
+            "Quiz 1",
+        )
+        self.assertEqual(
+            Homework.homework_score_storage_key(
+                {"homework_group": "  Quiz   1  "}, "asg-1"
+            ),
+            "Quiz 1",
+        )
+        self.assertEqual(
+            Homework.homework_score_storage_key({"homework_group": ""}, "  asg-1  "),
+            "asg-1",
+        )
+        self.assertEqual(
+            Homework.homework_score_storage_key({"homework_group": None}, "asg-1"),
+            "asg-1",
+        )
+        self.assertEqual(
+            Homework.homework_score_storage_key(None, "asg-1"),
+            "asg-1",
+        )
+        self.assertEqual(
+            Homework.homework_score_storage_key({"homework_group": "   "}, "asg-1"),
+            "asg-1",
+        )
+        self.assertEqual(
+            Homework.homework_score_storage_key({"homework_group": "quiz 1"}, "asg-1"),
+            "quiz 1",
+        )
+
     def test_canonicalize_homework_group_for_class_reuses_existing_casing(self):
         # If a differently-cased label already exists for this class, reuse
         # its exact casing so the two assignments share one HW group instead

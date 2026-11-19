@@ -290,7 +290,7 @@ class Grade:
                 if assignment.get("class_id") != class_id:
                     continue
                 hg_by_assignment[aid] = (
-                    (assignment.get("homework_group") or "").strip() or aid
+                    Homework.homework_score_storage_key(assignment, aid) or aid
                 )
 
             # Determine sibling assignment IDs (legacy keys) for each homework group, in one query per class.
@@ -298,19 +298,20 @@ class Grade:
             sibling_ids_by_group: Dict[str, List[str]] = {}
             if unique_groups:
                 try:
-                    sib_resp = (
+                    wanted = set(unique_groups)
+                    class_rows = fetch_all_rows(
                         supabase_admin.table("assignments")
                         .select("id, homework_group")
                         .eq("class_id", class_id)
-                        .in_("homework_group", unique_groups)
-                        .execute()
+                        .order("id")
                     )
-                    for row in (sib_resp.data or []):
-                        group = (row.get('homework_group') or '').strip()
-                        rid = row.get('id')
-                        if not group or not rid:
+                    for row in class_rows:
+                        rid = str(row.get("id") or "").strip()
+                        if not rid:
                             continue
-                        sibling_ids_by_group.setdefault(group, []).append(rid)
+                        group = Homework.homework_score_storage_key(row, rid)
+                        if group in wanted:
+                            sibling_ids_by_group.setdefault(group, []).append(rid)
                 except Exception as e:
                     logger.error("Bulk sibling-assignment lookup failed: %s", e)
 
@@ -338,11 +339,12 @@ class Grade:
                             .execute()
                         )
                         for r in (sresp.data or []):
-                            hg = r.get('homework_group')
+                            raw_key = r.get('homework_group')
+                            indexed = Homework.normalize_homework_group(raw_key) or raw_key
                             sid = r.get('student_id')
-                            if not hg or not sid:
+                            if not indexed or not sid:
                                 continue
-                            scores_by_key.setdefault(hg, {})[sid] = r.get('score_pct')
+                            scores_by_key.setdefault(indexed, {})[sid] = r.get('score_pct')
                 except Exception as e:
                     logger.error("Bulk homework_scores lookup failed: %s", e)
 
@@ -420,6 +422,20 @@ class Homework:
             return None
         s = re.sub(r"\s+", " ", str(raw).strip())
         return s or None
+
+    @staticmethod
+    def homework_score_storage_key(assignment_row, assignment_id) -> Optional[str]:
+        """Key stored in homework_scores.homework_group for this assignment.
+
+        A label is trimmed and internal whitespace is collapsed. A blank label
+        uses the stripped assignment id. Case is unchanged.
+        """
+        raw = assignment_row.get("homework_group") if assignment_row else None
+        label = Homework.normalize_homework_group(raw)
+        if label:
+            return label
+        aid = str(assignment_id or "").strip()
+        return aid or None
 
     HW_PREV_HEADER = "HW prev"
 
@@ -592,11 +608,31 @@ class Homework:
         row = resp.data[0]
         if str(row.get("class_id") or "").strip() != class_id:
             return None
-        hg_raw = (row.get("homework_group") or "").strip()
-        if not hg_raw:
-            return assignment_id
-        canonical = Homework.normalize_homework_group(hg_raw)
-        return canonical or hg_raw
+        return Homework.homework_score_storage_key(row, assignment_id)
+
+    @staticmethod
+    def assignment_ids_for_score_key(class_id, storage_key) -> List[str]:
+        """Assignment ids in this class whose score key equals storage_key."""
+        class_id = str(class_id or "").strip()
+        storage_key = str(storage_key or "").strip()
+        if not class_id or not storage_key:
+            return []
+        rows = fetch_all_rows(
+            supabase_admin.table("assignments")
+            .select("id, homework_group")
+            .eq("class_id", class_id)
+            .order("id")
+        )
+        ids: List[str] = []
+        seen = set()
+        for row in rows:
+            aid = str(row.get("id") or "").strip()
+            if not aid or aid in seen:
+                continue
+            if Homework.homework_score_storage_key(row, aid) == storage_key:
+                seen.add(aid)
+                ids.append(aid)
+        return ids
 
     @staticmethod
     def _hw_column_map_for_assignment(class_id, assignment_id, column):
@@ -618,7 +654,8 @@ class Homework:
             if not resp.data:
                 return {}
             row = resp.data[0]
-            hg = (row.get("homework_group") or "").strip()
+            storage_key = Homework.homework_score_storage_key(row, assignment_id)
+            aid = str(assignment_id or "").strip()
             hw_map = {}
             select_cols = "student_id, " + column
 
@@ -628,13 +665,8 @@ class Homework:
                     if sid:
                         hw_map[sid] = r.get(column)
 
-            if hg:
-                sib_rows = fetch_all_rows(
-                    supabase_admin.table("assignments").select("id").eq(
-                        "class_id", class_id
-                    ).eq("homework_group", hg).order("id")
-                )
-                sib_ids = [r["id"] for r in sib_rows]
+            if storage_key and storage_key != aid:
+                sib_ids = Homework.assignment_ids_for_score_key(class_id, storage_key)
                 if sib_ids:
                     leg = fetch_all_rows(
                         supabase_admin.table("homework_scores").select(
@@ -645,14 +677,14 @@ class Homework:
                 cur = fetch_all_rows(
                     supabase_admin.table("homework_scores").select(
                         select_cols
-                    ).eq("class_id", class_id).eq("homework_group", hg).order("id")
+                    ).eq("class_id", class_id).eq("homework_group", storage_key).order("id")
                 )
                 _merge(cur)
             else:
                 single = fetch_all_rows(
                     supabase_admin.table("homework_scores").select(
                         select_cols
-                    ).eq("class_id", class_id).eq("homework_group", assignment_id).order("id")
+                    ).eq("class_id", class_id).eq("homework_group", aid or storage_key).order("id")
                 )
                 _merge(single)
             return hw_map
@@ -672,22 +704,20 @@ class Homework:
         for that student. A blank group uses the assignment id only.
         """
         try:
-            hg = (assignment_row.get("homework_group") or "").strip()
+            storage_key = Homework.homework_score_storage_key(
+                assignment_row, assignment_id
+            )
+            aid = str(assignment_id or "").strip()
             sibling_ids = []
-            if hg:
-                sibling_rows = fetch_all_rows(
-                    supabase_admin.table("assignments")
-                    .select("id")
-                    .eq("class_id", class_id)
-                    .eq("homework_group", hg)
-                    .order("id")
+            if storage_key and storage_key != aid:
+                sibling_ids = Homework.assignment_ids_for_score_key(
+                    class_id, storage_key
                 )
-                sibling_ids = [row["id"] for row in sibling_rows if row.get("id")]
                 keys = list(sibling_ids)
-                if hg not in keys:
-                    keys.append(hg)
+                if storage_key not in keys:
+                    keys.append(storage_key)
             else:
-                keys = [str(assignment_id)]
+                keys = [aid or storage_key]
             rows = fetch_all_rows(
                 supabase_admin.table("homework_scores")
                 .select("student_id, homework_group, score_pct, prev_score_pct")
@@ -700,9 +730,11 @@ class Homework:
             second = []
             for row in rows:
                 key = row.get("homework_group")
-                if hg and key == hg:
+                if storage_key and storage_key != aid and key == storage_key:
                     second.append(row)
-                elif key in sibling_set or (not hg and key == str(assignment_id)):
+                elif key in sibling_set or (
+                    (not storage_key or storage_key == aid) and key == aid
+                ):
                     first.append(row)
             scores = {}
             prev = {}
